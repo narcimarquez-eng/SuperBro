@@ -2449,125 +2449,210 @@ function objetoSprite(tipo) {
   return arte("estrella", estrellaFilas());
 }
 
+/*
+  protagonista.js: el personaje principal, dibujado en Canvas (sin imágenes).
+
+  Uso:
+    Protagonista.dibujar(ctx, x, y, { dir: 1 | -1, estado: 'quieto' | 'andar' | 'salto' | 'caer' | 'escalera' | 'muerto', tiempo, camisa: 'fuego' });
+
+  x, y: esquina superior izquierda de la caja de colisión (12 × 14 píxeles lógicos).
+  El dibujo sobresale 2 px a cada lado y 4 px por encima de la caja; los pies quedan en el borde inferior.
+  camisa: 'fuego' cambia la camisa roja por una blanca (opcional).
+  El contexto debe tener escala U (o U × zoom), igual que el resto de los dibujos.
+*/
+(function (global) {
+  'use strict';
+
+  const OUT = '#2a1a10';
+  const ROJO = ['#ff7a66', '#d9341f', '#8f1a10'];
+  const BLANCO = ['#ffffff', '#e4e4ee', '#a8a8bc'];   // camisa de la flor de fuego (añadido)
+  const AZUL = ['#8cc4ff', '#2f6fd0', '#183f80'];
+  const PIEL = ['#ffe6cc', '#f2b88a', '#b87850'];
+  const PELO = '#5a3418';
+
+  function rr(g, x, y, w, h, r) {
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.lineTo(x + w - r, y);
+    g.quadraticCurveTo(x + w, y, x + w, y + r);
+    g.lineTo(x + w, y + h - r);
+    g.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    g.lineTo(x + r, y + h);
+    g.quadraticCurveTo(x, y + h, x, y + h - r);
+    g.lineTo(x, y + r);
+    g.quadraticCurveTo(x, y, x + r, y);
+    g.closePath();
+  }
+
+  function grad(g, x0, y0, x1, y1, cols) {
+    const d = g.createLinearGradient(x0, y0, x1, y1);
+    cols.forEach(function (c, i) { d.addColorStop(i / (cols.length - 1), c); });
+    return d;
+  }
+
+  function radial(g, x, y, r0, r1, cols) {
+    const d = g.createRadialGradient(x, y, r0, x, y, r1);
+    cols.forEach(function (c, i) { d.addColorStop(i / (cols.length - 1), c); });
+    return d;
+  }
+
+  function trazar(g, ancho) {
+    g.strokeStyle = OUT;
+    g.lineWidth = ancho || 0.6;
+    g.lineJoin = 'round';
+    g.stroke();
+  }
+
+  // Brazo: manga roja y mano de piel. Gira alrededor del hombro (ang 0 = colgando)
+  function brazo(g, sx, sy, ang, manga) {
+    g.save();
+    g.translate(sx, sy);
+    g.rotate(ang);
+    g.fillStyle = grad(g, -1.3, 0, 1.3, 0, manga);
+    rr(g, -1.3, -0.4, 2.6, 2.7, 1.1); g.fill(); trazar(g);
+    g.fillStyle = radial(g, -0.4, 3, 0.2, 1.8, PIEL);
+    g.beginPath(); g.ellipse(0, 3.4, 1.4, 1.5, 0, 0, Math.PI * 2); g.fill(); trazar(g);
+    g.restore();
+  }
+
+  // Pierna: overol azul y zapato marrón. dx: desplazamiento horizontal; lift: cuánto se levanta el pie
+  function pierna(g, cadera, dx, lift) {
+    const x = cadera + dx, y = 15.2 - lift;
+    g.fillStyle = grad(g, x - 1.5, 0, x + 1.5, 0, AZUL);
+    rr(g, x - 1.5, y, 3, 2.6, 1); g.fill(); trazar(g);
+    g.fillStyle = grad(g, 0, 16, 0, 18, ['#9a6a3a', '#4a2a10']);
+    rr(g, x - 2, 16.2 - lift, 4.2, 1.8, 0.9); g.fill(); trazar(g);
+  }
+
+  function torso(g, camisa) {
+    // camisa (roja, o blanca con la flor de fuego)
+    g.fillStyle = grad(g, 0, 10.2, 0, 14.4, camisa);
+    rr(g, 4.2, 10.2, 7.6, 4.2, 1.4); g.fill(); trazar(g);
+    // overol azul
+    g.fillStyle = grad(g, 0, 12.4, 0, 16.6, AZUL);
+    rr(g, 4.6, 12.4, 6.8, 4.2, 1); g.fill(); trazar(g);
+    // tirantes y botón
+    g.fillStyle = AZUL[1];
+    g.fillRect(5.4, 10.4, 0.9, 2.4); g.fillRect(9.7, 10.4, 0.9, 2.4);
+    g.fillStyle = radial(g, 8.2, 13.2, 0.1, 1, ['#fff8c0', '#ffd23f', '#d98a00']);
+    g.beginPath(); g.arc(8.1, 13.1, 0.6, 0, Math.PI * 2); g.fill(); trazar(g, 0.4);
+  }
+
+  function cabeza(g, estado) {
+    // oreja y pelo de detrás
+    g.fillStyle = PIEL[1];
+    g.beginPath(); g.ellipse(4.2, 7.6, 0.9, 1.3, 0, 0, Math.PI * 2); g.fill(); trazar(g, 0.5);
+    g.fillStyle = PELO;
+    g.beginPath(); g.ellipse(4.9, 8.8, 1.2, 1.5, 0, 0, Math.PI * 2); g.fill();
+
+    // cara
+    g.fillStyle = radial(g, 7.4, 6.2, 0.5, 5, PIEL);
+    g.beginPath(); g.ellipse(8.2, 7.2, 4.1, 3.7, 0, 0, Math.PI * 2); g.fill(); trazar(g);
+
+    // gorra roja con visera y emblema
+    g.fillStyle = grad(g, 0, 2.3, 0, 4.8, ROJO);
+    g.beginPath(); g.ellipse(8.1, 4.8, 4.4, 2.5, 0, Math.PI, 0, false); g.closePath(); g.fill(); trazar(g);
+    g.fillStyle = grad(g, 8, 4.7, 8, 6.1, ROJO);
+    rr(g, 8.2, 4.7, 5.2, 1.4, 0.7); g.fill(); trazar(g);
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.arc(7.8, 3.9, 0.75, 0, Math.PI * 2); g.fill(); trazar(g, 0.4);
+
+    // ojos: abiertos, o en cruz si está muerto
+    if (estado === 'muerto') {
+      g.strokeStyle = OUT; g.lineWidth = 0.7;
+      [[8.8, 7], [11, 7]].forEach(function (p) {
+        g.beginPath(); g.moveTo(p[0] - 0.8, p[1] - 0.8); g.lineTo(p[0] + 0.8, p[1] + 0.8);
+        g.moveTo(p[0] + 0.8, p[1] - 0.8); g.lineTo(p[0] - 0.8, p[1] + 0.8); g.stroke();
+      });
+    } else {
+      [[8.8, 6.9], [11, 6.9]].forEach(function (p) {
+        g.fillStyle = '#ffffff';
+        g.beginPath(); g.ellipse(p[0], p[1], 0.95, 1.2, 0, 0, Math.PI * 2); g.fill(); trazar(g, 0.5);
+        g.fillStyle = OUT;
+        g.beginPath(); g.arc(p[0] + 0.35, p[1] + 0.3, 0.55, 0, Math.PI * 2); g.fill();
+      });
+    }
+
+    // nariz y bigote
+    g.fillStyle = PIEL[1];
+    g.beginPath(); g.ellipse(12.3, 8, 1, 1.1, 0, 0, Math.PI * 2); g.fill(); trazar(g, 0.5);
+    g.fillStyle = '#3a2212';
+    rr(g, 8.4, 8.7, 3.9, 1.1, 0.55); g.fill();
+  }
+
+  // Posición de brazos (ángulos) y piernas (desplazamiento y levantamiento) según el estado
+  function pose(estado, t) {
+    const ph = Math.sin(t * 12), ph2 = Math.sin(t * 7);
+    switch (estado) {
+      case 'andar':
+        return { bI: -ph * 0.6, bD: ph * 0.6,
+                 pI: { dx: ph * 1.3, lift: Math.max(0, ph) * 1.1 },
+                 pD: { dx: -ph * 1.3, lift: Math.max(0, -ph) * 1.1 } };
+      case 'salto':
+        return { bI: 2.5, bD: -2.5, pI: { dx: -1.2, lift: 0.8 }, pD: { dx: 1, lift: 0.4 } };
+      case 'caer':
+        return { bI: 1.3, bD: -1.3, pI: { dx: -0.6, lift: 0 }, pD: { dx: 0.6, lift: 0 } };
+      case 'escalera':
+        return { bI: 2.2 + ph2 * 0.5, bD: -2.2 - ph2 * 0.5,
+                 pI: { dx: ph2 * 0.8, lift: Math.max(0, ph2) * 0.8 },
+                 pD: { dx: -ph2 * 0.8, lift: Math.max(0, -ph2) * 0.8 } };
+      case 'muerto':
+        return { bI: 2.6, bD: -2.6, pI: { dx: -1.5, lift: 0 }, pD: { dx: 1.5, lift: 0 } };
+      default:
+        return { bI: 0.15, bD: -0.15, pI: { dx: 0, lift: 0 }, pD: { dx: 0, lift: 0 } };
+    }
+  }
+
+  // Dibuja al protagonista. x, y: esquina de la caja de colisión (12 × 14)
+  function dibujar(g, x, y, opt) {
+    opt = opt || {};
+    const dir = opt.dir < 0 ? -1 : 1;
+    const estado = opt.estado || 'quieto';
+    const camisa = opt.camisa === 'fuego' ? BLANCO : ROJO;
+    const p = pose(estado, opt.tiempo || 0);
+
+    g.save();
+    g.translate(Math.round(x) - 2, Math.round(y) - 4);
+    if (dir < 0) { g.translate(16, 0); g.scale(-1, 1); }
+
+    // orden de dibujo: brazos y piernas detrás del cuerpo, cabeza al final
+    brazo(g, 4.8, 10.8, p.bI, camisa);
+    brazo(g, 11.2, 10.8, p.bD, camisa);
+    pierna(g, 6.3, p.pI.dx, p.pI.lift);
+    pierna(g, 9.7, p.pD.dx, p.pD.lift);
+    torso(g, camisa);
+    cabeza(g, estado);
+
+    g.restore();
+  }
+
+  global.Protagonista = { dibujar: dibujar, ESTADOS: ['quieto', 'andar', 'salto', 'caer', 'escalera', 'muerto'] };
+})(typeof window !== 'undefined' ? window : globalThis);
 
 /* =====================================================================
-   5c. PERSONAJE CON VOLUMEN Y DETALLE (dibujado a resolución real)
-   Cada pose tiene varios frames. El cuerpo mide 16 px de ancho y 22 de
-   alto (30 si es grande). Los pies siempre quedan en la misma fila.
-   Cabeza, torso, brazos y piernas son esferas y cilindros sombreados.
+   5c. PERSONAJE: protagonista.js dibujado sobre el jugador
+   La caja de colisión mide 12 × 16 (grande: 12 × 26). protagonista.js
+   dibuja sobre una caja de 12 × 14 con los pies en su borde inferior,
+   así que el dibujo se escala para que su caja coincida con el hitbox.
    ===================================================================== */
-const HERO_PAL = Object.assign(
-  { k: "#000000", w: "#ffffff" },
-  coloresRK(RK.cafe, "#7c4a1e"),
-  coloresRK(RK.crema, "#fcc4a8"),
-  coloresRK(RK.rojo, "#e52521"),
-  coloresRK(RK.overol, "#2f5fd6"),
-  coloresRK(RK.blanco, "#f2f2f2"),
-  coloresRK(RK.oro, "#ffd23f"),
-);
-const PIE_STAND = [[4, 20], [9, 20]];   // [x izquierda, fila superior del zapato]
-
-// Pinta el personaje según las opciones de la pose (medidas lógicas)
-function heroeLienzo(o) {
-  const alto = o.alto || 22;
-  const extra = alto - 22;                 // filas extra del grande
-  const L = new Lienzo(16, alto);
-  const c = o.cuerpo || 0;                 // desplazamiento vertical de cabeza, torso y brazos
-  const dx = o.cabeza || 0;                // inclinación horizontal de la cabeza
-  const ancho = o.ancho || 8;
-  const tx = 8 - ancho / 2;                // columna izquierda del torso
-  const camisa = o.camisa === "fuego" ? RK.blanco : RK.rojo;
-
-  // 1) Piernas: cilindros de overol y zapatos redondeados con brillo
-  for (const [x, pie] of o.pierna || PIE_STAND) {
-    const arriba = 13 + extra, zap = pie + extra;
-    L.cilindro(x, 3, arriba, zap - arriba, RK.overol);
-    L.esfera(x + 1.5, zap + 1.0, 2.5, 1.3, RK.cafe);
-    L.pfl(x + 0.6, zap + 0.6, RK.cafe.h);
-  }
-  // 2) Torso: camisa con volumen, cintura del overol y botones brillantes
-  L.cilindro(tx, ancho, 7 + c, 4 + extra, camisa);
-  L.cilindro(tx, ancho, 11 + c + extra, 2, RK.overol);
-  L.esfera(tx + 1.6, 8.8 + c, 0.8, 0.8, RK.oro);
-  L.esfera(tx + ancho - 1.6, 8.8 + c, 0.8, 0.8, RK.oro);
-  // 3) Brazos: mangas cilíndricas y guantes blancos redondeados
-  const [bl, br] = o.brazos || [0, 0];
-  L.cilindro(tx - 2, 2, 8 + c + bl, 3, camisa);
-  L.esfera(tx - 1, 11.6 + c + bl, 1.3, 1.2, RK.blanco);
-  L.cilindro(tx + ancho, 2, 8 + c + br, 3, camisa);
-  L.esfera(tx + ancho + 1, 11.6 + c + br, 1.3, 1.2, RK.blanco);
-  // 4) Gorra: cúpula, visera con sombra y emblema blanco
-  L.esfera(8 + dx, 3.2 + c, 4.7, 3.2, RK.rojo, 4 + c);
-  L.esfera(8.4 + dx, 4.7 + c, 5.6, 1.0, RK.rojo, 5.8 + c);
-  L.esfera(8 + dx, 1.9 + c, 1.1, 1.1, RK.blanco);
-  // 5) Cara: orejas, patillas, ojos con brillo, nariz, bigote y boca
-  L.esfera(8 + dx, 6.4 + c, 4.0, 3.4, RK.crema, 9.8 + c);
-  L.esfera(4.0 + dx, 6.3 + c, 0.9, 1.1, RK.crema);
-  L.esfera(12.0 + dx, 6.3 + c, 0.9, 1.1, RK.crema);
-  L.caja(3 + dx, 5 + c, 1, 2, RK.cafe.h);
-  L.caja(12 + dx, 5 + c, 1, 2, RK.cafe.d);
-  if (o.ojos === "x") {
-    // Ojos cruzados (daño y muerte)
-    for (const x of [6.5, 10.5]) {
-      for (const [sx, sy] of [[-0.5, -0.5], [0.5, 0.5], [0.5, -0.5], [-0.5, 0.5]]) L.pfl(x + dx + sx, 5.6 + c + sy, "k");
-    }
-  } else {
-    L.elipse(6.1 + dx, 5.6 + c, 1.0, 1.4, "w");
-    L.elipse(10.0 + dx, 5.6 + c, 1.0, 1.4, "w");
-    L.caja(6 + dx, 5 + c, 1, 2, "k");
-    L.caja(10 + dx, 5 + c, 1, 2, "k");
-    L.pfl(6.2 + dx, 5.2 + c, "w");
-    L.pfl(10.2 + dx, 5.2 + c, "w");
-  }
-  L.esfera(8.7 + dx, 7.3 + c, 0.9, 0.9, RK.crema);
-  L.esfera(8 + dx, 8.5 + c, 2.3, 0.9, RK.cafe, 9.6 + c);
-  L.caja(7 + dx, 10 + c, 2, 1, RK.cafe.D);
-  return L.filas();
-}
-
-// Poses y sus frames. "frame" se elige en Player según la velocidad o el tiempo.
-const POSES_HEROE = {
-  quieto: [
-    { pierna: PIE_STAND, brazos: [0, 0] },
-    { pierna: PIE_STAND, brazos: [1, 1], cuerpo: 1 },           // respiración
-  ],
-  andar: [
-    { pierna: [[3, 20], [10, 19]], brazos: [-1, 1] },
-    { pierna: [[5, 20], [8, 20]], brazos: [0, 0] },
-    { pierna: [[10, 19], [3, 20]], brazos: [1, -1] },
-    { pierna: [[8, 20], [5, 20]], brazos: [0, 0] },
-  ],
-  correr: [
-    { pierna: [[2, 17], [10, 20]], brazos: [-2, 2], cabeza: 1 },
-    { pierna: [[5, 20], [9, 20]], brazos: [0, 0], cabeza: 1, cuerpo: 1 },
-    { pierna: [[10, 17], [3, 20]], brazos: [2, -2], cabeza: 1 },
-    { pierna: [[7, 20], [6, 20]], brazos: [0, 0], cabeza: 1, cuerpo: 1 },
-  ],
-  salto: [{ pierna: [[3, 18], [10, 17]], brazos: [-5, -5] }],
-  caida: [{ pierna: [[2, 19], [11, 19]], brazos: [-3, -3] }],
-  frenado: [{ pierna: [[1, 20], [12, 20]], brazos: [-1, -1], cabeza: -1 }],
-  agachado: [{ pierna: PIE_STAND, brazos: [3, 3], cuerpo: 4 }],
-  giro: [
-    { pierna: PIE_STAND, ancho: 8 },
-    { pierna: PIE_STAND, ancho: 6 },
-    { pierna: PIE_STAND, ancho: 4 },
-    { pierna: PIE_STAND, ancho: 6 },
-  ],
-  dano: [{ pierna: PIE_STAND, brazos: [-1, -1], cuerpo: 1, ojos: "x" }],
-  muerto: [{ pierna: [[4, 21], [9, 21]], brazos: [-5, -5], ojos: "x" }],
+// Pose de protagonista.js para cada pose del jugador (ver calcularPose en Player)
+const POSE_PROTA = {
+  quieto: "quieto", andar: "andar", correr: "andar", giro: "salto", salto: "salto",
+  caida: "caer", frenado: "quieto", agachado: "quieto", dano: "quieto", muerto: "muerto",
 };
 
-const heroeCache = new Map();
-// Devuelve el sprite de una pose/frame (cacheado). big = grande, fire = con flor de fuego
-function heroeSprite(pose, frame, big, fire) {
-  const lista = POSES_HEROE[pose] || POSES_HEROE.quieto;
-  const i = mod(frame, lista.length);
-  const key = pose + "-" + i + "-" + (big ? 1 : 0) + (fire ? 1 : 0);
-  if (!heroeCache.has(key)) {
-    const o = Object.assign({ alto: big ? 30 : 22, camisa: fire ? "fuego" : "rojo" }, lista[i]);
-    heroeCache.set(key, spriteFromRows(heroeLienzo(o), HERO_PAL, true, false, false));
-  }
-  return heroeCache.get(key);
+// Dibuja al protagonista con los pies en (px, py), centrado en px.
+// alto: alto de su caja de colisión (16 pequeño, 26 grande).
+// opt: estado, dir, tiempo (avance de las piernas), sx/sy (escala extra), inclina (radianes), camisa
+function dibujarProtagonista(px, py, alto, opt) {
+  const { sx = 1, sy = 1, inclina = 0 } = opt;
+  const s = alto / 14;
+  ctx.save();
+  ctx.translate(Math.round(px), Math.round(py));
+  ctx.rotate(inclina);
+  ctx.scale(s * sx, s * sy);
+  Protagonista.dibujar(ctx, -6, -14, { dir: opt.dir, estado: opt.estado, tiempo: opt.tiempo, camisa: opt.camisa });
+  ctx.restore();
 }
 
 /* =====================================================================
@@ -3036,12 +3121,10 @@ class Player {
     this.x = x; this.y = y;
     this.vx = 0; this.vy = 0;
     this.w = 12; this.h = 16;   // hitbox pequeño (el sprite es de 16x22)
-    this.pose = "quieto";       // pose visual actual (ver heroeSprite)
-    this.frame = 0;
+    this.pose = "quieto";       // pose visual actual (ver dibujarJugador)
     this.zancada = 0;           // distancia recorrida en el suelo: marca el ciclo de piernas
     this.frenadoT = 0;          // tiempo de derrape al cambiar de dirección a toda velocidad
     this.aterrizajeT = 0;       // tiempo de aplastamiento al aterrizar
-    this.spinAnim = 0;          // reloj del giro
     this.facing = 1;
     this.onGround = false;
     this.coyoteT = 0;        // tiempo desde que dejó el suelo
@@ -3179,9 +3262,8 @@ class Player {
     if (this.x < 0) { this.x = 0; this.vx = 0; }
   }
 
-  // Elige la pose visual y el frame según el estado (usa heroeSprite)
+  // Elige la pose visual según el estado (la dibuja dibujarJugador) y avanza las piernas al andar
   calcularPose(dt) {
-    if (this.spinT > 0) this.spinAnim += dt;
     if (this.dead) this.pose = "muerto";
     else if (this.hurtT > 0) this.pose = "dano";
     else if (this.spinT > 0) this.pose = "giro";
@@ -3192,11 +3274,6 @@ class Player {
     else if (Math.abs(this.vx) > 25) this.pose = "andar";
     else this.pose = "quieto";
     if (this.onGround && (this.pose === "andar" || this.pose === "correr")) this.zancada += Math.abs(this.vx) * dt;
-    const f = this.pose === "andar" ? this.zancada / 13
-      : this.pose === "correr" ? this.zancada / 17
-      : this.pose === "giro" ? this.spinAnim * 18
-      : this.pose === "quieto" ? this.animT * 1.6 : 0;
-    this.frame = Math.floor(f);
   }
 }
 
@@ -3866,20 +3943,23 @@ class Level {
   dibujarJugador(game, cam) {
     const p = this.player;
     if (p.hurtT > 0 && Math.floor(p.hurtT * 14) % 2 === 0) return; // parpadeo de daño
-    const alto = p.big ? 30 : 22;
-    const sp = heroeSprite(p.pose, p.frame, p.big, p.fire);
-    // Pivote en los pies (centro del hitbox): ahí se aplican el giro y el aplastamiento
-    const px = Math.round(p.x + p.w / 2 - cam.x), py = Math.round(p.y + p.h - cam.y);
+    // Pivote en los pies (centro del hitbox): ahí se aplican el giro, la inclinación y el aplastamiento
+    const px = p.x + p.w / 2 - cam.x, py = p.y + p.h - cam.y;
     const aplasta = p.aterrizajeT > 0;
-    ctx.save();
-    ctx.translate(px, py);
-    ctx.scale((p.facing < 0 ? -1 : 1) * (aplasta ? 1.15 : 1), aplasta ? 0.85 : 1);
-    ctx.drawImage(sp, -sp.lw / 2 - sp.pad, -sp.lh - sp.pad, sp.width / U, sp.height / U);
-    ctx.restore();
+    // Las piernas avanzan con la distancia recorrida; al correr avanzan más deprisa
+    dibujarProtagonista(px, py, p.h, {
+      estado: POSE_PROTA[p.pose] || "quieto",
+      dir: p.facing,
+      tiempo: p.zancada / (p.pose === "correr" ? 50 : 60),
+      sx: p.pose === "giro" ? Math.cos((PHYS.spinTime - p.spinT) * 15) : aplasta ? 1.15 : 1,
+      sy: p.pose === "agachado" ? 0.72 : aplasta ? 0.85 : 1,
+      inclina: p.pose === "frenado" ? p.facing * 0.12 : 0,
+      camisa: p.fire ? "fuego" : undefined,
+    });
     // Estrella: destello de colores sobre la cabeza
     if (p.star > 0) {
       const c = [PAL.r, PAL.y, PAL.lb, PAL.g][Math.floor(p.animT * 16) % 4];
-      rect(px - 1, py - alto - 4, 2, 2, c);
+      rect(px - 1, py - p.h - 4, 2, 2, c);
     }
   }
 }
@@ -4114,7 +4194,6 @@ class Game {
     const p = this.lvl.player;
     p.dead = true;
     p.pose = "muerto";
-    p.frame = 0;
     p.vx = 0;
     p.vy = -320;   // rebote de muerte (sin colisiones)
     this.estado = "muerte";
@@ -4336,7 +4415,7 @@ class Overworld {
     // Cursor: el jugador parpadea sobre el nodo actual
     const n = nodos[this.cur];
     if (Math.floor(this.t * 4) % 2 === 0) {
-      drawSprite(heroeSprite("quieto", 0, false, false), n.x - 8, n.y - 28);
+      dibujarProtagonista(n.x, n.y - 6, 16, { estado: "quieto", dir: 1 });
     }
     ctx.restore();
     // Cabecera con el nombre del mundo
@@ -4412,7 +4491,7 @@ function dibujarJuego(game) {
     // Personaje, mensajes y panel se anclan al suelo del escenario (OY)
     ctx.save();
     ctx.translate(0, OY);
-    drawSprite(heroeSprite("quieto", 0, false, false), W / 2 - 8, 154);
+    dibujarProtagonista(W / 2, 176, 16, { estado: "quieto", dir: 1 });
     const parpadeo = Math.floor(performance.now() / 500) % 2 === 0;
     rect(0, 186, W, 38, "rgba(0,0,0,0.45)");
     if (parpadeo) txt("PULSA ENTER", W / 2, 192, PAL.w, "center");
