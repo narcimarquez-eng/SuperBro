@@ -33,6 +33,36 @@
     display: block;
     background: #000;
   }
+  /* Controles táctiles: solo se muestran en pantallas con puntero "grueso" */
+  #pad {
+    display: none;
+    position: fixed;
+    left: 0; right: 0; bottom: 0;
+    height: 30%;
+    pointer-events: none;
+    touch-action: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  #pad .grupo { position: absolute; bottom: 12px; display: flex; gap: 10px; pointer-events: auto; }
+  #pad .izq { left: 14px; }
+  #pad .der { right: 14px; align-items: flex-end; }
+  #pad button {
+    width: 58px; height: 58px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.8);
+    background: rgba(0,0,0,0.35);
+    color: #fff;
+    font: bold 14px "Courier New", monospace;
+    touch-action: none;
+  }
+  #pad button.on { background: rgba(255,255,255,0.45); }
+  #pad button.peq { width: 40px; height: 40px; font-size: 11px; }
+  #pad .top { position: absolute; top: 8px; right: 8px; display: flex; gap: 8px; pointer-events: auto; }
+  @media (pointer: coarse) {
+    #pad { display: block; }
+    #hint { display: none; }
+  }
   #hint {
     position: fixed;
     bottom: 6px;
@@ -47,6 +77,21 @@
 </head>
 <body>
 <canvas id="c" width="256" height="224"></canvas>
+<div id="pad">
+  <div class="grupo izq">
+    <button data-act="left">&#9664;</button>
+    <button data-act="right">&#9654;</button>
+  </div>
+  <div class="grupo der">
+    <button class="peq" data-act="spin">GIRO</button>
+    <button data-act="run">X</button>
+    <button data-act="jump">SALTO</button>
+  </div>
+  <div class="top">
+    <button class="peq" data-act="enter">OK</button>
+    <button class="peq" data-act="pause">II</button>
+  </div>
+</div>
 <div id="hint">Flechas: mover · Z/Espacio: saltar · X: correr/disparar · C/Shift: salto giratorio · Enter: entrar · P/Esc: pausa</div>
 <script>
 "use strict";
@@ -65,9 +110,11 @@ const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled = false;
 
-// Escala entera máxima que cabe en la ventana (píxeles duros, sin interpolar)
+// Escala máxima que cabe en la ventana. Entera si hay espacio (píxeles duros);
+// en móviles se usa fraccionaria para no quedar diminuto.
 function resize() {
-  const s = Math.max(1, Math.floor(Math.min(innerWidth / W, innerHeight / H)));
+  const ajuste = Math.min(innerWidth / W, innerHeight / H);
+  const s = ajuste >= 2 ? Math.floor(ajuste) : Math.max(0.5, ajuste);
   canvas.style.width = (W * s) + "px";
   canvas.style.height = (H * s) + "px";
 }
@@ -192,6 +239,22 @@ addEventListener("keyup", (e) => {
 // Al perder el foco se sueltan todas las teclas para evitar "teclas pegadas"
 addEventListener("blur", () => {
   for (const k in held) held[k] = 0;
+});
+
+/* Botones táctiles: cada botón con data-act se comporta como una tecla */
+document.querySelectorAll("#pad [data-act]").forEach((b) => {
+  const act = b.dataset.act;
+  b.addEventListener("pointerdown", (e) => {
+    e.preventDefault();
+    b.setPointerCapture(e.pointerId);
+    held[act] = 1;
+    pressed[act] = true;   // flanco de subida, igual que una tecla
+    b.classList.add("on");
+  });
+  const soltar = () => { held[act] = 0; b.classList.remove("on"); };
+  b.addEventListener("pointerup", soltar);
+  b.addEventListener("pointercancel", soltar);
+  b.addEventListener("lostpointercapture", soltar);
 });
 
 // Consume un "pressed" para que solo actúe una vez por pulsación
