@@ -1,0 +1,2106 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SuperBro</title>
+<style>
+  /* Paleta de la interfaz: tonos fijos tipo SNES, sin degradados */
+  :root {
+    --bg: #0c0f1d;
+    --panel: #1d2240;
+    --line: #f8f8f8;
+    --txt: #ffffff;
+    --gold: #ffd23f;
+  }
+  html, body {
+    margin: 0;
+    height: 100%;
+    background: var(--bg);
+    overflow: hidden;
+    font-family: "Courier New", monospace;
+    color: var(--txt);
+  }
+  body {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  /* El canvas interno es 256x224; se escala de forma entera y con píxeles duros */
+  canvas {
+    image-rendering: pixelated;
+    image-rendering: crisp-edges;
+    display: block;
+    background: #000;
+  }
+  #hint {
+    position: fixed;
+    bottom: 6px;
+    left: 0;
+    right: 0;
+    text-align: center;
+    font-size: 12px;
+    opacity: 0.55;
+    pointer-events: none;
+  }
+</style>
+</head>
+<body>
+<canvas id="c" width="256" height="224"></canvas>
+<div id="hint">Flechas: mover · Z/Espacio: saltar · X: correr/disparar · C/Shift: salto giratorio · Enter: entrar · P/Esc: pausa</div>
+<script>
+"use strict";
+
+/* =====================================================================
+   1. CONSTANTES Y UTILIDADES BASE
+   ===================================================================== */
+const W = 256;             // resolución interna (ancho)
+const H = 224;             // resolución interna (alto)
+const TILE = 16;           // tamaño de tile en píxeles
+const GRAVITY = 900;       // px/s²
+const MAX_FALL = 360;      // velocidad máxima de caída
+const SAVE_KEY = "superbro_save_v1";
+
+const canvas = document.getElementById("c");
+const ctx = canvas.getContext("2d");
+ctx.imageSmoothingEnabled = false;
+
+// Escala entera máxima que cabe en la ventana (píxeles duros, sin interpolar)
+function resize() {
+  const s = Math.max(1, Math.floor(Math.min(innerWidth / W, innerHeight / H)));
+  canvas.style.width = (W * s) + "px";
+  canvas.style.height = (H * s) + "px";
+}
+addEventListener("resize", resize);
+resize();
+
+const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
+const rnd = (a, b) => a + Math.random() * (b - a);
+const rndi = (a, b) => Math.floor(rnd(a, b + 1));
+const aabb = (a, b) =>
+  a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+
+/* =====================================================================
+   2. PALETA SNES LIMITADA
+   Cada tema de mundo solo reemplaza algunos de estos colores.
+   ===================================================================== */
+const PAL = {
+  k: "#000000", // negro / contorno
+  w: "#ffffff",
+  r: "#e52521", // rojo Mario-like (propio, no copiado)
+  b: "#2f5fd6", // azul
+  y: "#ffd23f", // amarillo
+  o: "#f88c14", // naranja
+  s: "#fcc4a8", // piel
+  br: "#7c4a1e", // marrón
+  g: "#43b043", // verde
+  dg: "#1f6b2a", // verde oscuro
+  d: "#1f6b2a",  // sombra de verde (caparazones y plantas)
+  gr: "#8a8fa6", // gris
+  dgr: "#3b3f55", // gris oscuro
+  lb: "#6ec8ff", // celeste
+  pk: "#ff6fa8", // rosa
+};
+
+/* =====================================================================
+   3. SPRITES POR MATRIZ DE CARACTERES
+   Cada carácter de la matriz es una clave de PAL. "." = transparente.
+   Se pre-renderizan a canvas para dibujar rápido.
+   ===================================================================== */
+const spriteCache = new Map();
+
+function spriteFromRows(rows, pal = PAL) {
+  const h = rows.length;
+  const w = rows[0].length;
+  const c = document.createElement("canvas");
+  c.width = w;
+  c.height = h;
+  const g = c.getContext("2d");
+  for (let y = 0; y < h; y++) {
+    for (let x = 0; x < w; x++) {
+      const ch = rows[y][x];
+      if (ch === "." || !pal[ch]) continue;
+      g.fillStyle = pal[ch];
+      g.fillRect(x, y, 1, 1);
+    }
+  }
+  return c;
+}
+
+// Devuelve el canvas de un sprite, cacheado por clave
+function getSprite(key, rows, pal) {
+  if (!spriteCache.has(key)) spriteCache.set(key, spriteFromRows(rows, pal));
+  return spriteCache.get(key);
+}
+
+// Dibuja un sprite en coordenadas enteras de canvas (cámara ya restada)
+function drawSprite(sp, x, y, flipX = false) {
+  x = Math.round(x);
+  y = Math.round(y);
+  if (flipX) {
+    ctx.save();
+    ctx.translate(x + sp.width, y);
+    ctx.scale(-1, 1);
+    ctx.drawImage(sp, 0, 0);
+    ctx.restore();
+  } else {
+    ctx.drawImage(sp, x, y);
+  }
+}
+
+// Rectángulo sólido de color fijo (para bloques, HUD, fondos)
+function rect(x, y, w, h, color) {
+  ctx.fillStyle = color;
+  ctx.fillRect(Math.round(x), Math.round(y), w, h);
+}
+
+/* =====================================================================
+   4. ENTRADA
+   Estados "pressed" (flanco de subida) y "held" (mantenido).
+   ===================================================================== */
+const keys = {};     // tecla -> true mientras está pulsada
+const pressed = {};  // tecla -> true solo el frame en que se pulsó
+const KEYMAP = {
+  ArrowLeft: "left", KeyA: "left",
+  ArrowRight: "right", KeyD: "right",
+  ArrowUp: "up", KeyW: "up",
+  ArrowDown: "down", KeyS: "down",
+  Space: "jump", KeyZ: "jump",
+  KeyX: "run",
+  KeyC: "spin", ShiftLeft: "spin", ShiftRight: "spin",
+  Enter: "enter",
+  KeyP: "pause", Escape: "pause",
+};
+const held = { left: 0, right: 0, up: 0, down: 0, jump: 0, run: 0, spin: 0, enter: 0, pause: 0 };
+
+addEventListener("keydown", (e) => {
+  const act = KEYMAP[e.code];
+  if (!act) return;
+  e.preventDefault();
+  if (!e.repeat) pressed[act] = true;
+  held[act] = 1;
+});
+addEventListener("keyup", (e) => {
+  const act = KEYMAP[e.code];
+  if (!act) return;
+  held[act] = 0;
+});
+// Al perder el foco se sueltan todas las teclas para evitar "teclas pegadas"
+addEventListener("blur", () => {
+  for (const k in held) held[k] = 0;
+});
+
+// Consume un "pressed" para que solo actúe una vez por pulsación
+function consume(action) {
+  if (pressed[action]) {
+    pressed[action] = false;
+    return true;
+  }
+  return false;
+}
+
+/* =====================================================================
+   5. DATOS DE SPRITES (matrices de píxeles)
+   Son datos puros: para cambiar el look, edita las matrices.
+   ===================================================================== */
+const SPR = {
+  // Jugador pequeño 12x14: gorra roja, overol azul
+  playerIdle: [
+    "....kkkk....",
+    "...krrrrk...",
+    "..krrrrrrk..",
+    "..kbbbbbbk..",
+    "..kssssssk..",
+    ".ksksskssk..",
+    ".kssssssssk.",
+    "..ssssssss..",
+    "...bbyybb...",
+    "..bbbbbbbb..",
+    ".bbbbbbbbbb.",
+    ".ssbbbbbbss.",
+    "..bb....bb..",
+    ".kkk....kkk.",
+  ],
+  playerRun1: [
+    "....kkkk....",
+    "...krrrrk...",
+    "..krrrrrrk..",
+    "..kbbbbbbk..",
+    "..kssssssk..",
+    ".ksksskssk..",
+    ".kssssssssk.",
+    "..ssssssss..",
+    "...bbyybb...",
+    "..bbbbbbbb..",
+    ".bbbbbbbbbb.",
+    "..bbbbbbbbs.",
+    "..kk..kkk...",
+    ".kkk....kk..",
+  ],
+  playerRun2: [
+    "....kkkk....",
+    "...krrrrk...",
+    "..krrrrrrk..",
+    "..kbbbbbbk..",
+    "..kssssssk..",
+    ".ksksskssk..",
+    ".kssssssssk.",
+    "..ssssssss..",
+    "...bbyybb...",
+    "..bbbbbbbb..",
+    ".bbbbbbbbbb.",
+    "s.bbbbbbbb..",
+    "..kkk..kk...",
+    "...kk....kkk",
+  ],
+  playerJump: [
+    "....kkkk....",
+    "...krrrrk...",
+    "..krrrrrrk..",
+    "..kbbbbbbk..",
+    "..kssssssk..",
+    ".ksksskssk..",
+    ".kssssssssk.",
+    "..ssssssss..",
+    ".bbbyybbbb..",
+    "bbbbbbbbbbb.",
+    "ssbbbbbbbss.",
+    "...bbbbbb...",
+    "..kk....kk..",
+    ".kk......kk.",
+  ],
+  playerDuck: [
+    "............",
+    "............",
+    "............",
+    "............",
+    "............",
+    "............",
+    "............",
+    "............",
+    "....kkkk....",
+    "...krrrrk...",
+    "..krrrrrrk..",
+    "..kbbbbbbk..",
+    ".bbbbbbbbbb.",
+    ".kkkkkkkkkk.",
+  ],
+  playerHurt: [
+    "............",
+    "............",
+    "............",
+    "....kkkk....",
+    "...krrrrk...",
+    "..krrrrrrk..",
+    "..kssssssk..",
+    ".ksksskssk..",
+    ".kssssssssk.",
+    "..ssssssss..",
+    "...bbyybb...",
+    ".bbbbbbbbbb.",
+    "..bb....bb..",
+    ".kkk....kkk.",
+  ],
+  // Jugador grande: misma cabeza, cuerpo más alto (20 px)
+  bigIdle: [
+    "....kkkk....",
+    "...krrrrk...",
+    "..krrrrrrk..",
+    "..kbbbbbbk..",
+    "..kssssssk..",
+    ".ksksskssk..",
+    ".kssssssssk.",
+    "..ssssssss..",
+    "...bbyybb...",
+    "..bbbbbbbb..",
+    ".bbbbbbbbbb.",
+    ".bbbbbbbbbb.",
+    ".ssbbbbbbss.",
+    "..bbbbbbbb..",
+    "..bb....bb..",
+    "..bb....bb..",
+    ".bbb....bbb.",
+    ".kkk....kkk.",
+    "............",
+    "............",
+  ],
+  // Goomba-like (caminante)
+  walker: [
+    "....kkkkkk..",
+    "..kkbbbbbbkk",
+    ".kbbbbbbbbbk",
+    ".kbwkbbkwkbk",
+    ".kbwkbbkwkbk",
+    "kkkbbbbbbkkk",
+    "kbbbbbbbbbbk",
+    ".kkkkkkkkkk.",
+    "..ssssssss..",
+    ".kkkkkkkkkk.",
+  ],
+  walkerSquash: [
+    "............",
+    "............",
+    "............",
+    "............",
+    "............",
+    "............",
+    "............",
+    "............",
+    "kkkkkkkkkkkk",
+    "kbbbbbbbbbbk",
+    "kkkkkkkkkkkk",
+    "............",
+  ],
+  // Caparazón (verde)
+  shell: [
+    "...kkkkkk...",
+    "..kgggggk...",
+    ".kgggggggk..",
+    ".kggdggdgk..",
+    ".kgggggggk..",
+    "kkkkkkkkkkkk",
+    "ksssssssssk.",
+    ".kkkkkkkkkk.",
+  ],
+  // Volador (tortuga alada simplificada)
+  flyer: [
+    "..w....w....",
+    ".wkkkkkkw...",
+    "wkgggggggk..",
+    "wkgggggggkk.",
+    "kkkgggggkk..",
+    ".kssssssk...",
+    ".kkkkkkkk...",
+  ],
+  // Planta de tubería
+  plant: [
+    "...kkkkkk...",
+    "..krrwrrrk..",
+    ".krrwrrwrrk.",
+    ".krrrrrrrrk.",
+    "..kkgggkk...",
+    "....gggg....",
+    "...gdgggg...",
+    "....gggg....",
+    "...dggggd...",
+    "....gggg....",
+  ],
+  // Moneda girando: 4 fases de ancho
+  coin0: ["..kkkk..", ".kyyyyk.", "kyyyyyyk", "kyyyyyyk", "kyyyyyyk", "kyyyyyyk", ".kyyyyk.", "..kkkk.."],
+  coin1: ["...kk...", "...yyk..", "...yyk..", "...yyk..", "...yyk..", "...yyk..", "...yyk..", "...kk..."],
+  coin2: ["....k...", "....yk..", "....yk..", "....yk..", "....yk..", "....yk..", "....yk..", "....k..."],
+  // Hongo de crecimiento
+  mushroom: [
+    "...kkkkkk...",
+    "..krrwwrrk..",
+    ".krrwwwwrrk.",
+    ".krwwrrwwrk.",
+    "kkkkkkkkkkkk",
+    "..kssssssk..",
+    "..ksksskssk.",
+    "...kkkkkk...",
+  ],
+  // Flor de fuego
+  flower: [
+    "....oooo....",
+    "...oyyyyo...",
+    "..oyyrryyo..",
+    "...oyyyyo...",
+    "....kgk.....",
+    "..kggkgggk..",
+    "...kkgkkk...",
+    "....kgk.....",
+    "...kgggk....",
+    "....kkk.....",
+  ],
+  // Pluma (capa)
+  feather: [
+    "........kk..",
+    ".......kwwk.",
+    "......kwwwk.",
+    ".....kwwwwk.",
+    "....kwwwwk..",
+    "...kwwwwk...",
+    "..kwwwk.....",
+    ".kkkk.......",
+  ],
+  // Estrella
+  star: [
+    "....yy......",
+    "....yy......",
+    "...yyyy.....",
+    "yyyyyyyyyy..",
+    ".yyyyyyyy...",
+    "..yyyyyy....",
+    "..yy..yy....",
+    ".yy....yy...",
+  ],
+  // Bloques: 16x16
+  brick: [
+    "kkkkkkkkkkkkkkkk",
+    "kOOOOOOOkOOOOOOk",
+    "kOOOOOOOkOOOOOOk",
+    "kOOOOOOOkOOOOOOk",
+    "kkkkkkkkkkkkkkkk",
+    "kOOOkOOOOOOOkOOk",
+    "kOOOkOOOOOOOkOOk",
+    "kOOOkOOOOOOOkOOk",
+    "kkkkkkkkkkkkkkkk",
+    "kOOOOOOOkOOOOOOk",
+    "kOOOOOOOkOOOOOOk",
+    "kOOOOOOOkOOOOOOk",
+    "kkkkkkkkkkkkkkkk",
+    "kOOOkOOOOOOOkOOk",
+    "kOOOkOOOOOOOkOOk",
+    "kkkkkkkkkkkkkkkk",
+  ],
+  qblock: [
+    "kkkkkkkkkkkkkkkk",
+    "kYYYYYYYYYYYYYYk",
+    "kYYYYYYYYYYYYYYk",
+    "kYYYYkkkkkkYYYYk",
+    "kYYYYkWWWWkYYYYk",
+    "kYYYYkkkkWWYYYYk",
+    "kYYYYYYYYWWYYYYk",
+    "kYYYYYYYWWYYYYYk",
+    "kYYYYYYYWWYYYYYk",
+    "kYYYYYYYYYYYYYYk",
+    "kYYYYYYYWWYYYYYk",
+    "kYYYYYYYWWYYYYYk",
+    "kYYYYYYYYYYYYYYk",
+    "kYYYYYYYYYYYYYYk",
+    "kYYYYYYYYYYYYYYk",
+    "kkkkkkkkkkkkkkkk",
+  ],
+  usedBlock: [
+    "kkkkkkkkkkkkkkkk",
+    "kUUUUUUUUUUUUUUk",
+    "kUUUUUUUUUUUUUUk",
+    "kUUUUUUUUUUUUUUk",
+    "kUUUUUUUUUUUUUUk",
+    "kUUUUUUUUUUUUUUk",
+    "kUUUUUUUUUUUUUUk",
+    "kUUUUUUUUUUUUUUk",
+    "kUUUUUUUUUUUUUUk",
+    "kUUUUUUUUUUUUUUk",
+    "kUUUUUUUUUUUUUUk",
+    "kUUUUUUUUUUUUUUk",
+    "kUUUUUUUUUUUUUUk",
+    "kUUUUUUUUUUUUUUk",
+    "kUUUUUUUUUUUUUUk",
+    "kkkkkkkkkkkkkkkk",
+  ],
+  // Suelo sólido 16x16. Las letras mayúsculas (O, Y, G, W, F) son colores
+  // del TEMA del mundo: cada tema aporta su propia paleta de bloques.
+  ground: [
+    "GGGGGGGGGGGGGGGG",
+    "GgggGGGGGgggGGgG",
+    "GGGGGGGGGGGGGGGG",
+    "GGgGGGGGGGGGgGGG",
+    "GGGGGGGGGGGGGGGG",
+    "GgGGGGGGGGgGGGGG",
+    "GGGGGGGGGGGGGGGG",
+    "GGGGGGgGGGGGGGgG",
+    "GGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGG",
+    "GGGGGgGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGG",
+  ],
+};
+
+/* =====================================================================
+   6. DATOS DE MUNDOS Y NIVELES  (separados de la lógica)
+   ---------------------------------------------------------------------
+   Para AÑADIR un mundo: copia un objeto de MUNDOS, cambia id, nombre,
+   paleta, niveles y nodos del mapa. Ver las instrucciones al final.
+
+   Cada nivel tiene:
+     nombre   : texto que aparece en la pantalla de nivel
+     tiempo   : segundos del temporizador
+     gen      : especificación para GENERAR el mapa de tiles:
+                  seed      -> semilla (mismo número = mismo nivel)
+                  dif       -> 1 (fácil) .. 8 (muy difícil)
+                  enemigos  -> tipos que pueden aparecer:
+                               "walker" | "shell" | "flyer" | "plant"
+     mapa     : (opcional) array de strings con tiles escritos a mano,
+                 sobrescribe a gen. Ver LEYENDA_MAPA en la lógica.
+     jefe     : true => el último tramo lo ocupa el jefe (castillo)
+
+   Paleta del mundo (claves de colores de tema):
+     cielo, lejos (montañas), cerca (colinas), arbusto,
+     G (suelo), g (detalle del suelo), O (ladrillo), Y (bloque ?),
+     U (bloque usado), tubo (tuberías)
+   ===================================================================== */
+const MUNDOS = [
+  {
+    id: 1,
+    nombre: "Pradera",
+    tema: "pradera",
+    paleta: {
+      cielo: "#5c94fc", lejos: "#6d8cd8", cerca: "#3f9e4a", arbusto: "#2f7d3a",
+      G: "#c0703a", g: "#43b043", O: "#e07a3a", Y: "#ffd23f", U: "#8a8fa6", tubo: "#43b043",
+    },
+    // Mapa del overworld: nodos con coordenadas en la pantalla 256x224
+    // vec = índices de nodos conectados. ref = índice en niveles.
+    mapa: {
+      nodos: [
+        { x: 30,  y: 170, ref: 0, vec: [1] },
+        { x: 80,  y: 130, ref: 1, vec: [0, 2] },
+        { x: 130, y: 160, ref: 2, vec: [1, 3] },
+        { x: 175, y: 110, ref: 3, vec: [2, 4] },
+        { x: 220, y: 60,  ref: 4, vec: [3], castillo: true },
+      ],
+    },
+    niveles: [
+      { nombre: "1-1 Pradera", tiempo: 300, gen: { seed: 101, dif: 1, enemigos: ["walker"] } },
+      { nombre: "1-2 Colinas", tiempo: 300, gen: { seed: 102, dif: 1, enemigos: ["walker", "shell"] } },
+      { nombre: "1-3 Huecos", tiempo: 300, gen: { seed: 103, dif: 2, enemigos: ["walker", "shell", "flyer"] } },
+      { nombre: "1-4 Tubos", tiempo: 280, gen: { seed: 104, dif: 2, enemigos: ["walker", "shell", "plant"] } },
+      { nombre: "1-C Castillo", tiempo: 250, jefe: true, gen: { seed: 105, dif: 3, enemigos: ["walker", "shell", "flyer", "plant"] } },
+    ],
+  },
+  {
+    id: 2,
+    nombre: "Desierto",
+    tema: "desierto",
+    paleta: {
+      cielo: "#f7c880", lejos: "#d99a5b", cerca: "#e8b06a", arbusto: "#7a9a3a",
+      G: "#e0b060", g: "#c08840", O: "#c06a30", Y: "#ffd23f", U: "#8a6a4a", tubo: "#3f8a3f",
+    },
+    mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
+    niveles: [
+      { nombre: "2-C Pirámide", tiempo: 300, jefe: true, placeholder: true, gen: { seed: 201, dif: 4, enemigos: ["walker", "shell"] } },
+    ],
+  },
+  {
+    id: 3,
+    nombre: "Bosque",
+    tema: "bosque",
+    paleta: {
+      cielo: "#2d6b3a", lejos: "#245a2f", cerca: "#1d4d28", arbusto: "#16381e",
+      G: "#6b4a2a", g: "#3f8a3f", O: "#8a5a2a", Y: "#ffd23f", U: "#5a5a4a", tubo: "#2f7d3a",
+    },
+    mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
+    niveles: [
+      { nombre: "3-C Bosque", tiempo: 300, jefe: true, placeholder: true, gen: { seed: 301, dif: 4, enemigos: ["walker", "flyer"] } },
+    ],
+  },
+  {
+    id: 4,
+    nombre: "Cueva",
+    tema: "cueva",
+    paleta: {
+      cielo: "#2a2438", lejos: "#3b3350", cerca: "#4a4262", arbusto: "#3b3350",
+      G: "#5a5470", g: "#7a7290", O: "#6a6480", Y: "#ffd23f", U: "#3b3950", tubo: "#5a5470",
+    },
+    mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
+    niveles: [
+      { nombre: "4-C Cueva", tiempo: 300, jefe: true, placeholder: true, gen: { seed: 401, dif: 5, enemigos: ["walker", "shell"] } },
+    ],
+  },
+  {
+    id: 5,
+    nombre: "Hielo",
+    tema: "hielo",
+    paleta: {
+      cielo: "#a8dcf5", lejos: "#c8e8f8", cerca: "#e6f6ff", arbusto: "#8fc8e0",
+      G: "#b8e0f0", g: "#ffffff", O: "#7fb8d8", Y: "#ffd23f", U: "#8aa6b4", tubo: "#6ec8ff",
+    },
+    mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
+    niveles: [
+      { nombre: "5-C Glaciar", tiempo: 300, jefe: true, placeholder: true, gen: { seed: 501, dif: 5, enemigos: ["walker", "flyer"] } },
+    ],
+  },
+  {
+    id: 6,
+    nombre: "Agua",
+    tema: "agua",
+    paleta: {
+      cielo: "#1f5fa8", lejos: "#2a74c0", cerca: "#2f86d0", arbusto: "#2a6fb0",
+      G: "#c9b070", g: "#e0c890", O: "#a08050", Y: "#ffd23f", U: "#6a6a7a", tubo: "#43b043",
+    },
+    mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
+    niveles: [
+      { nombre: "6-C Océano", tiempo: 300, jefe: true, placeholder: true, gen: { seed: 601, dif: 6, enemigos: ["shell", "flyer"] } },
+    ],
+  },
+  {
+    id: 7,
+    nombre: "Castillo",
+    tema: "castillo",
+    paleta: {
+      cielo: "#1a1a2e", lejos: "#2a2a44", cerca: "#363656", arbusto: "#2a2a44",
+      G: "#6a6a7a", g: "#8a8a9a", O: "#5a5a6a", Y: "#ffd23f", U: "#3a3a4a", tubo: "#6a6a7a",
+    },
+    mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
+    niveles: [
+      { nombre: "7-C Fortaleza", tiempo: 300, jefe: true, placeholder: true, gen: { seed: 701, dif: 7, enemigos: ["walker", "shell", "plant"] } },
+    ],
+  },
+  {
+    id: 8,
+    nombre: "Cielo",
+    tema: "cielo",
+    paleta: {
+      cielo: "#9ad8ff", lejos: "#ffffff", cerca: "#f0f8ff", arbusto: "#ffffff",
+      G: "#fff4c8", g: "#ffd23f", O: "#e0e8ff", Y: "#ffd23f", U: "#b8c4e0", tubo: "#ffd23f",
+    },
+    mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
+    niveles: [
+      { nombre: "8-C Torre final", tiempo: 300, jefe: true, placeholder: true, gen: { seed: 801, dif: 8, enemigos: ["walker", "shell", "flyer", "plant"] } },
+    ],
+  },
+];
+
+/* =====================================================================
+   7. GENERADOR DE NIVELES
+   Convierte la especificación "gen" (o un "mapa" escrito a mano) en:
+     { cols, rows, tiles[][], ents[], goalX, theme, boss }
+   Tiles: "." vacío, "G" suelo, "B" ladrillo, "Q" bloque ?, "S" bloque
+          sólido, "T" tubería, "F" poste de meta.
+   Entidades: "walker" "shell" "flyer" "plant" "coin" "boss".
+   ===================================================================== */
+const LEYENDA_MAPA = {
+  ".": null, G: "G", B: "B", Q: "Q", S: "S", T: "T", F: "F",
+  w: "walker", s: "shell", f: "flyer", p: "plant", c: "coin", J: "boss",
+};
+const ROWS = 14;           // 14 tiles * 16px = 224px de alto
+const GY = 11;             // fila del suelo (la superior)
+const ITEMS_Q = ["moneda", "moneda", "hongo", "hongo", "flor", "pluma", "estrella"];
+
+// Generador pseudoaleatorio determinista (mulberry32): misma semilla = mismo nivel
+function prng(seed) {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Crea una rejilla vacía
+function gridVacia(cols) {
+  const t = [];
+  for (let r = 0; r < ROWS; r++) t.push(new Array(cols).fill("."));
+  return t;
+}
+
+/* Genera un nivel a partir de gen = { seed, dif, enemigos, huecos? } */
+function generarNivel(gen) {
+  const rnd01 = prng(gen.seed);
+  const r = (a, b) => a + rnd01() * (b - a);
+  const ri = (a, b) => Math.floor(r(a, b + 1));
+  const dif = clamp(gen.dif || 1, 1, 8);
+  const tipos = gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"];
+  const cols = 188;                 // ~3000px de ancho
+  const tiles = gridVacia(cols);
+  const ents = [];
+
+  // Límites de las 3 secciones: abierta, plataformas flotantes y meta
+  const A1 = 90, B1 = 146, C1 = 180;
+  const gapMax = Math.min(4, 2 + Math.floor(dif / 3)); // huecos saltables
+
+  // Suelo base con huecos controlados (nunca dos huecos juntos)
+  const suelo = new Array(cols).fill(true);
+  let c = 6;
+  while (c < C1) {
+    const seccionB = c >= A1 && c < B1;
+    if (seccionB && rnd01() < 0.25 + dif * 0.04) {
+      const w = ri(2, gapMax);
+      for (let k = 0; k < w && c + k < cols; k++) suelo[c + k] = false;
+      c += w + ri(3, 5);            // al menos 3 tiles de suelo entre huecos
+    } else {
+      c += ri(4, 9);
+    }
+  }
+  for (let x = 0; x < cols; x++) {
+    if (!suelo[x]) continue;
+    for (let y = GY; y < ROWS; y++) tiles[y][x] = "G";
+  }
+
+  // Escalones y bloques sólidos en la zona de meta
+  for (let x = C1; x < cols - 4; x++) {
+    const alto = clamp(Math.floor((x - C1) / 2) + 1, 1, 6);
+    for (let k = 0; k < alto && GY - 1 - k >= 0; k++) {
+      if (suelo[x]) tiles[GY - 1 - k][x] = "S";
+    }
+  }
+  // Suelo final
+  for (let x = C1; x < cols; x++) if (suelo[x]) for (let y = GY; y < ROWS; y++) tiles[y][x] = "G";
+  const goalX = cols - 4;
+  for (let y = 4; y < GY; y++) tiles[y][goalX] = "F";
+
+  // Sección abierta: bloques ? y ladrillos
+  for (let x = 12; x < A1; x++) {
+    if (rnd01() < 0.06 + dif * 0.005) {
+      const row = 7;
+      if (rnd01() < 0.5) {
+        tiles[row][x] = "Q";
+      } else {
+        for (let k = 0; k < ri(1, 3) && x + k < A1; k++) tiles[row][x + k] = "B";
+      }
+      x += 4;
+    }
+  }
+  // Sección de plataformas flotantes: ladrillos y ? en el aire
+  for (let x = A1; x < B1; x++) {
+    if (rnd01() < 0.1) {
+      const row = ri(6, 8);
+      const n = ri(2, 4);
+      for (let k = 0; k < n && x + k < B1; k++) {
+        if (!tiles[row][x + k] || tiles[row][x + k] === ".") {
+          tiles[row][x + k] = k === 1 && rnd01() < 0.4 ? "Q" : "B";
+        }
+      }
+      x += n + 2;
+    }
+  }
+
+  // Tuberías con plantas (si el enemigo "plant" está permitido)
+  if (tipos.includes("plant")) {
+    for (let x = 30; x < B1; x += ri(22, 30)) {
+      if (!suelo[x] || !suelo[x + 1]) continue;
+      tiles[GY - 1][x] = "T"; tiles[GY - 2][x] = "T";
+      tiles[GY - 1][x + 1] = "T"; tiles[GY - 2][x + 1] = "T";
+      ents.push({ t: "plant", x: x * TILE + 1, y: (GY - 2) * TILE - 8 });
+    }
+  }
+
+  // Enemigos caminantes/caparazones/voladores sobre el suelo
+  const nEnem = 4 + dif * 2;
+  for (let i = 0; i < nEnem; i++) {
+    const x = ri(10, C1 - 4);
+    if (!suelo[x] || x < 12 || tiles[GY - 1][x] !== ".") continue;
+    const t = tipos[ri(0, tipos.length - 1)];
+    if (t === "plant") continue;
+    if (t === "flyer") {
+      ents.push({ t, x: x * TILE, y: ri(3, 7) * TILE });
+    } else {
+      ents.push({ t, x: x * TILE, y: (GY - 1) * TILE });
+    }
+  }
+
+  // Monedas en arcos sobre el suelo (zona abierta y plataformas)
+  for (let x = 16; x < B1; x += ri(10, 16)) {
+    const n = ri(3, 5);
+    for (let k = 0; k < n; k++) {
+      const yArc = 8 - Math.round(Math.sin((k / (n - 1)) * Math.PI) * 2);
+      ents.push({ t: "coin", x: (x + k) * TILE + 4, y: yArc * TILE + 4 });
+    }
+  }
+
+  // Bloques ? con contenido elegido por la semilla
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < cols; x++) {
+    if (tiles[y][x] === "Q") {
+      ents.push({ t: "qitem", x: x * TILE, y: y * TILE, item: ITEMS_Q[ri(0, ITEMS_Q.length - 1)] });
+    }
+  }
+
+  // Jefe al final de la zona de escalones, si el nivel es de castillo
+  if (gen.jefe) {
+    ents.push({ t: "boss", x: (C1 - 16) * TILE, y: (GY - 1) * TILE - 16 });
+  }
+
+  // El inicio siempre está libre de enemigos
+  return {
+    cols, rows: ROWS, tiles,
+    ents: ents.filter((e) => e.x >= 10 * TILE),
+    start: { x: 3 * TILE, y: (GY - 2) * TILE },
+    goalX: goalX * TILE,
+    theme: gen.theme || null,
+    boss: !!gen.jefe,
+  };
+}
+
+/* Convierte un mapa escrito a mano (array de strings) en el mismo formato */
+function parsearMapa(strs) {
+  const cols = strs[0].length;
+  const tiles = gridVacia(cols);
+  const ents = [];
+  let start = { x: 3 * TILE, y: (GY - 2) * TILE };
+  let goalX = (cols - 4) * TILE;
+  for (let y = 0; y < ROWS; y++) for (let x = 0; x < cols; x++) {
+    const ch = strs[y] && strs[y][x] ? strs[y][x] : ".";
+    const tipo = LEYENDA_MAPA[ch];
+    if (ch === "@") { start = { x: x * TILE, y: y * TILE }; continue; }
+    if (tipo === undefined) continue;
+    if (tipo === null) continue;
+    if (["G", "B", "Q", "S", "T", "F"].includes(tipo)) {
+      tiles[y][x] = tipo;
+      if (tipo === "F") goalX = x * TILE;
+      if (tipo === "Q") ents.push({ t: "qitem", x: x * TILE, y: y * TILE, item: "moneda" });
+    } else {
+      ents.push({ t: tipo, x: x * TILE, y: y * TILE });
+    }
+  }
+  return { cols, rows: ROWS, tiles, ents, start, goalX, theme: null, boss: false };
+}
+
+/* Punto de entrada: usa el mapa escrito a mano si existe, si no genera */
+function construirNivel(def, tema) {
+  const lv = def.mapa ? parsearMapa(def.mapa) : generarNivel(Object.assign({ theme: tema }, def.gen, { jefe: def.jefe }));
+  lv.nombre = def.nombre;
+  lv.tiempo = def.tiempo || 300;
+  return lv;
+}
+
+/* =====================================================================
+   8. COLISIÓN CON TILES Y FÍSICA DEL JUGADOR
+   Movimiento por ejes: primero X (y paredes), luego Y (suelo/techo).
+   ===================================================================== */
+const SOLIDOS = { G: 1, B: 1, Q: 1, S: 1, T: 1, U: 1 };
+
+// Devuelve el carácter del tile en (col,fila); fuera del nivel: lateral = pared, abajo = vacío
+function tileAt(lvl, col, row) {
+  if (col < 0 || col >= lvl.cols) return "S";
+  if (row < 0) return ".";
+  if (row >= lvl.rows) return ".";
+  return lvl.tiles[row][col];
+}
+
+// Recorre los tiles que toca un rectángulo y devuelve true si alguno es sólido
+function tocaSolido(lvl, x, y, w, h) {
+  const c0 = Math.floor(x / TILE), c1 = Math.floor((x + w - 0.01) / TILE);
+  const r0 = Math.floor(y / TILE), r1 = Math.floor((y + h - 0.01) / TILE);
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+    if (SOLIDOS[tileAt(lvl, c, r)]) return true;
+  }
+  return false;
+}
+
+/* Mueve una entidad {x,y,w,h,vx,vy} resolviendo colisiones por ejes.
+   Devuelve { lado, techo, suelo } para saber qué tocó. */
+function moverEntidad(lvl, e, dt) {
+  const res = { pared: false, techo: false, suelo: false };
+  // --- Eje X ---
+  e.x += e.vx * dt;
+  if (tocaSolido(lvl, e.x, e.y, e.w, e.h)) {
+    res.pared = true;
+    if (e.vx > 0) e.x = Math.floor((e.x + e.w) / TILE) * TILE - e.w;
+    else e.x = Math.floor(e.x / TILE + 1) * TILE;
+    e.vx = 0;
+  }
+  // --- Eje Y ---
+  e.y += e.vy * dt;
+  if (tocaSolido(lvl, e.x, e.y, e.w, e.h)) {
+    if (e.vy > 0) {
+      e.y = Math.floor((e.y + e.h) / TILE) * TILE - e.h;
+      res.suelo = true;
+    } else {
+      e.y = Math.floor(e.y / TILE + 1) * TILE;
+      res.techo = true;
+    }
+    e.vy = 0;
+  }
+  return res;
+}
+
+/* =====================================================================
+   9. JUGADOR
+   Estados: pequeño/grande, fuego, capa (planeo) e invencible (estrella).
+   ===================================================================== */
+const PHYS = {
+  walkAccel: 700, runAccel: 900, airAccel: 520,
+  maxWalk: 95, maxRun: 165,
+  friction: 620,
+  jumpV: 300, jumpHoldG: 520,  // gravedad reducida mientras se mantiene salto
+  spinV: 250, spinTime: 0.42,
+  coyote: 0.1, buffer: 0.12,
+  glideV: 70, glideTime: 1.6,  // planeo con capa
+  shellSpeed: 230,
+};
+
+class Player {
+  constructor(x, y) {
+    this.x = x; this.y = y;
+    this.vx = 0; this.vy = 0;
+    this.w = 10; this.h = 14;
+    this.facing = 1;
+    this.onGround = false;
+    this.coyoteT = 0;        // tiempo desde que dejó el suelo
+    this.bufferT = 0;        // tiempo desde que se pulsó saltar
+    this.jumping = false;    // salto en curso (se puede soltar para cortarlo)
+    this.spinT = 0;          // temporizador del salto giratorio
+    this.glideT = 0;         // planeo restante
+    this.big = false;
+    this.fire = false;
+    this.cape = false;
+    this.star = 0;           // segundos de invencibilidad
+    this.hurtT = 0;          // segundos de animación de daño / invulnerabilidad
+    this.animT = 0;          // reloj de animación
+    this.carrying = null;    // caparazón que lleva en la mano
+    this.dead = false;
+    this.duck = false;
+  }
+
+  // Aplica el estado de tamaño (pequeño = 10x14, grande = 10x20)
+  setBig(b) {
+    if (b === this.big) return;
+    const bottom = this.y + this.h;
+    this.big = b;
+    this.h = b ? 20 : 14;
+    this.y = bottom - this.h; // crece hacia arriba, nunca se mete en el suelo
+  }
+
+  get invencible() { return this.star > 0 || this.hurtT > 0; }
+
+  // Hace daño: reduce el poder o muere si era pequeño
+  golpear() {
+    if (this.invencible) return "ignorado";
+    if (this.fire || this.cape) { this.fire = false; this.cape = false; this.hurtT = 1.5; return "pierde-poder"; }
+    if (this.big) { this.setBig(false); this.hurtT = 1.5; return "encoge"; }
+    this.dead = true;
+    return "muere";
+  }
+
+  // Lógica del jugador por frame (entrada + física + colisiones)
+  update(dt, lvl, game) {
+    this.animT += dt;
+    if (this.star > 0) this.star -= dt;
+    if (this.hurtT > 0) this.hurtT -= dt;
+
+    const izq = held.left, der = held.right;
+    const corre = held.run > 0;
+    this.duck = held.down && this.onGround && this.big;
+
+    // --- Movimiento horizontal ---
+    const dir = (der ? 1 : 0) - (izq ? 1 : 0);
+    const maxV = corre ? PHYS.maxRun : PHYS.maxWalk;
+    const acc = this.onGround ? (corre ? PHYS.runAccel : PHYS.walkAccel) : PHYS.airAccel;
+    if (dir !== 0 && !this.duck) {
+      this.facing = dir;
+      if (Math.abs(this.vx) < maxV || Math.sign(this.vx) !== dir) this.vx += dir * acc * dt;
+      if (Math.abs(this.vx) > maxV) this.vx = Math.sign(this.vx) * Math.max(maxV, Math.abs(this.vx) - 400 * dt);
+    } else {
+      // Fricción: frena suavemente al soltar la dirección
+      const f = PHYS.friction * dt;
+      if (Math.abs(this.vx) <= f) this.vx = 0;
+      else this.vx -= Math.sign(this.vx) * f;
+    }
+    if (this.duck) this.vx = 0;
+
+    // --- Salto: buffer (recordar pulsación) y coyote time (saltar tras caer) ---
+    if (consume("jump")) this.bufferT = PHYS.buffer;
+    else this.bufferT -= dt;
+    this.coyoteT = this.onGround ? PHYS.coyote : this.coyoteT - dt;
+
+    if (this.bufferT > 0 && this.coyoteT > 0 && !this.duck) {
+      this.vy = -PHYS.jumpV - Math.abs(this.vx) * 0.25;
+      this.bufferT = 0; this.coyoteT = 0;
+      this.jumping = true;
+      this.onGround = false;
+      game.sfx("salto");
+    }
+
+    // --- Salto giratorio (C / Shift): rebota y rompe bloques giratorios ---
+    if (consume("spin") && !this.onGround && this.spinT <= 0) {
+      this.spinT = PHYS.spinTime;
+      this.vy = Math.min(this.vy, -PHYS.spinV * 0.5);
+      game.sfx("giro");
+    }
+    if (this.spinT > 0) this.spinT -= dt;
+
+    // --- Planeo con capa: mantener salto en el aire ---
+    if (this.cape && !this.onGround && held.jump && this.vy > 0 && this.glideT > 0) {
+      this.vy = Math.min(this.vy, PHYS.glideV);
+      this.glideT -= dt;
+    }
+    if (this.onGround) this.glideT = PHYS.glideTime;
+
+    // --- Gravedad: más suave si se mantiene salto subiendo (salto variable) ---
+    const subiendoConSalto = this.vy < 0 && held.jump && this.jumping;
+    const g = subiendoConSalto ? PHYS.jumpHoldG : GRAVITY;
+    if (!(this.cape && held.jump && this.glideT > 0 && this.vy >= 0 && this.vy <= PHYS.glideV)) {
+      this.vy += g * dt;
+    }
+    if (this.vy > MAX_FALL) this.vy = MAX_FALL;
+    if (this.vy >= 0) this.jumping = false;
+    if (!held.jump && this.vy < -120) this.vy = -120; // corta el salto al soltar
+
+    // --- Colisiones ---
+    const r = moverEntidad(lvl, this, dt);
+    if (r.pared) this.vx = 0;
+    if (r.techo) {
+      game.golpearDesdeAbajo(this);
+    }
+    this.onGround = r.suelo;
+    if (r.suelo) this.jumping = false;
+
+    // Caer fuera del nivel
+    if (this.y > lvl.rows * TILE + 40) this.dead = true;
+
+    // Límite izquierdo del nivel
+    if (this.x < 0) { this.x = 0; this.vx = 0; }
+  }
+}
+
+/* =====================================================================
+   10. ENEMIGOS, JEFE, MONEDAS, OBJETOS Y PARTÍCULAS
+   ===================================================================== */
+
+/* Enemigo genérico. t = "walker" | "shell" | "flyer" | "plant" | "caparazon"
+   - walker: camina, da la vuelta en paredes y cae en huecos.
+   - shell: como walker, pero al pisarlo se convierte en caparazón.
+   - caparazon: quieto (se puede empujar) o deslizándose (mata enemigos).
+   - flyer: vuela en onda senoidal, sin gravedad.
+   - plant: sale y entra de una tubería, no se puede pisar. */
+class Enemy {
+  constructor(t, x, y) {
+    this.t = t;
+    this.x = x; this.y = y;
+    this.vx = 0; this.vy = 0;
+    this.alive = true;
+    this.anim = 0;
+    this.baseY = y;
+    this.slideT = 0;     // tiempo que lleva el caparazón deslizándose
+    this.muerteT = 0;    // animación de muerte antes de desaparecer
+    const dims = { walker: [12, 10], shell: [12, 10], caparazon: [12, 10], flyer: [12, 9], plant: [12, 14] };
+    [this.w, this.h] = dims[t];
+    this.vx = t === "flyer" ? 0 : -28;
+    this.dir = -1;
+    this.esPeligroso = true;
+  }
+
+  // Lo llamamos cuando el jugador pisa al enemigo
+  // Devuelve "rebota" si el jugador debe rebotar
+  pisado(player, game) {
+    if (this.t === "plant") return "daña";
+    if (this.t === "walker") { this.morir(game); return "rebota"; }
+    if (this.t === "shell") {
+      this.t = "caparazon"; this.vx = 0; this.h = 8; this.w = 12; this.y += 2;
+      game.sfx("pisar");
+      return "rebota";
+    }
+    if (this.t === "caparazon") {
+      // Pisar un caparazón quieto lo empuja en la dirección del jugador
+      if (this.vx === 0) {
+        this.vx = player.x < this.x ? PHYS.shellSpeed : -PHYS.shellSpeed;
+        this.slideT = 0;
+        game.sfx("patear");
+      } else {
+        this.vx = 0; // lo detiene
+      }
+      return "rebota";
+    }
+    if (this.t === "flyer") { this.t = "walker"; this.vy = 0; game.sfx("pisar"); return "rebota"; }
+    return "daña";
+  }
+
+  morir(game) {
+    this.alive = false;
+    this.muerteT = 0.35;
+    game.puntos(100);
+    game.efectoEnemigo(this.x, this.y);
+  }
+
+  update(dt, lvl, game) {
+    this.anim += dt;
+    if (!this.alive) {
+      this.muerteT -= dt;
+      this.y += 200 * dt;
+      return;
+    }
+    if (this.t === "flyer") {
+      this.x += -40 * dt;
+      this.y = this.baseY + Math.sin(this.anim * 3) * 14;
+      if (this.x < -20) this.alive = false;
+      return;
+    }
+    if (this.t === "plant") {
+      // Ciclo de tubería: sube (visible) y baja (escondida)
+      const ciclo = (this.anim % 3) / 3;
+      const alzada = ciclo < 0.5 ? ciclo * 2 : (1 - ciclo) * 2;
+      this.y = this.baseY - 14 * Math.min(1, alzada * 1.4);
+      return;
+    }
+    if (this.t === "caparazon" && this.vx !== 0) this.slideT += dt;
+
+    // Gravedad común a caminantes y caparazones
+    this.vy += GRAVITY * dt;
+    if (this.vy > MAX_FALL) this.vy = MAX_FALL;
+    const r = moverEntidad(lvl, this, dt);
+
+    if (this.t === "caparazon") {
+      // Un caparazón deslizándose rebota en las paredes
+      if (r.pared) this.vx = -this.vx;
+      return;
+    }
+    // Caminante: da la vuelta en paredes y al borde de un hueco
+    if (r.pared) { this.dir = -this.dir; }
+    if (r.suelo && !tocaSolido(lvl, this.x + (this.dir > 0 ? this.w + 1 : -1), this.y + this.h + 1, 1, 1)) {
+      this.dir = -this.dir;
+    }
+    this.vx = 28 * this.dir;
+    // Caparazón que cae fuera del nivel desaparece
+    if (this.y > lvl.rows * TILE) this.alive = false;
+  }
+}
+
+/* Jefe del castillo: 3 golpes en la cabeza. Salta hacia el jugador. */
+class Boss {
+  constructor(x, y) {
+    this.t = "boss";
+    this.x = x; this.y = y;
+    this.w = 22; this.h = 26;
+    this.vx = 0; this.vy = 0;
+    this.hp = 3;
+    this.alive = true;
+    this.inmuneT = 0;
+    this.saltoT = 1.2;
+    this.dir = -1;
+    this.anim = 0;
+    this.muerteT = 0;
+  }
+
+  // Pisar al jefe: resta vida y rebota; sin vida, muere
+  pisado(player, game) {
+    if (this.inmuneT > 0) return "rebota";
+    this.hp--;
+    this.inmuneT = 1.0;
+    this.vy = -180;
+    game.sfx("pisar");
+    if (this.hp <= 0) {
+      this.alive = false;
+      this.muerteT = 1.2;
+      game.puntos(1000);
+      game.efectoEnemigo(this.x, this.y);
+    }
+    return "rebota";
+  }
+
+  update(dt, lvl, game, player) {
+    this.anim += dt;
+    if (!this.alive) { this.muerteT -= dt; this.y += 60 * dt; return; }
+    if (this.inmuneT > 0) this.inmuneT -= dt;
+    // Persigue al jugador: camina y salta a ritmo fijo
+    this.dir = player.x < this.x ? -1 : 1;
+    this.vx = this.dir * (34 + (3 - this.hp) * 10);
+    this.saltoT -= dt;
+    this.vy += GRAVITY * dt;
+    if (this.saltoT <= 0 && this.vy === 0) {
+      this.vy = -300;
+      this.saltoT = 1.4 - (3 - this.hp) * 0.2;
+    }
+    if (this.vy > MAX_FALL) this.vy = MAX_FALL;
+    const r = moverEntidad(lvl, this, dt);
+    if (r.pared) this.vx = 0;
+    // Límites: no sale del nivel por la izquierda ni la derecha
+    if (this.x < 40) this.x = 40;
+    if (this.x > lvl.goalX - 80) this.x = lvl.goalX - 80;
+    // Para que el jefe no quede pegado al suelo al saltar
+    if (r.suelo) this.vy = 0;
+  }
+}
+
+/* Moneda: se recoge al tocarla. Gira con 3 fotogramas. */
+class Coin {
+  constructor(x, y, suelta = false) {
+    this.x = x; this.y = y; this.w = 8; this.h = 8;
+    this.alive = true;
+    this.anim = Math.random() * 3;
+    this.suelta = suelta;   // salió de un bloque (sube y desaparece)
+    this.vy = suelta ? -150 : 0;
+    this.vidaT = suelta ? 0.5 : Infinity;
+  }
+  update(dt) {
+    this.anim += dt * 8;
+    if (this.suelta) {
+      this.y += this.vy * dt;
+      this.vy += 600 * dt;
+      this.vidaT -= dt;
+      if (this.vidaT <= 0) this.alive = false;
+    }
+  }
+}
+
+/* Objeto de bloque ?: hongo, flor, pluma o estrella. Sale del bloque y avanza. */
+class PowerUp {
+  constructor(tipo, x, y) {
+    this.tipo = tipo;
+    this.x = x; this.y = y;
+    this.w = 12; this.h = 12;
+    this.vx = tipo === "flor" ? 0 : 50;
+    this.vy = 0;
+    this.alive = true;
+    this.saliendoT = 0.4;  // sube un poco antes de empezar a moverse
+    this.yDestino = y - 16;
+  }
+  update(dt, lvl) {
+    if (this.saliendoT > 0) {
+      this.saliendoT -= dt;
+      this.y -= 40 * dt;
+      return;
+    }
+    if (this.tipo === "flor") return;
+    this.vy += GRAVITY * dt;
+    if (this.vy > MAX_FALL) this.vy = MAX_FALL;
+    const r = moverEntidad(lvl, this, dt);
+    if (r.pared) this.vx = -this.vx;
+    if (this.y > lvl.rows * TILE) this.alive = false;
+  }
+}
+
+/* Partículas pixeladas: cuadrados que caen y se desvanecen */
+const particulas = [];
+function emitir(x, y, n, colores, opts = {}) {
+  for (let i = 0; i < n; i++) {
+    particulas.push({
+      x, y,
+      vx: rnd(-(opts.spread || 80), opts.spread || 80),
+      vy: rnd(-(opts.up || 140), -(opts.up || 40)),
+      g: opts.g === undefined ? 500 : opts.g,
+      vida: rnd(0.3, opts.life || 0.6),
+      max: opts.life || 0.6,
+      color: colores[rndi(0, colores.length - 1)],
+      size: opts.size || 2,
+    });
+  }
+}
+function actualizarParticulas(dt) {
+  for (let i = particulas.length - 1; i >= 0; i--) {
+    const p = particulas[i];
+    p.vy += p.g * dt;
+    p.x += p.vx * dt;
+    p.y += p.vy * dt;
+    p.vida -= dt;
+    if (p.vida <= 0) particulas.splice(i, 1);
+  }
+}
+function dibujarParticulas(cam) {
+  for (const p of particulas) {
+    rect(p.x - cam.x, p.y - cam.y, p.size, p.size, p.color);
+  }
+}
+
+/* =====================================================================
+   11. SONIDO SENCILLO (ondas cuadradas con Web Audio, sin archivos)
+   ===================================================================== */
+const SFX = {
+  salto: [440, 660, 0.08], giro: [520, 300, 0.12], pisar: [320, 640, 0.07],
+  patear: [200, 120, 0.1], moneda: [880, 1320, 0.06], hongo: [400, 800, 0.2],
+  rompe: [150, 60, 0.12], golpe: [200, 80, 0.25], vida: [500, 1000, 0.3],
+  meta: [600, 900, 0.5], muerte: [400, 60, 0.7], estrella: [700, 1400, 0.4],
+};
+let audioCtx = null;
+function tocar(nombre) {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    const [f0, f1, dur] = SFX[nombre] || SFX.salto;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = "square";
+    o.frequency.setValueAtTime(f0, audioCtx.currentTime);
+    o.frequency.linearRampToValueAtTime(f1, audioCtx.currentTime + dur);
+    g.gain.setValueAtTime(0.04, audioCtx.currentTime);
+    g.gain.linearRampToValueAtTime(0.0001, audioCtx.currentTime + dur);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(); o.stop(audioCtx.currentTime + dur);
+  } catch (e) { /* sin audio: el juego sigue */ }
+}
+// Desbloquea el audio con la primera tecla (requisito de los navegadores)
+addEventListener("keydown", () => { if (audioCtx && audioCtx.state === "suspended") audioCtx.resume(); }, { once: false });
+
+/* =====================================================================
+   12. CÁMARA CON SUAVIZADO Y LÍMITES
+   ===================================================================== */
+class Camera {
+  constructor() { this.x = 0; this.y = 0; }
+  seguir(objetivo, lvl, dt) {
+    const destino = objetivo.x + objetivo.w / 2 - W / 2;
+    // Suavizado exponencial: se acerca rápido pero sin tirones
+    this.x += (destino - this.x) * Math.min(1, dt * 7);
+    this.x = clamp(this.x, 0, lvl.cols * TILE - W);
+    this.y = clamp(this.y, 0, Math.max(0, lvl.rows * TILE - H));
+  }
+  // Fijar cámara de golpe (al empezar el nivel)
+  centrar(objetivo, lvl) {
+    this.x = clamp(objetivo.x + objetivo.w / 2 - W / 2, 0, lvl.cols * TILE - W);
+    this.y = 0;
+  }
+}
+
+/* =====================================================================
+   13. FONDOS CON PARALLAX (capas de columnas de 1 px: look pixel art)
+   ===================================================================== */
+function dibujarCapa(camX, factor, altura, base, color, freq, amp) {
+  const off = camX * factor;
+  for (let x = 0; x < W; x++) {
+    const wx = x + off;
+    // Suma de senos: colinas suaves pero cuantizadas a píxeles
+    const h = altura + Math.round(Math.sin(wx * freq) * amp + Math.sin(wx * freq * 2.7) * amp * 0.5);
+    rect(x, h, 1, H - h, color);
+  }
+}
+function dibujarFondo(cam, pal) {
+  rect(0, 0, W, H, pal.cielo);
+  dibujarCapa(cam.x, 0.12, 110, 0, pal.lejos, 0.02, 14);   // montañas lejanas
+  dibujarCapa(cam.x, 0.35, 150, 0, pal.cerca, 0.035, 10);  // colinas
+  // Arbustos con paso de 1 tile en la capa más cercana
+  const off = Math.floor(cam.x * 0.7);
+  for (let i = 0; i < 20; i++) {
+    const bx = i * 48 - (off % 48);
+    rect(bx, 186, 28, 10, pal.arbusto);
+    rect(bx + 4, 180, 20, 6, pal.arbusto);
+  }
+}
+
+/* =====================================================================
+   14. NIVEL EN EJECUCIÓN
+   Crea entidades a partir de los datos, actualiza y dibuja.
+   ===================================================================== */
+class Level {
+  constructor(def, mundo) {
+    const data = construirNivel(def, mundo.tema);
+    this.def = def;
+    this.nombre = data.nombre;
+    this.cols = data.cols;
+    this.rows = data.rows;
+    this.tiles = data.tiles;
+    this.goalX = data.goalX;
+    this.boss = data.boss;
+    this.tiempo = data.tiempo;
+    this.pal = mundo.paleta;
+    this.temaKey = mundo.tema;   // separa la caché de sprites por tema
+    this.tilePal = this.construirPaleta(mundo.paleta);
+    this.player = new Player(data.start.x, data.start.y);
+    this.enemies = [];
+    this.coins = [];
+    this.items = [];
+    this.qItems = new Map();   // "col,fila" -> objeto del bloque ?
+    this.bossRef = null;
+    for (const e of data.ents) this.spawn(e);
+    this.cam = new Camera();
+    this.cam.centrar(this.player, this);
+    this.meta = false;         // true cuando el jugador toca el poste
+    this.metaT = 0;
+    this.tiempoRest = this.tiempo;
+  }
+
+  // Paleta de tiles = colores del tema + colores fijos de la paleta base
+  construirPaleta(p) {
+    return Object.assign({}, PAL, {
+      G: p.G, g: p.g, O: p.O, Y: p.Y, U: p.U, W: "#fff3c0", d: PAL.dg,
+    });
+  }
+
+  spawn(e) {
+    if (e.t === "coin") this.coins.push(new Coin(e.x, e.y));
+    else if (e.t === "qitem") this.qItems.set(Math.floor(e.x / TILE) + "," + Math.floor(e.y / TILE), e.item);
+    else if (e.t === "boss") { this.bossRef = new Boss(e.x, e.y); this.enemies.push(this.bossRef); }
+    else this.enemies.push(new Enemy(e.t, e.x, e.y));
+  }
+
+  // Golpe desde abajo a un tile (el jugador salta contra él)
+  golpearBloque(c, r, player, game) {
+    const t = tileAt(this, c, r);
+    if (t === "Q") {
+      this.tiles[r][c] = "U";
+      const item = this.qItems.get(c + "," + r) || "moneda";
+      this.qItems.delete(c + "," + r);
+      if (item === "moneda") {
+        this.coins.push(new Coin(c * TILE + 4, r * TILE - 8, true));
+        game.puntos(200); game.monedas++;
+        game.sfx("moneda");
+      } else {
+        this.items.push(new PowerUp(item, c * TILE + 2, r * TILE));
+        game.sfx("hongo");
+      }
+      emitir(c * TILE + 8, r * TILE, 4, [PAL.y], { up: 60, life: 0.4 });
+    } else if (t === "B") {
+      if (player.big) {
+        this.tiles[r][c] = ".";
+        emitir(c * TILE + 8, r * TILE + 8, 10, [this.pal.O, PAL.w], { up: 120, spread: 110, life: 0.6, size: 2 });
+        game.sfx("rompe");
+      } else {
+        emitir(c * TILE + 8, r * TILE, 3, [this.pal.O], { up: 40, life: 0.3 });
+        game.sfx("golpe");
+      }
+    }
+  }
+
+  // Rompe ladrillos al pasar por encima con salto giratorio
+  romperConGiro(player, game) {
+    const c0 = Math.floor(player.x / TILE), c1 = Math.floor((player.x + player.w) / TILE);
+    const r0 = Math.floor(player.y / TILE), r1 = Math.floor((player.y + player.h) / TILE);
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+      if (tileAt(this, c, r) === "B") {
+        this.tiles[r][c] = ".";
+        emitir(c * TILE + 8, r * TILE + 8, 10, [this.pal.O, PAL.w], { up: 120, spread: 110, life: 0.6 });
+        game.sfx("rompe");
+      }
+    }
+  }
+
+  actualizar(dt, game) {
+    const p = this.player;
+    // Temporizador del nivel
+    if (!this.meta) {
+      this.tiempoRest -= dt;
+      if (this.tiempoRest <= 0) { this.tiempoRest = 0; p.dead = true; }
+    }
+    p.update(dt, this, game);
+    if (p.spinT > 0) this.romperConGiro(p, game);
+
+    // Enemigos y jefe
+    for (const e of this.enemies) {
+      if (e.carried) continue; // el caparazón llevado lo mueve el jugador
+      if (e.t === "boss") e.update(dt, this, game, p);
+      else e.update(dt, this, game);
+    }
+    this.enemies = this.enemies.filter((e) => e.alive || e.muerteT > 0);
+    for (const c of this.coins) c.update(dt);
+    this.coins = this.coins.filter((c) => c.alive);
+    for (const it of this.items) it.update(dt, this);
+    this.items = this.items.filter((it) => it.alive);
+
+    game.colisionesJugador(this);
+    this.cam.seguir(p, this, dt);
+
+    // Poste de meta: al llegar, termina el nivel
+    if (!this.meta && p.x + p.w >= this.goalX) {
+      this.meta = true;
+      game.sfx("meta");
+    }
+  }
+
+  // Dibuja el nivel completo con la cámara actual
+  dibujar(game) {
+    const cam = this.cam;
+    dibujarFondo(cam, this.pal);
+    // Tiles visibles
+    const c0 = Math.max(0, Math.floor(cam.x / TILE));
+    const c1 = Math.min(this.cols - 1, Math.floor((cam.x + W) / TILE) + 1);
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = c0; c <= c1; c++) {
+        const t = this.tiles[r][c];
+        if (t === ".") continue;
+        const x = c * TILE - cam.x, y = r * TILE - cam.y;
+        this.dibujarTile(t, x, y, c, r);
+      }
+    }
+    // Monedas, objetos, enemigos
+    for (const c of this.coins) {
+      const frames = ["coin0", "coin1", "coin2", "coin1"];
+      const k = frames[Math.floor(c.anim) % 4];
+      drawSprite(getSprite(k, SPR[k], PAL), c.x - cam.x, c.y - cam.y);
+    }
+    const NOMBRE_OBJ = { hongo: "mushroom", flor: "flower", pluma: "feather", estrella: "star" };
+    for (const it of this.items) {
+      const k = NOMBRE_OBJ[it.tipo];
+      drawSprite(getSprite(k, SPR[k], PAL), it.x - cam.x, it.y - cam.y);
+    }
+    for (const e of this.enemies) this.dibujarEnemigo(e, cam);
+    this.dibujarJugador(game, cam);
+    dibujarParticulas(cam);
+  }
+
+  // Tiles: cada tipo tiene su propio sprite con los colores del tema
+  dibujarTile(t, x, y, c, r) {
+    const map = { G: "ground", B: "brick", Q: "qblock", U: "usedBlock", S: "ground", T: null, F: null };
+    if (t === "T") return this.dibujarTuberia(x, y, c, r);
+    if (t === "F") return this.dibujarPoste(x, y);
+    const key = "tile-" + this.temaKey + "-" + t;
+    const rows = SPR[map[t]];
+    const pal = this.tilePal;
+    const sp = getSprite(key, rows, pal);
+    drawSprite(sp, x, y);
+  }
+
+  dibujarTuberia(x, y, c, r) {
+    const up = tileAt(this, c, r - 1) !== "T";
+    if (up) {
+      rect(x, y, 16, 3, PAL.k);
+      rect(x + 1, y + 1, 14, 2, this.pal.tubo);
+      rect(x, y + 3, 16, 1, PAL.k);
+    } else {
+      rect(x + 2, y, 1, 16, PAL.k);
+      rect(x + 3, y, 11, 16, this.pal.tubo);
+      rect(x + 14, y, 1, 16, PAL.k);
+    }
+  }
+
+  dibujarPoste(x, y) {
+    rect(x + 6, y, 2, 16, PAL.w);
+    rect(x + 7, y, 1, 16, PAL.gr);
+  }
+
+  dibujarEnemigo(e, cam) {
+    const x = e.x - cam.x, y = e.y - cam.y;
+    if (x < -20 || x > W + 4) return;
+    let sp;
+    if (e.t === "walker") sp = getSprite("walker", SPR.walker, PAL);
+    else if (e.t === "shell") sp = getSprite("walker", SPR.walker, PAL);
+    else if (e.t === "caparazon") sp = getSprite("shell", SPR.shell, PAL);
+    else if (e.t === "flyer") sp = getSprite("flyer", SPR.flyer, PAL);
+    else if (e.t === "plant") sp = getSprite("plant", SPR.plant, PAL);
+    else if (e.t === "boss") return this.dibujarJefe(e, cam);
+    if (!sp) return;
+    // Caminantes aplastados al morir
+    if (!e.alive && (e.t === "walker" || e.t === "shell")) {
+      drawSprite(getSprite("walkerSquash", SPR.walkerSquash, PAL), x, y + 4);
+      return;
+    }
+    drawSprite(sp, x, y, e.dir > 0 && e.t !== "plant" && e.t !== "flyer");
+  }
+
+  dibujarJefe(b, cam) {
+    // Jefe: bloque grande con ojos; parpadea al ser inmune
+    if (b.inmuneT > 0 && Math.floor(b.inmuneT * 12) % 2 === 0) return;
+    const x = Math.round(b.x - cam.x), y = Math.round(b.y - cam.y);
+    rect(x, y, b.w, b.h, PAL.dgr);
+    rect(x + 2, y + 2, b.w - 4, b.h - 4, PAL.gr);
+    rect(x + 4, y + 6, 4, 4, PAL.w);
+    rect(x + b.w - 8, y + 6, 4, 4, PAL.w);
+    rect(x + 5, y + 7, 2, 2, PAL.k);
+    rect(x + b.w - 7, y + 7, 2, 2, PAL.k);
+    // Barra de vida: 3 cuadritos
+    for (let i = 0; i < 3; i++) rect(x + 4 + i * 5, y - 4, 4, 2, i < b.hp ? PAL.r : PAL.dgr);
+  }
+
+  dibujarJugador(game, cam) {
+    const p = this.player;
+    if (p.hurtT > 0 && Math.floor(p.hurtT * 14) % 2 === 0) return; // parpadeo de daño
+    let nombre;
+    if (p.duck) nombre = "playerDuck";
+    else if (!p.onGround) nombre = "playerJump";
+    else if (Math.abs(p.vx) > 20) nombre = Math.floor(p.animT * 12) % 2 ? "playerRun1" : "playerRun2";
+    else nombre = "playerIdle";
+    if (p.big && (nombre === "playerIdle" || nombre === "playerRun1" || nombre === "playerRun2" || nombre === "playerJump")) nombre = "bigIdle";
+    if (p.dead) nombre = "playerHurt";
+    if (p.spinT > 0) nombre = "playerJump";
+    const rows = SPR[nombre];
+    const pal = p.fire ? Object.assign({}, PAL, { b: PAL.w, r: PAL.o }) : PAL;
+    const sp = getSprite(nombre + (p.fire ? "-fire" : ""), rows, pal);
+    // Dibuja alineado a los pies del hitbox
+    const sx = Math.round(p.x + p.w / 2 - sp.width / 2 - cam.x);
+    const sy = Math.round(p.y + p.h - sp.height - cam.y);
+    drawSprite(sp, sx, sy, p.facing < 0);
+    // Estrella: destello de colores
+    if (p.star > 0) {
+      const c = [PAL.r, PAL.y, PAL.lb, PAL.g][Math.floor(p.animT * 16) % 4];
+      rect(sx + Math.floor(sp.width / 2) - 1, sy - 2, 2, 2, c);
+    }
+  }
+}
+
+/* =====================================================================
+   15. JUEGO: estados, colisiones y progreso
+   Estados: "titulo" | "selMundo" | "overworld" | "nivel" | "pausa"
+            | "muerte" | "nivelOK" | "mundoOK" | "gameover" | "final"
+   ===================================================================== */
+class Game {
+  constructor() {
+    this.estado = "titulo";
+    this.mundoIdx = 0;        // índice en MUNDOS
+    this.nivelIdx = 0;        // índice en MUNDOS[mundoIdx].niveles
+    this.lvl = null;          // Level en ejecución
+    this.vidas = 3;
+    this.monedas = 0;
+    this.score = 0;
+    this.timerEstado = 0;     // para pantallas que pasan solas (muerte, nivelOK...)
+    this.selMundo = 0;        // cursor en la pantalla de selección de mundo
+    this.ov = null;           // Overworld activo
+    this.completados = {};    // "mundo:ref" -> true
+    this.cargarProgreso();
+  }
+
+  // ---------- Progreso (localStorage, envuelto en try/catch) ----------
+  cargarProgreso() {
+    try {
+      const raw = localStorage.getItem(SAVE_KEY);
+      if (!raw) return;
+      const d = JSON.parse(raw);
+      this.completados = d.completados || {};
+      this.mundoIdx = clamp(d.mundoIdx || 0, 0, MUNDOS.length - 1);
+      this.monedas = d.monedas || 0;
+      this.score = d.score || 0;
+    } catch (e) { /* save corrupto o bloqueado: empezamos de cero */ }
+  }
+  guardarProgreso() {
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify({
+        completados: this.completados, mundoIdx: this.mundoIdx,
+        monedas: this.monedas, score: this.score,
+      }));
+    } catch (e) { /* sin almacenamiento: el juego sigue funcionando */ }
+  }
+  borrarProgreso() {
+    try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* nada que borrar */ }
+    this.completados = {}; this.mundoIdx = 0; this.monedas = 0; this.score = 0;
+  }
+
+  // Un nivel está desbloqueado si es el primero o el anterior está completado
+  nivelDesbloqueado(mIdx, ref) {
+    const m = MUNDOS[mIdx];
+    const nodo = m.mapa.nodos.find((n) => n.ref === ref);
+    if (!nodo) return false;
+    if (ref === 0) return this.mundoDesbloqueado(mIdx);
+    return this.completados[mIdx + ":" + (ref - 1)] === true;
+  }
+  mundoDesbloqueado(mIdx) {
+    if (mIdx === 0) return true;
+    // Cada mundo se desbloquea al completar el castillo del anterior
+    const prev = MUNDOS[mIdx - 1];
+    const castillo = prev.niveles.length - 1;
+    return this.completados[(mIdx - 1) + ":" + castillo] === true;
+  }
+
+  // ---------- Utilidades llamadas por las entidades ----------
+  puntos(n) { this.score += n; }
+  sfx(n) { tocar(n); }
+  efectoEnemigo(x, y) { emitir(x + 6, y + 6, 8, [PAL.w, PAL.y], { up: 90, spread: 90, life: 0.4 }); }
+
+  // Golpe contra un bloque sobre la cabeza del jugador
+  golpearDesdeAbajo(p) {
+    const r = Math.floor((p.y - 1) / TILE);
+    const c0 = Math.floor((p.x + 2) / TILE), c1 = Math.floor((p.x + p.w - 2) / TILE);
+    for (const c of [c0, c1]) {
+      const t = tileAt(this.lvl, c, r);
+      if (t === "Q" || t === "B") { this.lvl.golpearBloque(c, r, p, this); return; }
+    }
+  }
+
+  // Lanzamiento o recogida de caparazones con el botón X
+  manejarCaparazon(lvl, p) {
+    if (p.carrying) {
+      const e = p.carrying;
+      e.carried = false;
+      e.vx = p.facing * PHYS.shellSpeed;
+      e.slideT = 0;
+      p.carrying = null;
+      this.sfx("patear");
+      return;
+    }
+    for (const e of lvl.enemies) {
+      if (e.t !== "caparazon" || e.vx !== 0 || e.carried) continue;
+      if (aabb({ x: p.x - 4, y: p.y, w: p.w + 8, h: p.h }, e)) {
+        e.carried = true;
+        p.carrying = e;
+        this.sfx("moneda");
+        return;
+      }
+    }
+  }
+
+  // Colisiones del jugador con objetos, monedas, enemigos, jefe y meta
+  colisionesJugador(lvl) {
+    const p = lvl.player;
+    const hitbox = { x: p.x, y: p.y, w: p.w, h: p.h };
+
+    // Caparazón llevado: se queda delante del jugador
+    if (p.carrying) {
+      p.carrying.x = p.facing > 0 ? p.x + p.w : p.x - p.carrying.w;
+      p.carrying.y = p.y + p.h - p.carrying.h;
+    }
+    if (consume("run")) this.manejarCaparazon(lvl, p);
+
+    // Objetos de bloque ?
+    for (const it of lvl.items) {
+      if (!aabb(hitbox, it)) continue;
+      it.alive = false;
+      if (it.tipo === "hongo") { p.setBig(true); this.puntos(1000); }
+      else if (it.tipo === "flor") { p.setBig(true); p.fire = true; this.puntos(1000); }
+      else if (it.tipo === "pluma") { p.cape = true; p.glideT = PHYS.glideTime; this.puntos(1000); }
+      else if (it.tipo === "estrella") { p.star = 10; this.puntos(1000); }
+      this.sfx(it.tipo === "estrella" ? "estrella" : "hongo");
+    }
+
+    // Monedas
+    for (const c of lvl.coins) {
+      if (!c.alive) continue;
+      if (aabb(hitbox, c)) {
+        c.alive = false;
+        this.monedas++;
+        this.puntos(100);
+        if (this.monedas % 100 === 0) { this.vidas++; this.sfx("vida"); }
+        else this.sfx("moneda");
+      }
+    }
+
+    // Enemigos y jefe
+    for (const e of lvl.enemies) {
+      if (!e.alive || e.carried) continue;
+      if (!aabb(hitbox, e)) continue;
+      // Caparazón deslizándose: daña si el jugador no lo pisa
+      const cayendoSobre = p.vy > 0 && p.y + p.h - e.y < 9;
+      if (cayendoSobre && e.t !== "plant") {
+        const res = e.pisado(p, this);
+        if (res === "rebota") {
+          // El salto giratorio rebota más alto
+          p.vy = p.spinT > 0 ? -PHYS.jumpV * 0.8 : -PHYS.jumpV * 0.55;
+          p.spinT = 0;
+          this.puntos(e.t === "boss" ? 0 : 100);
+          continue;
+        }
+      }
+      if (e.t === "caparazon" && e.vx === 0) continue;
+      if (p.star > 0 && e.t !== "boss") {
+        if (e.alive) { e.morir(this); }
+        continue;
+      }
+      if (e.t === "boss" && !e.alive) continue;
+      this.recibirDano(p);
+    }
+
+    // Bloquear la meta del castillo hasta derrotar al jefe
+    if (lvl.boss && lvl.bossRef && lvl.bossRef.alive && p.x + p.w >= lvl.goalX) {
+      p.x = lvl.goalX - p.w - 1;
+      p.vx = 0;
+    }
+  }
+
+  // Daño del jugador (usa el estado del jugador para decidir)
+  recibirDano(p) {
+    const res = p.golpear();
+    if (res === "muere") this.iniciarMuerte();
+    else if (res !== "ignorado") this.sfx("golpe");
+  }
+
+  // ---------- Flujo de nivel ----------
+  empezarNivel(mIdx, nIdx) {
+    this.mundoIdx = mIdx;
+    this.nivelIdx = nIdx;
+    const mundo = MUNDOS[mIdx];
+    this.lvl = new Level(mundo.niveles[nIdx], mundo);
+    this.estado = "nivel";
+  }
+
+  iniciarMuerte() {
+    if (this.estado === "muerte") return; // evita descontar dos vidas en el mismo frame
+    const p = this.lvl.player;
+    p.dead = true;
+    this.estado = "muerte";
+    this.timerEstado = 2.4;
+    this.sfx("muerte");
+    this.vidas--;
+  }
+
+  // Llamado por el bucle: termina nivel, muerte o pantallas
+  actualizarEstado(dt) {
+    if (this.estado === "nivel") {
+      const lvl = this.lvl;
+      lvl.actualizar(dt, this);
+      // Muerte por caída, por tiempo agotado o por enemigo (ya gestionada en colisiones)
+      if (lvl.player.dead) {
+        this.iniciarMuerte();
+        return;
+      }
+      if (lvl.meta) {
+        this.timerEstado = 1.6;
+        this.estado = "nivelOK";
+        this.sfx("meta");
+      }
+      return;
+    }
+    this.timerEstado -= dt;
+    if (this.estado === "muerte" && this.timerEstado <= 0) {
+      if (this.vidas <= 0) {
+        this.estado = "gameover";
+        this.timerEstado = 4;
+      } else {
+        this.empezarNivel(this.mundoIdx, this.nivelIdx);
+      }
+    }
+    if (this.estado === "nivelOK" && this.timerEstado <= 0) {
+      this.completarNivel();
+    }
+    // Tras el castillo, el siguiente mundo queda abierto en la selección
+    if (this.estado === "mundoOK" && this.timerEstado <= 0) {
+      this.mundoIdx = Math.min(this.mundoIdx + 1, MUNDOS.length - 1);
+      this.selMundo = this.mundoIdx;
+      this.estado = "selMundo";
+    }
+    if (this.estado === "gameover" && this.timerEstado <= 0) {
+      this.vidas = 3;
+      this.volverAlMapa();
+    }
+  }
+
+  // Marca el nivel como completado y decide el siguiente paso
+  completarNivel() {
+    const mundo = MUNDOS[this.mundoIdx];
+    const nivel = mundo.niveles[this.nivelIdx];
+    const castillo = this.nivelIdx === mundo.niveles.length - 1;
+    this.completados[this.mundoIdx + ":" + this.nivelIdx] = true;
+    this.guardarProgreso();
+    if (castillo && this.mundoIdx === MUNDOS.length - 1) {
+      this.estado = "final";
+    } else if (castillo) {
+      this.estado = "mundoOK";
+      this.timerEstado = 3;
+      this.sfx("meta");
+    } else {
+      this.volverAlMapa();
+    }
+  }
+
+  // Vuelve al mapa del mundo actual (overworld)
+  volverAlMapa() {
+    this.lvl = null;
+    this.ov = new Overworld(this, this.mundoIdx);
+    this.estado = "overworld";
+  }
+}
+
+/* =====================================================================
+   16. MAPA DE MUNDO (overworld) Y SELECCIÓN DE MUNDO
+   ===================================================================== */
+// Texto en pantalla (fuente de sistema pequeña; cambiar aquí por una bitmap si se quiere)
+function txt(s, x, y, color = PAL.w, align = "left") {
+  ctx.font = "8px 'Courier New', monospace";
+  ctx.textBaseline = "top";
+  ctx.textAlign = align;
+  ctx.fillStyle = PAL.k;
+  ctx.fillText(s, Math.round(x) + 1, Math.round(y) + 1);
+  ctx.fillStyle = color;
+  ctx.fillText(s, Math.round(x), Math.round(y));
+  ctx.textAlign = "left";
+}
+
+// Dirección pulsada (consume flancos): devuelve {x,y} o null
+function dirPulsada() {
+  if (consume("left")) return { x: -1, y: 0 };
+  if (consume("right")) return { x: 1, y: 0 };
+  if (consume("up")) return { x: 0, y: -1 };
+  if (consume("down")) return { x: 0, y: 1 };
+  return null;
+}
+
+class Overworld {
+  constructor(game, mIdx) {
+    this.g = game;
+    this.mIdx = mIdx;
+    this.m = MUNDOS[mIdx];
+    this.t = 0;
+    // Empieza en el primer nivel no completado (o en el primero)
+    const nodos = this.m.mapa.nodos;
+    this.cur = nodos.findIndex((n) => !game.completados[mIdx + ":" + n.ref]);
+    if (this.cur < 0) this.cur = 0;
+  }
+
+  // Elige el vecino en la dirección pulsada (el de mejor producto escalar)
+  mover(d) {
+    const nodos = this.m.mapa.nodos;
+    const n = nodos[this.cur];
+    let mejor = -1, mejorDot = 0;
+    for (const v of n.vec) {
+      const dx = nodos[v].x - n.x, dy = nodos[v].y - n.y;
+      const len = Math.hypot(dx, dy) || 1;
+      const dot = (dx * d.x + dy * d.y) / len;
+      if (dot > mejorDot) { mejorDot = dot; mejor = v; }
+    }
+    if (mejor >= 0) this.cur = mejor;
+  }
+
+  update(dt) {
+    this.t += dt;
+    const d = dirPulsada();
+    if (d) this.mover(d);
+    if (consume("enter")) {
+      const nodo = this.m.mapa.nodos[this.cur];
+      if (this.g.nivelDesbloqueado(this.mIdx, nodo.ref)) {
+        this.g.empezarNivel(this.mIdx, nodo.ref);
+      }
+    }
+    if (consume("pause")) {
+      this.g.selMundo = this.mIdx;
+      this.g.estado = "selMundo";
+    }
+  }
+
+  draw() {
+    const p = this.m.paleta;
+    rect(0, 0, W, H, p.cielo);
+    // Ruta punteada entre nodos (píxeles sueltos, look de mapa SNES)
+    const nodos = this.m.mapa.nodos;
+    for (let i = 0; i < nodos.length; i++) {
+      for (const j of nodos[i].vec) {
+        if (j < i) continue;
+        const a = nodos[i], b = nodos[j];
+        const steps = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
+        for (let s = 0; s <= steps; s += 3) {
+          const x = a.x + ((b.x - a.x) * s) / steps;
+          const y = a.y + ((b.y - a.y) * s) / steps;
+          rect(x, y, 2, 2, PAL.w);
+        }
+      }
+    }
+    // Nodos: completado (oro), desbloqueado (blanco), bloqueado (gris)
+    nodos.forEach((n, i) => {
+      const hecho = this.g.completados[this.mIdx + ":" + n.ref];
+      const abierto = this.g.nivelDesbloqueado(this.mIdx, n.ref);
+      const color = hecho ? PAL.y : abierto ? PAL.w : PAL.gr;
+      if (n.castillo) {
+        // Castillo: bloque con almenas
+        rect(n.x - 8, n.y - 8, 16, 16, PAL.k);
+        rect(n.x - 7, n.y - 7, 14, 14, color);
+        rect(n.x - 8, n.y - 9, 4, 3, PAL.k);
+        rect(n.x + 4, n.y - 9, 4, 3, PAL.k);
+      } else {
+        rect(n.x - 5, n.y - 5, 10, 10, PAL.k);
+        rect(n.x - 4, n.y - 4, 8, 8, color);
+      }
+    });
+    // Cursor: el jugador parpadea sobre el nodo actual
+    const n = nodos[this.cur];
+    if (Math.floor(this.t * 4) % 2 === 0) {
+      drawSprite(getSprite("playerIdle", SPR.playerIdle, PAL), n.x - 5, n.y - 22);
+    }
+    // Cabecera con el nombre del mundo
+    rect(0, 0, W, 14, PAL.k);
+    txt("MUNDO " + this.m.id + " - " + this.m.nombre.toUpperCase(), W / 2, 3, PAL.w, "center");
+    const nivel = this.m.niveles[n.ref];
+    txt(nivel.nombre, W / 2, H - 12, PAL.w, "center");
+    txt("ENTER: entrar  ESC: mundos", W / 2, H - 24, PAL.w, "center");
+  }
+}
+
+/* Pantalla de selección de mundo: 8 tarjetas en 4x2 */
+function dibujarSelMundo(game) {
+  rect(0, 0, W, H, PAL.k);
+  txt("SELECCION DE MUNDO", W / 2, 10, PAL.y, "center");
+  MUNDOS.forEach((m, i) => {
+    const col = i % 4, fila = Math.floor(i / 4);
+    const x = 10 + col * 61, y = 40 + fila * 80;
+    const abierto = game.mundoDesbloqueado(i);
+    rect(x, y, 54, 64, PAL.k);
+    rect(x + 2, y + 2, 50, 60, abierto ? m.paleta.cielo : PAL.dgr);
+    txt(String(m.id), x + 27, y + 8, PAL.w, "center");
+    txt(abierto ? m.nombre : "???", x + 27, y + 42, PAL.w, "center");
+    if (game.completados[i + ":" + (m.niveles.length - 1)]) txt("*", x + 27, y + 24, PAL.y, "center");
+    if (i === game.selMundo) rect(x - 2, y - 2, 58, 68, PAL.y);
+  });
+  txt("ENTER: jugar   ESC: menu", W / 2, H - 14, PAL.w, "center");
+}
+
+/* =====================================================================
+   17. HUD Y PANTALLAS
+   ===================================================================== */
+function dibujarHUD(game) {
+  const lvl = game.lvl;
+  rect(0, 0, W, 14, "rgba(0,0,0,0.55)");
+  const m = MUNDOS[game.mundoIdx];
+  // Indicador de poder: F = fuego, C = capa, G = grande, P = pequeño
+  const p = lvl.player;
+  const poder = p.fire ? "F" : p.cape ? "C" : p.big ? "G" : "P";
+  txt("MUNDO " + m.id + "-" + (game.nivelIdx + 1), 4, 3);
+  txt("VIDAS " + String(game.vidas).padStart(2, "0") + " " + poder, 64, 3, PAL.w);
+  txt("MON " + String(game.monedas).padStart(3, "0"), 124, 3, PAL.y);
+  txt("PTS " + String(game.score).padStart(6, "0"), 168, 3, PAL.w);
+  txt("T" + String(Math.ceil(lvl.tiempoRest)).padStart(3, "0"), W - 4, 3, PAL.w, "right");
+}
+
+function dibujarNivelYHUD(game) {
+  game.lvl.dibujar(game);
+  dibujarHUD(game);
+}
+
+function velo(texto, sub) {
+  rect(0, 0, W, H, "rgba(0,0,0,0.55)");
+  txt(texto, W / 2, H / 2 - 16, PAL.w, "center");
+  if (sub) txt(sub, W / 2, H / 2 + 4, PAL.y, "center");
+}
+
+// Dibuja la pantalla actual del juego
+function dibujarJuego(game) {
+  const e = game.estado;
+  if (e === "titulo") {
+    rect(0, 0, W, H, "#5c94fc");
+    rect(0, 150, W, 74, "#c0703a");
+    rect(0, 150, W, 4, "#43b043");
+    txt("SUPERBRO", W / 2, 46, PAL.y, "center");
+    txt("PLATAFORMAS 2D SNES", W / 2, 60, PAL.w, "center");
+    drawSprite(getSprite("playerIdle", SPR.playerIdle, PAL), W / 2 - 6, 110);
+    const parpadeo = Math.floor(performance.now() / 500) % 2 === 0;
+    if (parpadeo) txt("PULSA ENTER", W / 2, 186, PAL.w, "center");
+    txt("BACKSPACE: borrar progreso", W / 2, 206, PAL.w, "center");
+    return;
+  }
+  if (e === "selMundo") return dibujarSelMundo(game);
+  if (e === "overworld") return game.ov.draw();
+  if (e === "final") {
+    rect(0, 0, W, H, PAL.k);
+    txt("FIN DEL JUEGO", W / 2, 80, PAL.y, "center");
+    txt("GRACIAS POR JUGAR", W / 2, 100, PAL.w, "center");
+    txt("ENTER: volver al titulo", W / 2, 180, PAL.w, "center");
+    return;
+  }
+  // Pantallas con nivel de fondo
+  dibujarNivelYHUD(game);
+  if (e === "pausa") velo("PAUSA", "P o ESC para seguir");
+  else if (e === "muerte") velo("MARIO x" + game.vidas, "");
+  else if (e === "nivelOK") velo("NIVEL COMPLETADO", "PUNTOS " + game.score);
+  else if (e === "mundoOK") velo("MUNDO " + MUNDOS[game.mundoIdx].id + " COMPLETADO", "¡Nuevo mundo abierto!");
+  else if (e === "gameover") velo("GAME OVER", "Se reinicia el mapa");
+}
+
+/* =====================================================================
+   18. BUCLE PRINCIPAL (requestAnimationFrame + delta time)
+   ===================================================================== */
+const game = new Game();
+KEYMAP.Backspace = "reset";  // para borrar el progreso desde el título
+
+function actualizarJuego(dt) {
+  const e = game.estado;
+  actualizarParticulas(dt);
+
+  if (e === "titulo") {
+    if (consume("enter")) { game.selMundo = game.mundoIdx; game.estado = "selMundo"; }
+    if (consume("reset")) game.borrarProgreso();
+    return;
+  }
+  if (e === "selMundo") {
+    const d = dirPulsada();
+    if (d) {
+      const nuevo = game.selMundo + d.x + d.y * 4;
+      if (nuevo >= 0 && nuevo < MUNDOS.length) game.selMundo = nuevo;
+    }
+    if (consume("enter") && game.mundoDesbloqueado(game.selMundo)) {
+      game.mundoIdx = game.selMundo;
+      game.volverAlMapa();
+    }
+    if (consume("pause")) game.estado = "titulo";
+    return;
+  }
+  if (e === "overworld") return game.ov.update(dt);
+  if (e === "final") {
+    if (consume("enter")) game.estado = "titulo";
+    return;
+  }
+  if (e === "nivel") {
+    if (consume("pause")) { game.estado = "pausa"; return; }
+    return game.actualizarEstado(dt);
+  }
+  if (e === "pausa") {
+    if (consume("pause")) game.estado = "nivel";
+    return;
+  }
+  game.actualizarEstado(dt);
+}
+
+let ultimo = performance.now();
+function bucle(t) {
+  // Delta time limitado: evita saltos grandes si la pestaña se bloquea
+  const dt = Math.min(1 / 30, (t - ultimo) / 1000);
+  ultimo = t;
+  try {
+    actualizarJuego(dt);
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    dibujarJuego(game);
+  } catch (err) {
+    console.error(err);
+  }
+  // Limpia los estados de "pulsado" que no se consumieron este frame
+  for (const k in pressed) pressed[k] = false;
+  requestAnimationFrame(bucle);
+}
+requestAnimationFrame(bucle);
+</script>
+</body>
+</html>
