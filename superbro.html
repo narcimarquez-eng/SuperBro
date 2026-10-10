@@ -353,6 +353,1344 @@ function consume(action) {
   }
   return false;
 }
+/*
+  bloques.js: mapa de bloques para un juego de plataformas en Canvas.
+
+  Medidas:
+    TILE = 16     el nivel va en una cuadrícula de 16 × 16 píxeles lógicos
+    U    = 2      el arte se dibuja al doble de densidad: 1 bloque = 32 × 32 píxeles reales
+
+  Para que el arte salga nítido, el contexto debe tener escala U (o U × zoom) antes de dibujar:
+    ctx.setTransform(U * zoom, 0, 0, U * zoom, 0, 0);
+
+  Leyenda del mapa (un carácter por bloque):
+    ' '  aire (vacío)
+
+    Terrenos (sólidos). Sus bordes se dibujan solos según los bloques vecinos:
+    '#'  hierba sobre tierra        'A'  arena (desierto)
+    'N'  nieve sobre hielo          'R'  roca (cueva)
+    'W'  madera (puentes, muelles)  'I'  hielo
+
+    Bloques:
+    '='  ladrillo; se rompe al golpearlo desde abajo
+    '?'  interrogación; al golpearlo suelta una moneda y queda como 'x'
+    'x'  bloque vacío (ya golpeado)
+    'X'  piedra suelta (sólida)
+    'P' 'Q'  boca de tubería izquierda y derecha (fila de arriba)
+    'p' 'q'  cuerpo de tubería izquierda y derecha (debajo de la boca)
+    '-'  plataforma de una dirección: se pisa solo desde arriba
+
+    Escaleras y barras:
+    'L'  escalera: se sube y se baja (no es sólida)
+    'B'  barra o poste: se baja deslizándose (no es sólida)
+
+    Inicio, meta, objetos:
+    'S'  inicio del nivel (punto de aparición del jugador)
+    'E'  meta (bandera): tocarla completa el nivel
+    'o'  moneda (no es sólida; se recoge al tocarla)
+    '^'  pinchos (peligro)
+    '~'  lava (peligro)
+
+  Uso:
+    const mundo = Bloques.crear(Bloques.NIVEL_EJEMPLO);
+    const sp = mundo.spawn;                                // {x, y} o null
+    const r = mundo.resolver({ x, y, w, h }, vx, vy, dt);  // mueve la caja y la para con los bloques
+    //   r.x, r.y, r.vx, r.vy, r.enSuelo, r.golpeTecho ({col, row} o null)
+    if (r.golpeTecho) mundo.golpear(r.golpeTecho.col, r.golpeTecho.row);
+    mundo.recoger(caja);          // recoge monedas, devuelve cuántas
+    mundo.peligroEn(caja);        // true si la caja toca pinchos o lava
+    mundo.enEscalera(caja);       // 'L', 'B' o null
+    mundo.metaEn(caja);           // true si la caja toca la meta
+    mundo.dibujar(ctx, camX, camY, vistaW, vistaH, tiempo);
+    mundo.solid(x, y);            // para los enemigos (mundo.tile = 16)
+*/
+(function (global) {
+  'use strict';
+
+  const TILE = 16;
+  const U = 2;
+  const EPS = 0.001;
+
+  const TERRENOS = '#ANRWI';
+  const SOLIDOS = '#=?xXPQpq' + 'ANRWI';
+  const UNIDIRECCIONAL = '-';
+  const PELIGRO = '^~';
+  const ESCALERA = 'L';
+  const BARRA = 'B';
+  const INICIO = 'S';
+  const META = 'E';
+  const COLECCION = 'o';
+  const FRAMES_MONEDA = 8;
+
+  /* ---------- Arte: sprites de 32 × 32 píxeles, dibujados con gradientes, bordes y brillos ----------
+     Estilo "pulido" de juego de consola: contorno oscuro, degradados de tres tonos, bisel,
+     brillo especular y sombras suaves. Todo se dibuja en una cuadrícula de 16 unidades. */
+
+  const cache = {};
+  const OUT = '#2a1a10';          // color del contorno
+  const OUT_SUAVE = 'rgba(42,26,16,0.55)';
+
+  // Número determinista 0..10 por celda: da variación sin depender del azar
+  function ruido(x, y) { return ((x * 37 + y * 91 + x * y * 13) >>> 0) % 11; }
+
+  function hacerSprite(dibuja) {
+    const c = document.createElement('canvas');
+    c.width = c.height = TILE * U;
+    const g = c.getContext('2d');
+    g.scale(U, U);
+    g.imageSmoothingEnabled = true;
+    dibuja(g);
+    return c;
+  }
+
+  // Rectángulo redondeado (sin trazar)
+  function rr(g, x, y, w, h, r) {
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.lineTo(x + w - r, y);
+    g.quadraticCurveTo(x + w, y, x + w, y + r);
+    g.lineTo(x + w, y + h - r);
+    g.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    g.lineTo(x + r, y + h);
+    g.quadraticCurveTo(x, y + h, x, y + h - r);
+    g.lineTo(x, y + r);
+    g.quadraticCurveTo(x, y, x + r, y);
+    g.closePath();
+  }
+
+  // Degradado vertical o horizontal con varias paradas (colores de luz a sombra)
+  function grad(g, x0, y0, x1, y1, cols) {
+    const d = g.createLinearGradient(x0, y0, x1, y1);
+    cols.forEach(function (c, i) { d.addColorStop(i / (cols.length - 1), c); });
+    return d;
+  }
+
+  function radial(g, x, y, r0, r1, cols) {
+    const d = g.createRadialGradient(x, y, r0, x, y, r1);
+    cols.forEach(function (c, i) { d.addColorStop(i / (cols.length - 1), c); });
+    return d;
+  }
+
+  // Brillo especular: una elipse blanca suave
+  function brillo(g, x, y, rx, ry, a) {
+    g.save();
+    g.globalAlpha = a;
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); g.fill();
+    g.restore();
+  }
+
+  // Contorno de la forma actual
+  function trazar(g, color, ancho) {
+    g.strokeStyle = color || OUT;
+    g.lineWidth = ancho || 0.9;
+    g.lineJoin = 'round';
+    g.stroke();
+  }
+
+  /* Terrenos: [luz, medio, sombra] para el cuerpo y para la capa de arriba (cap) */
+  const TERR = {
+    '#': { cap: ['#d8ff9a', '#6ed43f', '#2f8a2a'], cuerpo: ['#e7b07a', '#c27a40', '#7a4420'], detalle: '#4fa33a', tipo: 'hierba' },
+    'A': { cap: ['#fff6c8', '#ffd96a', '#d9a23c'], cuerpo: ['#ffe2a0', '#e8b35c', '#a86f2a'], detalle: '#c98a3a', tipo: 'arena' },
+    'N': { cap: ['#ffffff', '#eaf6ff', '#a9d4ee'], cuerpo: ['#bfe6fb', '#73b6e0', '#2f6fa0'], detalle: '#9fd0f0', tipo: 'nieve' },
+    'R': { cap: ['#d9dde6', '#9aa2b0', '#5c6474'], cuerpo: ['#b4bac6', '#7d8594', '#424a5a'], detalle: '#5c6474', tipo: 'roca' },
+    'W': { cap: ['#ffd49a', '#e09a50', '#8a4f20'], cuerpo: ['#e8a866', '#b8703a', '#6a3a16'], detalle: '#7a4420', tipo: 'madera' },
+    'I': { cap: ['#ffffff', '#b8f0ff', '#5cc0e6'], cuerpo: ['#e2fbff', '#86dcf2', '#2f8fc0'], detalle: '#ffffff', tipo: 'hielo' }
+  };
+
+  // Contorno de la capa de arriba con gotas en el borde inferior
+  function recorridoCap(g, capH, tipo) {
+    g.beginPath();
+    g.moveTo(0, 0);
+    g.lineTo(16, 0);
+    g.lineTo(16, capH - 0.5);
+    for (let i = 0; i < 4; i++) {
+      const x0 = 16 - i * 4, x1 = x0 - 4;
+      const gota = ruido(i, 3) % 3 === 0 ? 1.6 : 0.4;
+      const alto = tipo === 'nieve' ? gota * 1.4 : gota;
+      g.quadraticCurveTo((x0 + x1) / 2, capH + alto, x1, capH - 0.5);
+    }
+    g.lineTo(0, 0);
+    g.closePath();
+  }
+
+  // Dibuja un terreno. arr/izq/der/aba: true si ese lado da al aire (se ve el borde)
+  function dibujarTerreno(g, ch, arr, izq, der, aba) {
+    const P = TERR[ch];
+    const cu = P.cuerpo, cap = P.cap;
+    const capH = arr ? 4.5 : 0;
+
+    // Cuerpo: degradado de tres tonos y bisel
+    g.fillStyle = grad(g, 0, 0, 0, 16, cu);
+    rr(g, 0, capH - 1, 16, 16 - (capH - 1), 2.5);
+    g.fill();
+
+    // Textura: motas suaves
+    g.save();
+    g.globalAlpha = 0.28;
+    g.fillStyle = P.detalle;
+    for (let y = 0; y < 16; y += 2) {
+      for (let x = 0; x < 16; x += 2) {
+        if (y > capH && ruido(x, y) === 0) { g.beginPath(); g.arc(x + 1, y + 1, 0.9, 0, Math.PI * 2); g.fill(); }
+      }
+    }
+    g.restore();
+
+    if (P.tipo === 'madera') {
+      g.save(); g.globalAlpha = 0.45; g.strokeStyle = cu[2]; g.lineWidth = 0.6;
+      [6, 10, 14].forEach(function (y) { g.beginPath(); g.moveTo(0, y); g.lineTo(16, y); g.stroke(); });
+      g.beginPath(); g.moveTo(8, capH); g.lineTo(8, 16); g.stroke();
+      g.restore();
+    } else if (P.tipo === 'roca') {
+      g.strokeStyle = cu[2]; g.lineWidth = 0.7;
+      g.beginPath(); g.moveTo(4, 8); g.lineTo(7, 11); g.lineTo(6, 14); g.stroke();
+      g.beginPath(); g.moveTo(11, 9); g.lineTo(13, 12); g.stroke();
+    } else if (P.tipo === 'hielo') {
+      g.fillStyle = 'rgba(255,255,255,0.35)';
+      g.beginPath(); g.moveTo(2, capH + 2); g.lineTo(7, capH + 1); g.lineTo(3, capH + 6); g.closePath(); g.fill();
+    } else if (P.tipo === 'arena') {
+      g.fillStyle = 'rgba(160,100,40,0.35)';
+      [[4, 9], [11, 12], [7, 13]].forEach(function (p) { g.beginPath(); g.arc(p[0], p[1], 0.8, 0, Math.PI * 2); g.fill(); });
+    }
+
+    // Bisel: luz arriba, sombra abajo
+    g.save();
+    g.globalAlpha = 0.5;
+    g.strokeStyle = '#ffffff';
+    g.lineWidth = 0.7;
+    g.beginPath(); g.moveTo(2, capH + 1.5); g.lineTo(14, capH + 1.5); g.stroke();
+    g.restore();
+
+    // Capa de arriba
+    if (arr) {
+      recorridoCap(g, capH, P.tipo);
+      g.fillStyle = grad(g, 0, 0, 0, capH + 2, cap);
+      g.fill();
+      g.save(); g.clip();
+      if (P.tipo === 'hierba') {
+        g.fillStyle = '#3f9a2c';
+        for (let x = 1; x < 16; x += 3) { g.beginPath(); g.moveTo(x, capH - 1); g.lineTo(x + 1, capH + 0.6 + (ruido(x, 2) % 2)); g.lineTo(x + 2, capH - 1); g.fill(); }
+      } else if (P.tipo === 'nieve') {
+        g.fillStyle = 'rgba(160,200,230,0.5)';
+        g.fillRect(0, 0, 16, 1);
+      } else if (P.tipo === 'roca') {
+        g.strokeStyle = cap[2]; g.lineWidth = 0.6;
+        g.beginPath(); g.moveTo(5, 1); g.lineTo(7, 3); g.lineTo(9, 2); g.stroke();
+      } else if (P.tipo === 'madera') {
+        g.fillStyle = cap[2];
+        g.fillRect(0, 2.6, 16, 0.5);
+        [3, 13].forEach(function (x) { g.beginPath(); g.arc(x, 1.2, 0.6, 0, Math.PI * 2); g.fill(); });
+      }
+      g.restore();
+      brillo(g, 8, 1.2, 5.5, 0.9, 0.6);
+      recorridoCap(g, capH, P.tipo);
+      trazar(g, OUT, 0.8);
+    }
+
+    // Contorno solo en los lados que dan al aire
+    g.save();
+    g.strokeStyle = OUT; g.lineWidth = 0.9; g.lineJoin = 'round';
+    if (izq) { g.beginPath(); g.moveTo(0.5, capH + 0.5); g.lineTo(0.5, 15.5); g.stroke(); }
+    if (der) { g.beginPath(); g.moveTo(15.5, capH + 0.5); g.lineTo(15.5, 15.5); g.stroke(); }
+    if (aba) { g.beginPath(); g.moveTo(0.5, 15.5); g.lineTo(15.5, 15.5); g.stroke(); }
+    g.restore();
+  }
+
+  function dibujarLadrillo(g) {
+    g.fillStyle = grad(g, 0, 0, 0, 16, ['#ff9a6a', '#dd5a2e', '#9a2e12']);
+    rr(g, 0, 0, 16, 16, 2); g.fill();
+    // hiladas de ladrillos con bisel
+    for (let fila = 0; fila < 4; fila++) {
+      const y = fila * 4;
+      const off = fila % 2 ? 4 : 0;
+      g.strokeStyle = '#5a1e0a'; g.lineWidth = 0.8;
+      g.beginPath(); g.moveTo(0, y + 0.5); g.lineTo(16, y + 0.5); g.stroke();
+      [off, (off + 8) % 16].forEach(function (x) {
+        g.beginPath(); g.moveTo(x + 0.5, y); g.lineTo(x + 0.5, y + 4); g.stroke();
+      });
+      g.fillStyle = 'rgba(255,255,255,0.22)';
+      g.fillRect(0, y + 1, 16, 0.6);
+    }
+    brillo(g, 6, 2.2, 4.5, 1, 0.45);
+    rr(g, 0.5, 0.5, 15, 15, 2); trazar(g, OUT, 1);
+  }
+
+  function dibujarInterrogacion(g) {
+    g.fillStyle = grad(g, 0, 0, 0, 16, ['#fff3a0', '#ffc620', '#d98a00']);
+    rr(g, 0, 0, 16, 16, 2.5); g.fill();
+    // bisel interior: marco claro arriba, sombra abajo
+    g.save();
+    rr(g, 1.6, 1.6, 12.8, 12.8, 2); g.lineWidth = 1; g.strokeStyle = 'rgba(255,255,255,0.55)'; g.stroke();
+    g.beginPath(); g.moveTo(3, 14.4); g.lineTo(13, 14.4); g.strokeStyle = 'rgba(120,60,0,0.35)'; g.lineWidth = 0.9; g.stroke();
+    g.restore();
+    // remaches
+    [[3.2, 3.2], [12.8, 3.2], [3.2, 12.8], [12.8, 12.8]].forEach(function (p) {
+      g.fillStyle = radial(g, p[0] - 0.4, p[1] - 0.4, 0.2, 1.4, ['#ffffff', '#e0a040', '#8a5a10']);
+      g.beginPath(); g.arc(p[0], p[1], 1.1, 0, Math.PI * 2); g.fill();
+    });
+    // signo de interrogación con relieve
+    g.font = 'bold 11.5px Arial, Helvetica, sans-serif';
+    g.textAlign = 'center';
+    g.textBaseline = 'middle';
+    g.lineJoin = 'round';
+    g.lineWidth = 2.2; g.strokeStyle = '#8a4a00';
+    g.strokeText('?', 8, 8.6);
+    g.fillStyle = '#fff8dc';
+    g.fillText('?', 8, 8.2);
+    brillo(g, 6, 2.6, 4.4, 1.1, 0.5);
+    rr(g, 0.5, 0.5, 15, 15, 2.5); trazar(g, OUT, 1);
+  }
+
+  function dibujarVacio(g) {
+    g.fillStyle = grad(g, 0, 0, 0, 16, ['#c9925a', '#8a5a2a', '#4e2e12']);
+    rr(g, 0, 0, 16, 16, 2.5); g.fill();
+    g.strokeStyle = 'rgba(40,20,8,0.5)'; g.lineWidth = 0.6;
+    [4, 8, 12].forEach(function (x) { g.beginPath(); g.moveTo(x, 1); g.lineTo(x + 0.3, 15); g.stroke(); });
+    [[3, 3], [13, 3], [3, 13], [13, 13]].forEach(function (p) {
+      g.fillStyle = radial(g, p[0] - 0.4, p[1] - 0.4, 0.2, 1.3, ['#e8d0a0', '#9a7040', '#3a2010']);
+      g.beginPath(); g.arc(p[0], p[1], 1.1, 0, Math.PI * 2); g.fill();
+    });
+    brillo(g, 6, 2, 5, 0.9, 0.35);
+    rr(g, 0.5, 0.5, 15, 15, 2.5); trazar(g, OUT, 1);
+  }
+
+  function dibujarPiedra(g) {
+    g.fillStyle = radial(g, 6, 5, 1, 12, ['#eef0f4', '#a8afbc', '#5a6272']);
+    rr(g, 0, 0, 16, 16, 4); g.fill();
+    g.strokeStyle = 'rgba(40,44,54,0.6)'; g.lineWidth = 0.7;
+    g.beginPath(); g.moveTo(4, 7); g.lineTo(7, 9); g.lineTo(6, 12); g.stroke();
+    g.beginPath(); g.moveTo(11, 10); g.lineTo(13, 13); g.stroke();
+    brillo(g, 5.5, 3.5, 3.5, 1.4, 0.6);
+    rr(g, 0.5, 0.5, 15, 15, 4); trazar(g, OUT, 1);
+  }
+
+  // Tubería: cilindro con sombreado horizontal y boca con borde
+  function dibujarTuberia(g, lado, boca) {
+    const cuerpo = ['#1e6e36', '#4fd08a', '#b8ffd6', '#4fd08a', '#1e6e36'];
+    if (boca) {
+      g.fillStyle = grad(g, 0, 0, 0, 5, ['#c8ffe0', '#41c27a', '#1e6e36']);
+      rr(g, 0, 0, 16, 5.5, 1.5); g.fill();
+      brillo(g, lado === 'izq' ? 5 : 11, 1.6, 3, 0.6, 0.7);
+      g.fillStyle = 'rgba(20,70,40,0.5)';
+      g.fillRect(0, 4.4, 16, 1.1);
+      rr(g, 0.5, 0.5, 15, 4.5, 1.5); trazar(g, OUT, 0.9);
+      g.fillStyle = grad(g, 0, 5, 0, 16, ['#2a8a4c', '#2a8a4c']);
+      g.fillStyle = hgrad(g, cuerpo);
+      g.fillRect(1.5, 5.5, 13, 10.5);
+    } else {
+      g.fillStyle = hgrad(g, cuerpo);
+      g.fillRect(1.5, 0, 13, 16);
+    }
+    // bordes del cuerpo: el lado exterior queda más oscuro
+    g.strokeStyle = OUT; g.lineWidth = 0.9;
+    if (lado === 'izq') { g.beginPath(); g.moveTo(0.5, boca ? 5.5 : 0); g.lineTo(0.5, 16); g.stroke(); }
+    else { g.beginPath(); g.moveTo(15.5, boca ? 5.5 : 0); g.lineTo(15.5, 16); g.stroke(); }
+    // estrías del tubo
+    g.fillStyle = 'rgba(10,50,25,0.25)';
+    g.fillRect(4, boca ? 6 : 0, 0.5, 16);
+    g.fillRect(11, boca ? 6 : 0, 0.5, 16);
+    function hgrad(gg, cols) {
+      const d = gg.createLinearGradient(1.5, 0, 14.5, 0);
+      cols.forEach(function (c, i) { d.addColorStop(i / (cols.length - 1), c); });
+      return d;
+    }
+  }
+
+  function dibujarMoneda(g, frame) {
+    const ang = (frame / FRAMES_MONEDA) * Math.PI * 2;
+    const k = Math.max(0.2, Math.abs(Math.cos(ang)));
+    g.save();
+    g.translate(8, 8);
+    g.scale(k, 1);
+    g.fillStyle = radial(g, -1.5, -2, 0.5, 6, ['#fff8c0', '#ffd23f', '#d98a00']);
+    g.beginPath(); g.arc(0, 0, 5.6, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = OUT; g.lineWidth = 0.9; g.stroke();
+    g.strokeStyle = 'rgba(160,90,0,0.6)'; g.lineWidth = 0.6;
+    g.beginPath(); g.arc(0, 0, 3.6, 0, Math.PI * 2); g.stroke();
+    g.restore();
+    if (k > 0.45) brillo(g, 6, 5, 1.2, 1.8, 0.85);
+  }
+
+  function dibujarPinchos(g) {
+    for (let i = 0; i < 4; i++) {
+      const x0 = i * 4 + 0.3;
+      g.beginPath(); g.moveTo(x0, 15.5); g.quadraticCurveTo(x0 + 1.8, 9, x0 + 2, 3.5); g.quadraticCurveTo(x0 + 2.4, 9, x0 + 3.7, 15.5); g.closePath();
+      g.fillStyle = grad(g, x0, 0, x0 + 4, 0, ['#ffffff', '#b9c4d0', '#6a7584']);
+      g.fill();
+      trazar(g, OUT, 0.7);
+    }
+    g.fillStyle = 'rgba(40,20,10,0.35)';
+    g.fillRect(0, 15.2, 16, 0.8);
+  }
+
+  function dibujarPlataforma(g) {
+    g.fillStyle = grad(g, 0, 3, 0, 11, ['#ffc27a', '#d98a3c', '#8a4a18']);
+    rr(g, 0, 3, 16, 8, 2); g.fill();
+    g.strokeStyle = 'rgba(60,30,10,0.5)'; g.lineWidth = 0.5;
+    g.beginPath(); g.moveTo(1, 7); g.lineTo(15, 7); g.stroke();
+    brillo(g, 8, 4.4, 6, 0.7, 0.6);
+    [[2.8, 7], [13.2, 7]].forEach(function (p) {
+      g.fillStyle = radial(g, p[0] - 0.3, p[1] - 0.3, 0.2, 1.2, ['#ffffff', '#b0b0b0', '#4a4a4a']);
+      g.beginPath(); g.arc(p[0], p[1], 0.9, 0, Math.PI * 2); g.fill();
+    });
+    rr(g, 0.5, 3.5, 15, 7, 2); trazar(g, OUT, 0.9);
+  }
+
+  function dibujarLava(g) {
+    g.fillStyle = grad(g, 0, 0, 0, 16, ['#ffe06a', '#ff7a1a', '#a8240c']);
+    g.fillRect(0, 0, 16, 16);
+    g.fillStyle = 'rgba(255,255,200,0.7)';
+    [[3, 3], [9, 2], [13, 5]].forEach(function (p) { g.beginPath(); g.arc(p[0], p[1], 1, 0, Math.PI * 2); g.fill(); });
+    g.fillStyle = 'rgba(80,10,0,0.35)';
+    g.fillRect(0, 13, 16, 3);
+    g.strokeStyle = '#ffd27a'; g.lineWidth = 0.9;
+    g.beginPath(); g.moveTo(0, 3.5); g.quadraticCurveTo(4, 1.5, 8, 3.5); g.quadraticCurveTo(12, 5.5, 16, 3.5); g.stroke();
+  }
+
+  function dibujarEscalera(g) {
+    // raíles con sombreado cilíndrico
+    [[2, 2.4], [11.6, 2.4]].forEach(function (p) {
+      g.fillStyle = grad(g, p[0], 0, p[0] + p[1], 0, ['#f0b060', '#b87030', '#6a3a14']);
+      rr(g, p[0], 0, p[1], 16, 1.2); g.fill();
+      trazar(g, OUT, 0.8);
+    });
+    [1.5, 5.5, 9.5, 13.5].forEach(function (y) {
+      g.fillStyle = grad(g, 0, y, 0, y + 2.2, ['#ffd08a', '#c98a40', '#7a4a1a']);
+      rr(g, 4, y, 8, 2.2, 1); g.fill();
+      trazar(g, OUT, 0.6);
+    });
+  }
+
+  function dibujarBarra(g) {
+    g.fillStyle = grad(g, 6.5, 0, 9.5, 0, ['#ffffff', '#c8d0da', '#6a7584']);
+    rr(g, 6.5, 0, 3, 16, 1); g.fill();
+    trazar(g, OUT, 0.6);
+    g.fillStyle = grad(g, 4.5, 0, 11.5, 0, ['#c8d0da', '#7a8594']);
+    rr(g, 4.5, 13.2, 7, 2.8, 1); g.fill();
+    trazar(g, OUT, 0.6);
+    g.fillStyle = radial(g, 6.6, 1.6, 0.4, 3.6, ['#fff8c0', '#ffc62a', '#a06a00']);
+    g.beginPath(); g.arc(8, 3, 3, 0, Math.PI * 2); g.fill();
+    trazar(g, OUT, 0.7);
+  }
+
+  function dibujarInicio(g) {
+    g.fillStyle = radial(g, 8, 11, 0.5, 7, ['rgba(255,255,255,0.9)', 'rgba(127,214,255,0.6)', 'rgba(127,214,255,0)']);
+    g.beginPath(); g.ellipse(8, 11, 7, 3.6, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = grad(g, 0, 11, 0, 15, ['#a8f0c4', '#3cb371', '#1e6e36']);
+    rr(g, 2, 11.5, 12, 3.5, 1.6); g.fill();
+    trazar(g, OUT, 0.8);
+    brillo(g, 8, 12.2, 4, 0.5, 0.6);
+  }
+
+  function dibujarMeta(g) {
+    g.fillStyle = grad(g, 2, 0, 4, 0, ['#ffffff', '#9aa2b0', '#4a5262']);
+    rr(g, 2, 0, 2.2, 16, 1); g.fill();
+    trazar(g, OUT, 0.6);
+    g.fillStyle = radial(g, 3, 0.5, 0.2, 1.6, ['#fff3a0', '#f2a000']);
+    g.beginPath(); g.arc(3.1, 0.6, 1.2, 0, Math.PI * 2); g.fill();
+    for (let fy = 0; fy < 4; fy++) {
+      for (let fx = 0; fx < 5; fx++) {
+        g.fillStyle = (fx + fy) % 2 ? '#ffffff' : '#262626';
+        g.fillRect(4.5 + fx * 2, 1 + fy * 2, 2, 2);
+      }
+    }
+    g.strokeStyle = OUT; g.lineWidth = 0.6;
+    g.strokeRect(4.5, 1, 10, 8);
+    brillo(g, 8, 2.2, 3, 0.6, 0.4);
+  }
+
+  const DIBUJOS = {
+    '=': dibujarLadrillo,
+    '?': dibujarInterrogacion,
+    'x': dibujarVacio,
+    'X': dibujarPiedra,
+    'P': function (g) { dibujarTuberia(g, 'izq', true); },
+    'Q': function (g) { dibujarTuberia(g, 'der', true); },
+    'p': function (g) { dibujarTuberia(g, 'izq', false); },
+    'q': function (g) { dibujarTuberia(g, 'der', false); },
+    '-': dibujarPlataforma,
+    '^': dibujarPinchos,
+    '~': dibujarLava,
+    'L': dibujarEscalera,
+    'B': dibujarBarra,
+    'S': dibujarInicio,
+    'E': dibujarMeta
+  };
+
+  // Clave de sprite: 'o0'..'o7' para monedas; 'T|1010' para terrenos (T = tipo; cada cifra: 1 = lado al aire,
+  // en orden arriba, izquierda, derecha, abajo); en otro caso, el propio carácter.
+  function spriteDe(clave) {
+    if (!cache[clave]) {
+      if (clave.indexOf('|') === 1) {
+        const ch = clave[0], f = clave.slice(2);
+        cache[clave] = hacerSprite(function (g) {
+          dibujarTerreno(g, ch, f[0] === '1', f[1] === '1', f[2] === '1', f[3] === '1');
+        });
+      } else if (clave[0] === COLECCION) {
+        const frame = parseInt(clave.slice(1), 10);
+        cache[clave] = hacerSprite(function (g) { dibujarMoneda(g, frame); });
+      } else {
+        cache[clave] = hacerSprite(DIBUJOS[clave]);
+      }
+    }
+    return cache[clave];
+  }
+
+  /* ---------- Mundo ---------- */
+
+  function leerMapa(mapa) {
+    // Un texto con saltos de línea al principio o al final no añade filas vacías
+    let filas = Array.isArray(mapa) ? mapa.slice() : String(mapa).replace(/\r/g, '').split('\n');
+    if (!Array.isArray(mapa)) {
+      if (filas.length && filas[0] === '') filas.shift();
+      if (filas.length && filas[filas.length - 1] === '') filas.pop();
+    }
+    const cols = Math.max.apply(null, filas.map(function (f) { return f.length; }));
+    return filas.map(function (f) {
+      const celdas = [];
+      for (let c = 0; c < cols; c++) celdas.push(c < f.length ? f[c] : ' ');
+      return celdas;
+    });
+  }
+
+  function crear(mapa) {
+    const grid = leerMapa(mapa);
+    const rows = grid.length;
+    const cols = grid[0].length;
+
+    function get(c, r) {
+      if (r < 0 || r >= rows || c < 0 || c >= cols) return ' ';
+      return grid[r][c];
+    }
+    function set(c, r, ch) { grid[r][c] = ch; }
+    function esSolido(ch) { return SOLIDOS.indexOf(ch) !== -1; }
+    function alAire(c, r) { return !esSolido(get(c, r)); }
+
+    // Punto de inicio
+    let spawn = null;
+    for (let r = 0; r < rows && !spawn; r++) {
+      for (let c = 0; c < cols && !spawn; c++) {
+        if (grid[r][c] === INICIO) spawn = { x: c * TILE, y: r * TILE + 2 };
+      }
+    }
+
+    // Recorre las celdas que toca una caja; fn devuelve un valor para parar
+    function celdasDe(caja, fn) {
+      for (let r = Math.floor(caja.y / TILE); r <= Math.floor((caja.y + caja.h - EPS) / TILE); r++) {
+        for (let c = Math.floor(caja.x / TILE); c <= Math.floor((caja.x + caja.w - EPS) / TILE); c++) {
+          const v = fn(get(c, r), c, r);
+          if (v) return v;
+        }
+      }
+      return null;
+    }
+
+    const mundo = {
+      tile: TILE,
+      U: U,
+      cols: cols,
+      rows: rows,
+      ancho: cols * TILE,
+      alto: rows * TILE,
+      spawn: spawn,
+      jugador: null,
+
+      // Para los enemigos: a los lados y bajo el mapa siempre hay pared o suelo
+      solid: function (x, y) {
+        const c = Math.floor(x / TILE), r = Math.floor(y / TILE);
+        if (c < 0 || c >= cols) return true;
+        if (r >= rows) return true;
+        if (r < 0) return false;
+        return esSolido(get(c, r));
+      },
+
+      get: get,
+
+      golpear: function (c, r) {
+        const ch = get(c, r);
+        if (ch === '?') { set(c, r, 'x'); return 'moneda'; }
+        if (ch === '=') { set(c, r, ' '); return 'rompe'; }
+        return null;
+      },
+
+      // Mueve la caja {x, y, w, h} con velocidad (vx, vy) durante dt y la para con los bloques
+      resolver: function (caja, vx, vy, dt) {
+        let x = caja.x, y = caja.y;
+        const w = caja.w, h = caja.h;
+        const out = { x: x, y: y, vx: vx, vy: vy, enSuelo: false, golpeTecho: null };
+
+        // Eje X
+        if (vx !== 0) {
+          const nx = x + vx * dt;
+          const r0 = Math.floor(y / TILE), r1 = Math.floor((y + h - EPS) / TILE);
+          let bloqueado = false;
+          if (vx > 0) {
+            let mejor = null;
+            for (let c = Math.floor(x / TILE); c <= Math.floor((nx + w - EPS) / TILE); c++) {
+              if (c * TILE < x + w - EPS) continue;
+              for (let r = r0; r <= r1; r++) if (esSolido(get(c, r))) { if (mejor === null || c < mejor) mejor = c; }
+            }
+            if (mejor !== null && nx + w > mejor * TILE) { x = mejor * TILE - w; bloqueado = true; }
+            else x = nx;
+          } else {
+            let mejor = null;
+            for (let c = Math.floor(nx / TILE); c <= Math.floor((x + EPS) / TILE); c++) {
+              if ((c + 1) * TILE > x + EPS) continue;
+              for (let r = r0; r <= r1; r++) if (esSolido(get(c, r))) { if (mejor === null || c > mejor) mejor = c; }
+            }
+            if (mejor !== null && nx < (mejor + 1) * TILE) { x = (mejor + 1) * TILE; bloqueado = true; }
+            else x = nx;
+          }
+          if (bloqueado) out.vx = 0;
+        }
+
+        // Eje Y
+        const c0 = Math.floor(x / TILE), c1 = Math.floor((x + w - EPS) / TILE);
+        if (vy >= 0) {
+          const bottomAntes = y + h;
+          const ny = y + vy * dt;
+          let aterriza = null;
+          for (let r = Math.floor(bottomAntes / TILE) - 1; r <= Math.floor((ny + h) / TILE) + 1; r++) {
+            if (r < 0 || r * TILE < bottomAntes - EPS || r * TILE > ny + h + EPS) continue;
+            for (let c = c0; c <= c1; c++) {
+              const ch = get(c, r);
+              if ((esSolido(ch) || ch === UNIDIRECCIONAL) && (aterriza === null || r < aterriza)) aterriza = r;
+            }
+          }
+          if (aterriza !== null) {
+            y = aterriza * TILE - h;
+            out.vy = 0;
+            out.enSuelo = true;
+          } else {
+            y = ny;
+          }
+        } else {
+          const ny = y + vy * dt;
+          let techo = null, celdaTecho = null;
+          for (let r = Math.floor(ny / TILE); r <= Math.floor(y / TILE); r++) {
+            const borde = (r + 1) * TILE;
+            if (borde > y + EPS || borde < ny - EPS) continue;
+            for (let c = c0; c <= c1; c++) {
+              if (esSolido(get(c, r))) { if (techo === null || r > techo) { techo = r; celdaTecho = c; } }
+            }
+          }
+          if (techo !== null) {
+            y = (techo + 1) * TILE;
+            out.vy = 0;
+            out.golpeTecho = { col: celdaTecho, row: techo };
+          } else {
+            y = ny;
+          }
+        }
+
+        out.x = x;
+        out.y = y;
+        return out;
+      },
+
+      recoger: function (caja) {
+        let n = 0;
+        celdasDe(caja, function (ch, c, r) {
+          if (ch === COLECCION) { set(c, r, ' '); n++; }
+          return null;
+        });
+        return n;
+      },
+
+      peligroEn: function (caja) {
+        return !!celdasDe(caja, function (ch) { return PELIGRO.indexOf(ch) !== -1; });
+      },
+
+      enEscalera: function (caja) {
+        return celdasDe(caja, function (ch) {
+          if (ch === ESCALERA) return ESCALERA;
+          if (ch === BARRA) return BARRA;
+          return null;
+        });
+      },
+
+      metaEn: function (caja) {
+        return !!celdasDe(caja, function (ch) { return ch === META; });
+      },
+
+      // camX, camY: esquina superior izquierda de la vista (en píxeles lógicos)
+      // El contexto debe tener escala U (o U × zoom)
+      dibujar: function (ctx, camX, camY, vistaW, vistaH, tiempo) {
+        const c0 = Math.max(0, Math.floor(camX / TILE)), c1 = Math.min(cols - 1, Math.floor((camX + vistaW) / TILE));
+        const r0 = Math.max(0, Math.floor(camY / TILE)), r1 = Math.min(rows - 1, Math.floor((camY + vistaH) / TILE));
+        const frame = Math.floor((tiempo || 0) * 8) % FRAMES_MONEDA;
+        for (let r = r0; r <= r1; r++) {
+          for (let c = c0; c <= c1; c++) {
+            const ch = get(c, r);
+            if (ch === ' ') continue;
+            let clave = ch;
+            if (TERRENOS.indexOf(ch) !== -1) {
+              const f = [
+                alAire(c, r - 1) ? '1' : '0',
+                alAire(c - 1, r) ? '1' : '0',
+                alAire(c + 1, r) ? '1' : '0',
+                alAire(c, r + 1) ? '1' : '0'
+              ].join('');
+              clave = ch + '|' + f;
+            } else if (ch === COLECCION) {
+              clave = COLECCION + frame;
+            }
+            ctx.drawImage(spriteDe(clave), c * TILE - camX, r * TILE - camY, TILE, TILE);
+          }
+        }
+      },
+
+      mapa: function () { return grid.map(function (f) { return f.join(''); }); }
+    };
+    return mundo;
+  }
+
+  /* ---------- Nivel de ejemplo: 96 × 12 bloques ---------- */
+  const NIVEL_EJEMPLO = [
+    '                                                                                                ',
+    '                                                                                                ',
+    '                                                            ooooo                               ',
+    '                                                         L                                      ',
+    '                                                         LRRRRRRRRR             B               ',
+    '            ooooo                   oooo                 L                      B               ',
+    '            ?=?=?           =?=?=                        L                      B      ooo      ',
+    '                  ####              ----      PQ         L                      B     IIII      ',
+    '        PQ                                    pq         L                      B   XX          ',
+    '  S     pq                                    pq    ^^   L                      B   XX       E  ',
+    '######################    AAAAAAAAAAAAAA  NNNNNNNNNNNNNNNN#############RRR  WWWWWWWWWWWWWWWWWWWW',
+    '######################~~~~AAAAAAAAAAAAAA  NNNNNNNNNNNNNNNN#############RRR  WWWWWWWWWWWWWWWWWWWW'
+  ];
+
+  // Sprite de un bloque por su clave. Terrenos: sprite('#|1000') es hierba con borde arriba;
+  // sprite('W|0000') es madera cubierta. Los demás: sprite('='), sprite('o0'), sprite('E'), etc.
+  function sprite(clave) { return spriteDe(clave); }
+
+  global.Bloques = {
+    TILE: TILE,
+    U: U,
+    crear: crear,
+    sprite: sprite,
+    NIVEL_EJEMPLO: NIVEL_EJEMPLO,
+    LEYENDA: '# A N R W I = ? x X P Q p q - L B S E o ^ ~'
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
+/*
+  enemigos.js: enemigos de plataformas 2D para Canvas.
+  Todo se dibuja con código (sin imágenes), así que no hay archivos que cargar.
+
+  Uso:
+    const e = Enemigos.create('erizo', x, y);      // (x, y) = centro del enemigo
+    Enemigos.update(e, dt, mundo);                 // mundo.solid(x, y) -> bool, mundo.tile = 16
+                                                   // mundo.jugador = {x, y} (opcional: para perseguir, lanzarse y picar)
+    Enemigos.draw(ctx, e);                         // en coordenadas del mundo
+    const r = Enemigos.onTouch(e, { falling, dir });
+      // falling: el jugador cae sobre el enemigo; dir: 1 o -1, lado desde el que llega
+      // devuelve 'bounce' (lo pisas y rebotas), 'kick' (lo empujas), 'hurt' (te hace daño) o 'none'
+    const b = Enemigos.box(e);                     // {x, y, w, h} para colisiones, o null si está escondido
+    Enemigos.harmful(e)                            // true si un caparazón lanzado debe dañar a otros enemigos
+
+  Tipos:
+    erizo           camina y gira en los bordes. Muere al pisarlo.
+    caracol         al pisarlo se esconde; parado, se patea.
+    abeja           vuela en onda y se lanza en picado contra el jugador. Se pisa desde arriba.
+    planta          sale de la maceta y se esconde. No se puede pisar.
+    esqueleto       patrulla, se pone a perseguir si estás cerca y da saltos.
+    erizo_zombie    tambaleo y embestida cuando te acercas.
+    caracol_zombie  repta, se para a descansar y acelera cuando te tiene cerca.
+    planta_zombie   se balancea, se inclina hacia ti y muerde. No se puede pisar.
+    hormiga         da saltitos rápidos en zigzag. Se pisa.
+*/
+(function (global) {
+  'use strict';
+
+  const GRAV = 1400;
+  const MAX_CAIDA = 900;
+
+  // pisable: se puede pisar. concha: tiene caparazón (se esconde y se patea).
+  const DEFS = {
+    erizo:          { w: 34, h: 26, vel: 46, pisable: true },
+    caracol:        { w: 30, h: 20, vel: 30, pisable: true, concha: true },
+    abeja:          { w: 24, h: 18, vel: 70, pisable: true },
+    planta:         { w: 18, h: 40, vel: 0,  pisable: false, planta: true },
+    esqueleto:      { w: 22, h: 40, vel: 40, pisable: true },
+    erizo_zombie:   { w: 34, h: 26, vel: 22, pisable: true },
+    caracol_zombie:  { w: 30, h: 20, vel: 18, pisable: true, concha: true },
+    planta_zombie:  { w: 20, h: 44, vel: 0,  pisable: false, planta: true, zombie: true },
+    hormiga:        { w: 26, h: 14, vel: 60, pisable: true }
+  };
+
+  function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
+  function smooth(t) { t = clamp(t, 0, 1); return t * t * (3 - 2 * t); }
+
+  function create(tipo, x, y, opciones) {
+    const d = DEFS[tipo];
+    if (!d) throw new Error('Enemigo desconocido: ' + tipo);
+    const dir = (opciones && opciones.dir) || -1;
+    return {
+      type: tipo, x: x, y: y, base: y, homeX: x, homeY: y,
+      w: d.w, h: d.h,
+      vx: dir * d.vel, vy: 0, dir: dir,
+      t: Math.random() * 3, ph: Math.random() * 6.28,
+      onGround: false, state: 'walk', timer: Math.random() * 2, cool: 1 + Math.random(),
+      reposo: false, lunging: false, lungeT: 0, jumpT: Math.random() * 2,
+      diveT: 0, dvx: 0, dvy: 0, alerta: false,
+      lx: 0, sway: 0, up: 0,
+      dead: false, deadT: 0, remove: false, harmful: false
+    };
+  }
+
+  // Física de caminante: gravedad, paredes, suelo por baldosas y giro en los bordes
+  function caminar(e, dt, mundo) {
+    const tile = mundo.tile || 16;
+    e.vy = Math.min(e.vy + GRAV * dt, MAX_CAIDA);
+
+    const nx = e.x + e.vx * dt;
+    const frente = nx + (e.vx >= 0 ? 1 : -1) * e.w / 2;
+    if (mundo.solid(frente, e.y)) e.vx = -e.vx;
+    else e.x = nx;
+
+    let ny = e.y + e.vy * dt;
+    const pie = ny + e.h / 2;
+    e.onGround = false;
+    if (e.vy >= 0 && mundo.solid(e.x, pie)) {
+      ny = Math.floor(pie / tile) * tile - e.h / 2;
+      e.vy = 0;
+      e.onGround = true;
+    }
+    e.y = ny;
+
+    if (e.onGround && e.vx !== 0 && e.state !== 'dive') {
+      const d = e.vx > 0 ? 1 : -1;
+      if (!mundo.solid(e.x + d * (e.w / 2 + 3), e.y + e.h / 2 + 3)) e.vx = -e.vx; // no girar al vacío
+    }
+    if (e.vx !== 0) e.dir = e.vx > 0 ? 1 : -1;
+  }
+
+  // Cerebro de cada tipo: decide la velocidad y los saltos (la física la pone caminar)
+  function cerebro(e, dt, mundo, j) {
+    const d = DEFS[e.type];
+    const cerca = j ? Math.abs(j.x - e.x) : 9999;
+    const haciaJ = j ? (j.x >= e.x ? 1 : -1) : e.dir;
+    e.timer -= dt;
+    e.cool -= dt;
+    e.jumpT -= dt;
+
+    switch (e.type) {
+      case 'esqueleto': {
+        if (e.timer <= 0) {
+          if (e.reposo) { e.reposo = false; e.timer = 1.5 + Math.random() * 2; }
+          else if (Math.random() < 0.4) { e.reposo = true; e.timer = 0.6; }
+          else e.timer = 1.5 + Math.random() * 2;
+        }
+        e.alerta = cerca < 170;
+        let v = e.reposo ? 0 : d.vel;
+        if (e.alerta) { e.dir = haciaJ; v = 95; }
+        e.vx = e.dir * v;
+        if (e.onGround && e.jumpT <= 0 && (cerca < 200 || Math.random() < 0.004)) {
+          e.vy = -360; e.jumpT = 1.8 + Math.random() * 1.5;
+        }
+        break;
+      }
+      case 'erizo_zombie': {
+        if (e.lunging) {
+          e.lungeT -= dt;
+          e.vx = e.dir * 150;
+          if (e.lungeT <= 0) { e.lunging = false; e.cool = 3; e.vx = 0; }
+          break;
+        }
+        if (cerca < 110 && e.cool <= 0 && j) {
+          e.lunging = true; e.lungeT = 0.5; e.dir = haciaJ; e.vx = e.dir * 150;
+          break;
+        }
+        const tambaleo = 0.5 + 0.5 * Math.sin(e.t * 4);
+        if (cerca < 200 && j) e.dir = haciaJ;
+        e.vx = e.dir * (14 + tambaleo * 16);
+        break;
+      }
+      case 'caracol_zombie': {
+        if (e.timer <= 0) { e.reposo = !e.reposo; e.timer = e.reposo ? 1.4 : 2.2; }
+        if (cerca < 140 && j) e.dir = haciaJ;
+        const cerca2 = cerca < 140;
+        e.vx = e.reposo ? 0 : e.dir * (cerca2 ? 38 : d.vel);
+        break;
+      }
+      case 'hormiga': {
+        if (e.timer <= 0 && e.onGround) {
+          e.vy = -240;
+          e.timer = 0.55 + Math.random() * 0.3;
+          if (j && cerca < 200) e.dir = haciaJ;
+          else if (Math.random() < 0.3) e.dir = -e.dir;
+        }
+        e.vx = e.dir * d.vel;
+        break;
+      }
+    }
+  }
+
+  function kick(e, dir) {
+    e.state = 'kicked';
+    e.vx = dir * 320;
+    e.dir = dir;
+    e.harmful = true;
+    e.timer = 6;
+  }
+
+  function updAbeja(e, dt, mundo, j) {
+    if (e.dead) {
+      e.vy += GRAV * 0.6 * dt;
+      e.y += e.vy * dt;
+      if (e.y > 420) e.remove = true;
+      return;
+    }
+    if (e.state === 'dive') {
+      e.diveT -= dt;
+      e.x += e.dvx * dt;
+      e.y += e.dvy * dt;
+      e.dir = e.dvx >= 0 ? 1 : -1;
+      if (e.diveT <= 0 || e.y > 170) e.state = 'return';
+      return;
+    }
+    if (e.state === 'return') {
+      const dx = e.homeX - e.x, dy = e.homeY - e.y;
+      const L = Math.hypot(dx, dy) || 1;
+      const s = 140 * dt;
+      if (L <= s) { e.x = e.homeX; e.y = e.homeY; e.state = 'walk'; e.cool = 3 + Math.random() * 2; }
+      else { e.x += dx / L * s; e.y += dy / L * s; }
+      e.dir = dx >= 0 ? 1 : -1;
+      return;
+    }
+    // vuelo en onda
+    e.cool -= dt;
+    const nx = e.x + e.vx * dt;
+    if (mundo.solid(nx + (e.vx > 0 ? 1 : -1) * e.w / 2, e.y)) e.vx = -e.vx;
+    else e.x = nx;
+    e.dir = e.vx >= 0 ? 1 : -1;
+    e.y = e.base + Math.sin(e.t * 3 + e.ph) * 18;
+    e.homeY = e.base;
+    if (j && e.cool <= 0 && Math.abs(j.x - e.x) < 260 && j.y > e.y) {
+      e.state = 'dive';
+      e.diveT = 0.9;
+      e.homeX = e.x;
+      const dx = j.x - e.x, dy = j.y - e.y;
+      const L = Math.hypot(dx, dy) || 1;
+      e.dvx = dx / L * 190;
+      e.dvy = dy / L * 190;
+    }
+  }
+
+  function updPlanta(e, dt, j) {
+    const zombie = !!DEFS[e.type].zombie;
+    const ciclo = zombie ? 2.4 : 3.2;
+    const f = (e.t % ciclo) / ciclo;   // escondida, sube, abierta, baja
+    let up = 0;
+    if (f < 0.25) up = 0;
+    else if (f < 0.45) up = smooth((f - 0.25) / 0.2);
+    else if (f < 0.75) up = 1;
+    else if (f < 0.95) up = 1 - smooth((f - 0.75) / 0.2);
+    e.up = up;
+    if (zombie) {
+      const cerca = j ? Math.abs(j.x - e.x) : 9999;
+      const objetivo = (up > 0.7 && cerca < 90 && j) ? clamp((j.x - e.x) * 0.4, -14, 14) : 0;
+      e.lx += (objetivo - e.lx) * Math.min(1, dt * 8);
+      e.sway = Math.sin(e.t * 4) * 2.5 * up;
+    } else {
+      e.lx = 0;
+      e.sway = 0;
+    }
+  }
+
+  function update(e, dt, mundo) {
+    if (e.remove) return;
+    e.t += dt;
+    const j = mundo.jugador || null;
+    const d = DEFS[e.type];
+
+    if (d.planta) { updPlanta(e, dt, j); return; }
+    if (e.type === 'abeja') { updAbeja(e, dt, mundo, j); return; }
+
+    if (e.dead) {
+      e.deadT += dt;
+      if (e.deadT > 0.6) e.remove = true;
+      return;
+    }
+    if (e.state === 'kicked') {
+      e.timer -= dt;
+      if (e.timer <= 0) e.remove = true;
+      caminar(e, dt, mundo);
+      return;
+    }
+    if (e.state === 'shell') {
+      e.vx = 0;
+      e.timer -= dt;
+      if (e.timer <= 0) { e.state = 'walk'; e.vx = e.dir * d.vel; }
+      caminar(e, dt, mundo);
+      return;
+    }
+    cerebro(e, dt, mundo, j);
+    caminar(e, dt, mundo);
+  }
+
+  // Reacción al contacto con el jugador
+  function onTouch(e, p) {
+    p = p || {};
+    const dir = p.dir || 1;
+    const d = DEFS[e.type];
+    if (e.remove || e.dead) return 'none';
+    if (d.planta) return (e.up > 0.3) ? 'hurt' : 'none';
+    if (e.state === 'kicked') return 'hurt';
+
+    if (d.concha) {
+      if (e.state === 'shell') {
+        kick(e, dir);
+        return p.falling ? 'bounce' : 'kick';
+      }
+      if (p.falling) { e.state = 'shell'; e.vx = 0; e.timer = 4; return 'bounce'; }
+      return 'hurt';
+    }
+
+    // erizo, abeja, esqueleto, erizo zombi, hormiga
+    if (p.falling) {
+      e.dead = true; e.deadT = 0; e.vx = 0; e.vy = 0;
+      return 'bounce';
+    }
+    return 'hurt';
+  }
+
+  function headOffset(e) {
+    return { x: e.lx + e.sway, y: 12 - e.up * 38 };
+  }
+
+  function box(e) {
+    const d = DEFS[e.type];
+    if (d.planta) {
+      if (e.up <= 0.3) return null;
+      const hd = headOffset(e);
+      return { x: e.x + hd.x - 8, y: e.y + hd.y - 8, w: 16, h: 16 };
+    }
+    return { x: e.x - e.w / 2, y: e.y - e.h / 2, w: e.w, h: e.h };
+  }
+
+  function harmful(e) {
+    return !!e.harmful && !e.remove;
+  }
+
+  /* ---------- Dibujo con volumen ----------
+     Cada forma lleva un degradado radial (luz arriba a la izquierda, sombra abajo a la derecha),
+     un contorno oscuro suave y una sombra en el suelo. Todo en Canvas 2D, sin imágenes. */
+
+  // Elipse con degradado radial: cols = [luz, medio, sombra]
+  function esfera(c, x, y, rx, ry, cols, rot) {
+    c.save();
+    c.translate(x, y);
+    if (rot) c.rotate(rot);
+    c.scale(rx, ry);
+    const g = c.createRadialGradient(-0.35, -0.45, 0.05, 0, 0, 1.05);
+    g.addColorStop(0, cols[0]);
+    g.addColorStop(0.55, cols[1]);
+    g.addColorStop(1, cols[2]);
+    c.fillStyle = g;
+    c.beginPath(); c.arc(0, 0, 1, 0, Math.PI * 2); c.fill();
+    c.restore();
+  }
+
+  function contorno(c, x, y, rx, ry, grosor) {
+    c.save();
+    c.strokeStyle = 'rgba(43,29,20,0.75)';
+    c.lineWidth = grosor || 1.2;
+    c.beginPath(); c.ellipse(x, y, rx, ry, 0, 0, Math.PI * 2); c.stroke();
+    c.restore();
+  }
+
+  function sombraSuelo(c, x, y, rx, ry, fuerza) {
+    const a = fuerza || 0.35;
+    esfera(c, x, y, rx, ry, [
+      'rgba(30,15,50,' + a + ')',
+      'rgba(30,15,50,' + (a * 0.6) + ')',
+      'rgba(30,15,50,0)'
+    ]);
+  }
+
+  /* Paletas: cambian el color sin cambiar la forma (zombis = mismo dibujo, otros tonos) */
+  const PAL = {
+    erizo: {
+      cuerpo: ['#d89a66', '#8f5e3b', '#4a2c18'], vientre: ['#fbe2b8', '#e0b07a', '#b5844f'],
+      pua: '#3d2212', pua2: '#7a4a2a', ojo: '#1a1a1a', ojoBlanco: true
+    },
+    erizo_zombie: {
+      cuerpo: ['#c2d69e', '#7f9a66', '#3e5230'], vientre: ['#dfe8c4', '#a9bd8a', '#5c7044'],
+      pua: '#2a3620', pua2: '#55663e', ojo: '#ff4d4d', ojoBlanco: false
+    },
+    caracol: {
+      cuerpo: ['#dcefb0', '#b8d66a', '#6f8f35'], concha: ['#ffd594', '#e39b3c', '#8a4f16'],
+      linea: 'rgba(90,50,12,0.85)', brillo: 'rgba(255,245,220,0.7)'
+    },
+    caracol_zombie: {
+      cuerpo: ['#d6dcc0', '#8c9c74', '#4a5a3a'], concha: ['#b8a88a', '#7a6a4c', '#3a2e20'],
+      linea: 'rgba(30,20,10,0.85)', brillo: 'rgba(230,220,200,0.45)'
+    },
+    planta: {
+      cabeza: ['#ff9a9e', '#e5484d', '#8a1a20'], tallo: '#2f8f4e',
+      maceta: ['#5cc47f', '#2f8f4e', '#1a5a30'], borde: ['#6fd08f', '#2f8f4e'], borde2: '#1f6b39'
+    },
+    planta_zombie: {
+      cabeza: ['#d4e2a6', '#8aa05a', '#3d4f25'], tallo: '#5d6b3a',
+      maceta: ['#9a9f88', '#5b614d', '#2e3226'], borde: ['#b5ba9e', '#5b614d'], borde2: '#2a2e20'
+    }
+  };
+
+  function dibujarErizo(c, e, t, pal) {
+    const rebote = !e.dead && e.onGround ? Math.abs(Math.sin(t * 12)) * 1.2 : 0;
+    c.translate(e.x, e.y - rebote);
+    c.scale(e.dir, 1);
+
+    // púas: cada una con una cara iluminada y otra en sombra
+    const pt = (ang, r) => [Math.cos(ang) * (17 + r), Math.sin(ang) * (12 + r) + 2];
+    for (let i = 0; i < 7; i++) {
+      const a = Math.PI * (1.12 + i * 0.12);
+      const tip = pt(a, 9), p1 = pt(a - 0.12, 0), p2 = pt(a + 0.12, 0), pm = pt(a - 0.05, 0);
+      c.fillStyle = pal.pua;
+      c.beginPath(); c.moveTo(p1[0], p1[1]); c.lineTo(tip[0], tip[1]); c.lineTo(pm[0], pm[1]); c.fill();
+      c.fillStyle = pal.pua2;
+      c.beginPath(); c.moveTo(pm[0], pm[1]); c.lineTo(tip[0], tip[1]); c.lineTo(p2[0], p2[1]); c.fill();
+    }
+
+    esfera(c, 0, 2, 17, 12, pal.cuerpo);
+    contorno(c, 0, 2, 17, 12);
+    esfera(c, 3, 8, 11, 5, pal.vientre);
+    esfera(c, 16, 5, 5, 3.5, pal.vientre);
+    c.fillStyle = '#222';
+    c.beginPath(); c.arc(20, 4, 1.6, 0, Math.PI * 2); c.fill();
+    esfera(c, -5, -4, 5, 2.2, ['rgba(255,240,220,0.55)', 'rgba(255,240,220,0.15)', 'rgba(255,240,220,0)']);
+
+    if (e.dead) {
+      c.strokeStyle = '#222'; c.lineWidth = 1.6;
+      c.beginPath();
+      c.moveTo(5, -4); c.lineTo(11, 1); c.moveTo(11, -4); c.lineTo(5, 1);
+      c.stroke();
+    } else if (pal.ojoBlanco) {
+      esfera(c, 8, -1, 3, 3.2, ['#ffffff', '#f2f2f2', '#b8b8c4']);
+      esfera(c, 9, -1, 1.9, 1.9, ['#3a3a3a', '#1a1a1a', '#000000']);
+      c.fillStyle = '#ffffff';
+      c.beginPath(); c.arc(9.8, -1.9, 0.6, 0, Math.PI * 2); c.fill();
+    } else {
+      // ojo zombi: brillo rojo
+      esfera(c, 8, -1, 2.8, 2.8, ['#ffd0d0', pal.ojo, '#5a0000']);
+    }
+
+    if (!e.dead) {
+      [-7, 6].forEach(function (x0, i) {
+        const sw = Math.sin(t * 12 + i * Math.PI) * 2.5;
+        esfera(c, x0 + sw * 0.3, 13, 3.5, 2.5, ['#7a5034', '#5a3a22', '#2e1c10']);
+      });
+    }
+  }
+
+  function caparazon(c, x, y, r, giro, pal) {
+    esfera(c, x, y, r, r, pal.concha);
+    contorno(c, x, y, r, r, 1.6);
+    c.save();
+    c.translate(x, y);
+    c.rotate(giro);
+    c.strokeStyle = pal.linea;
+    c.lineWidth = 1.6;
+    c.beginPath(); c.arc(0, 0, r * 0.55, 0, Math.PI * 1.6); c.stroke();
+    c.beginPath(); c.arc(0, 0, r * 0.25, 0, Math.PI * 1.2); c.stroke();
+    c.strokeStyle = pal.brillo;
+    c.lineWidth = 1.2;
+    c.beginPath(); c.arc(0, 0, r * 0.8, Math.PI * 1.2, Math.PI * 1.7); c.stroke();
+    c.restore();
+  }
+
+  function dibujarCaracol(c, e, t, pal) {
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    if (e.state === 'walk') {
+      esfera(c, 4, 7, 15, 5, pal.cuerpo);
+      esfera(c, 13, 0, 6, 5.5, pal.cuerpo);
+      c.strokeStyle = pal.cuerpo[2]; c.lineWidth = 2;
+      c.beginPath(); c.moveTo(12, -4); c.lineTo(12, -10); c.moveTo(16, -4); c.lineTo(18, -9); c.stroke();
+      esfera(c, 12, -10, 2.2, 2.2, ['#ffffff', '#f0f0f0', '#a8a8b8']);
+      esfera(c, 18, -9, 2.2, 2.2, ['#ffffff', '#f0f0f0', '#a8a8b8']);
+      c.fillStyle = '#222';
+      c.beginPath(); c.arc(12.6, -10, 1, 0, Math.PI * 2); c.arc(18.6, -9, 1, 0, Math.PI * 2); c.fill();
+      caparazon(c, -3, -2, 11, 0, pal);
+    } else {
+      const giro = e.state === 'kicked' ? t * 18 : 0;
+      caparazon(c, 0, 2, 11, giro, pal);
+    }
+  }
+
+  function dibujarAbeja(c, e, t) {
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    if (e.dead) c.rotate(1.4);
+    const aleteo = e.dead ? 1 : 0.35 + 0.65 * Math.abs(Math.sin(t * 36));
+    esfera(c, -2, -8, 7, 4.5 * aleteo, ['rgba(255,255,255,0.95)', 'rgba(210,235,250,0.8)', 'rgba(110,150,185,0.7)'], -0.3);
+    esfera(c, 0, 0, 11, 8, ['#fff3b0', '#f5c53c', '#a77a12']);
+    c.save();
+    c.beginPath(); c.ellipse(0, 0, 11, 8, 0, 0, Math.PI * 2); c.clip();
+    c.fillStyle = '#2a2a2a';
+    c.fillRect(-4, -9, 3, 18);
+    c.fillRect(3, -9, 3, 18);
+    c.restore();
+    contorno(c, 0, 0, 11, 8, 1);
+    c.fillStyle = '#2a2a2a';
+    c.beginPath(); c.moveTo(-10, -1); c.lineTo(-15, 0); c.lineTo(-10, 1); c.fill();
+    esfera(c, 6, -2, 3, 3, ['#ffffff', '#f2f2f2', '#b8b8c4']);
+    esfera(c, 7, -2, 1.6, 1.6, ['#3a3a3a', '#111111', '#000000']);
+    c.fillStyle = '#ffffff';
+    c.beginPath(); c.arc(7.6, -2.6, 0.5, 0, Math.PI * 2); c.fill();
+  }
+
+  function dibujarPlanta(c, e, t, pal) {
+    const hd = headOffset(e);
+    c.translate(e.x, e.y);
+
+    if (e.up > 0.02) {
+      c.strokeStyle = pal.tallo; c.lineWidth = 5;
+      c.beginPath(); c.moveTo(0, 6); c.lineTo(hd.x, hd.y); c.stroke();
+      c.strokeStyle = 'rgba(200,255,210,0.3)'; c.lineWidth = 1.2;
+      c.beginPath(); c.moveTo(-1.5, 6); c.lineTo(hd.x - 1.5, hd.y); c.stroke();
+    }
+
+    c.save();
+    c.translate(hd.x, hd.y);
+    const abre = 0.35 + 0.65 * Math.abs(Math.sin(t * (e.type === 'planta_zombie' ? 6 : 4)));
+    esfera(c, 0, 0, 9, 9, pal.cabeza);
+    contorno(c, 0, 0, 9, 9);
+    esfera(c, -4, -4, 1.8, 1.8, ['#ffffff', '#ffffff', '#dddddd']);
+    esfera(c, 3, -5, 1.5, 1.5, ['#ffffff', '#ffffff', '#dddddd']);
+    esfera(c, 0, 4, 6, 1.5 + abre * 3.5, ['#5a1a22', '#3a0d12', '#1a0508']);
+    c.fillStyle = '#fff';
+    [-3, 0, 3].forEach(function (x) {
+      c.beginPath(); c.moveTo(x - 1, 2.6); c.lineTo(x + 1, 2.6); c.lineTo(x, 4.2); c.fill();
+    });
+    if (e.type === 'planta_zombie') {
+      // hilo de baba que cuelga de la boca
+      c.strokeStyle = 'rgba(220,240,180,0.8)'; c.lineWidth = 1.2;
+      c.beginPath(); c.moveTo(-2, 7); c.lineTo(-2, 9 + abre * 3); c.stroke();
+    }
+    c.restore();
+
+    const gp = c.createLinearGradient(-9, 0, 9, 0);
+    gp.addColorStop(0, pal.maceta[0]);
+    gp.addColorStop(0.35, pal.maceta[1]);
+    gp.addColorStop(1, pal.maceta[2]);
+    c.fillStyle = gp;
+    c.fillRect(-9, 0, 18, 18);
+    const gr = c.createLinearGradient(0, -4, 0, 3);
+    gr.addColorStop(0, pal.borde[0]);
+    gr.addColorStop(1, pal.borde[1]);
+    c.fillStyle = gr;
+    c.fillRect(-12, -4, 24, 7);
+    c.strokeStyle = pal.borde2; c.lineWidth = 1.2;
+    c.strokeRect(-12, -4, 24, 7);
+  }
+
+  function dibujarEsqueleto(c, e, t) {
+    const paso = Math.sin(t * 10);
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    const hueso = ['#fffdf2', '#e8e2cc', '#9c9478'];
+
+    // piernas que se mueven al andar
+    c.strokeStyle = '#e8e2cc'; c.lineWidth = 3; c.lineCap = 'round';
+    c.beginPath(); c.moveTo(-3, 6); c.lineTo(-3 + paso * 3, 15); c.stroke();
+    c.beginPath(); c.moveTo(3, 6); c.lineTo(3 - paso * 3, 15); c.stroke();
+    // brazos
+    c.beginPath(); c.moveTo(-4, -8); c.lineTo(-7 - paso * 2, 0); c.stroke();
+    c.beginPath(); c.moveTo(4, -8); c.lineTo(8 + paso * 2, -1); c.stroke();
+    // columna
+    for (let i = 0; i < 4; i++) esfera(c, 0, -2 + i * 4.5, 2.8, 2, hueso);
+    // costillas
+    c.strokeStyle = 'rgba(120,110,80,0.8)'; c.lineWidth = 1.2;
+    for (let i = 0; i < 3; i++) {
+      c.beginPath(); c.arc(0, -5 + i * 4, 6, 0.3, Math.PI - 0.3); c.stroke();
+    }
+    // cráneo
+    esfera(c, 0, -14, 7, 6.5, hueso);
+    contorno(c, 0, -14, 7, 6.5, 1);
+    // cuencas: rojas si te persiguen
+    esfera(c, 2.5, -15, 2.6, 3, ['#2a2a2a', '#111111', '#000000']);
+    if (e.alerta) esfera(c, 2.5, -15, 1.3, 1.3, ['#ffb0b0', '#e0202a', '#8a0a10']);
+    // mandíbula con dientes
+    esfera(c, 1, -8, 4.5, 2.2, hueso);
+    c.strokeStyle = 'rgba(120,110,80,0.8)'; c.lineWidth = 0.8;
+    [-2, 0, 2].forEach(function (x) { c.beginPath(); c.moveTo(x + 1, -9.5); c.lineTo(x + 1, -7); c.stroke(); });
+  }
+
+  function dibujarHormiga(c, e, t) {
+    const pasos = Math.sin(t * 24);
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    // patas, tres pares que se alternan
+    c.strokeStyle = '#3a1a0c'; c.lineWidth = 1.4; c.lineCap = 'round';
+    [-4, 0, 4].forEach(function (x, i) {
+      const s = (i % 2 ? 1 : -1) * pasos;
+      c.beginPath(); c.moveTo(x, 2); c.lineTo(x + s * 2, 8); c.lineTo(x + 4 + s, 9); c.stroke();
+      c.beginPath(); c.moveTo(x, -2); c.lineTo(x - s * 2, -8); c.lineTo(x + 4 - s, -9); c.stroke();
+    });
+    // abdomen, tórax y cabeza
+    esfera(c, -8, 0, 6, 5, ['#e07a4a', '#9a3a1e', '#3a1408']);
+    esfera(c, 0, 0, 4.5, 3.8, ['#e07a4a', '#9a3a1e', '#3a1408']);
+    esfera(c, 8, 0, 3.8, 3.4, ['#e8895a', '#a8452a', '#3a1408']);
+    // antenas
+    c.strokeStyle = '#3a1408'; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(10, -2); c.quadraticCurveTo(12, -8, 16 + pasos, -7); c.stroke();
+    c.beginPath(); c.moveTo(10, -2); c.quadraticCurveTo(13, -6, 17 - pasos, -3); c.stroke();
+    // ojo
+    c.fillStyle = '#ffffff';
+    c.beginPath(); c.arc(9, -1.5, 1.2, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#111';
+    c.beginPath(); c.arc(9.4, -1.5, 0.7, 0, Math.PI * 2); c.fill();
+  }
+
+  function dibujarTipo(c, e) {
+    const t = e.t;
+    switch (e.type) {
+      case 'erizo':          return dibujarErizo(c, e, t, PAL.erizo);
+      case 'erizo_zombie':   return dibujarErizo(c, e, t, PAL.erizo_zombie);
+      case 'caracol':        return dibujarCaracol(c, e, t, PAL.caracol);
+      case 'caracol_zombie': return dibujarCaracol(c, e, t, PAL.caracol_zombie);
+      case 'abeja':          return dibujarAbeja(c, e, t);
+      case 'planta':         return dibujarPlanta(c, e, t, PAL.planta);
+      case 'planta_zombie':  return dibujarPlanta(c, e, t, PAL.planta_zombie);
+      case 'esqueleto':      return dibujarEsqueleto(c, e, t);
+      case 'hormiga':        return dibujarHormiga(c, e, t);
+    }
+  }
+
+  // Sombra en el suelo: el enemigo "pisa" algo, así se nota la altura
+  function sombraDe(c, e) {
+    const d = DEFS[e.type];
+    if (d.planta) sombraSuelo(c, e.x, e.y + 18, 12, 3, 0.3);
+    else if (e.type === 'abeja') return;
+    else sombraSuelo(c, e.x, e.y + e.h / 2 + 1, e.w * 0.5, 3.5, 0.32);
+  }
+
+  function draw(ctx, e) {
+    if (e.remove) return;
+    ctx.save();
+    if (!e.dead && e.type !== 'abeja') sombraDe(ctx, e);
+    if (e.dead && e.type !== 'abeja') {
+      // aplastado contra el suelo (los zombis y los esqueletos se desmontan)
+      const by = e.y + e.h / 2;
+      ctx.translate(e.x, by); ctx.scale(1, 0.35); ctx.translate(-e.x, -by);
+    }
+    dibujarTipo(ctx, e);
+    ctx.restore();
+  }
+
+  global.Enemigos = {
+    create: create,
+    update: update,
+    draw: draw,
+    onTouch: onTouch,
+    box: box,
+    harmful: harmful,
+    TIPOS: Object.keys(DEFS)
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
 
 /* =====================================================================
    7c. ARTE CON VOLUMEN Y DETALLE: enemigos, objetos, monedas y bloques
@@ -470,21 +1808,6 @@ class Lienzo {
   filas() { return this.c.map((r) => r.join("")); }
 }
 
-// Pinta una matriz de caracteres en un canvas de tamaño exacto (sin margen)
-function filasACanvas(filas, pal) {
-  const c = document.createElement("canvas");
-  c.width = filas[0].length;
-  c.height = filas.length;
-  const g = c.getContext("2d");
-  for (let y = 0; y < filas.length; y++) for (let x = 0; x < filas[y].length; x++) {
-    const col = pal[filas[y][x]];
-    if (!col) continue;
-    g.fillStyle = col;
-    g.fillRect(x, y, 1, 1);
-  }
-  return c;
-}
-
 // Paleta de los enemigos y objetos (todos los tonos juntos)
 const PAL_ENT = Object.assign(
   { k: "#000000", w: "#ffffff" },
@@ -496,135 +1819,6 @@ const PAL_ENT = Object.assign(
   coloresRK(RK.blanco, "#f2f2f2"),
   coloresRK(RK.naranja, "#ff8a1e"),
 );
-
-/* ---------- Enemigos ---------- */
-
-// Goomba: sombrero con textura, cara clara, ojos con brillo, cejas y pies que alternan
-function goombaFilas(frame) {
-  const L = new Lienzo(16, 16);
-  L.esfera(8, 7.5, 7.2, 6.6, RK.cafe, 10.6);
-  L.bordeOscuro(RK.cafe);
-  // Textura del sombrero: pequeñas motas oscuras y un brillo arriba a la izquierda
-  for (const [x, y] of [[4, 3], [11, 4], [7, 2], [12, 8], [3, 8]]) L.pfl(x, y, RK.cafe.d);
-  L.pfl(4.2, 2.6, RK.cafe.h);
-  L.pfl(3.4, 3.4, RK.cafe.h);
-  L.esfera(8, 10.4, 4.7, 2.3, RK.crema, 11.8);
-  L.elipse(5.2, 7.4, 2.2, 2.6, "w");
-  L.elipse(10.8, 7.4, 2.2, 2.6, "w");
-  L.caja(5, 7, 1, 2, "k");
-  L.caja(11, 7, 1, 2, "k");
-  L.pfl(5.1, 7.1, "w");
-  L.pfl(11.1, 7.1, "w");
-  L.px(3, 4, "k"); L.px(4, 5, "k"); L.px(5, 5, "k");
-  L.px(12, 4, "k"); L.px(11, 5, "k"); L.px(10, 5, "k");
-  const pies = frame % 2 === 0 ? [[4.6, 13.4], [11.4, 13.4]] : [[4.6, 12.6], [11.4, 14.2]];
-  for (const [x, y] of pies) {
-    L.esfera(x, y, 2.6, 2.0, RK.cafe);
-    L.pfl(x + 0.4, y + 1.6, RK.cafe.D);   // sombra bajo el pie
-  }
-  return L.filas();
-}
-function goombaAplastado() {
-  const L = new Lienzo(16, 8);
-  L.esfera(8, 4.5, 7.6, 3.4, RK.cafe, 7);
-  L.bordeOscuro(RK.cafe);
-  L.esfera(4.6, 6.5, 2.4, 1.6, RK.cafe);
-  L.esfera(11.4, 6.5, 2.4, 1.6, RK.cafe);
-  return L.filas();
-}
-
-// Placas del caparazón: líneas oscuras en forma de hexágonos sobre el verde
-function placasCaparazon(L) {
-  L.mapear((fx, fy, ch) => {
-    const lx = (fx + 0.5) / U, ly = (fy + 0.5) / U;
-    const fila = Math.floor(ly / 2.4);
-    const off = (fila % 2) * 1.6;
-    const col = Math.floor((lx + off) / 3.2);
-    const cx = col * 3.2 + 1.6 - off, cy = fila * 2.4 + 1.2;
-    if (Math.abs(lx - cx) > 1.45 || Math.abs(ly - cy) > 1.05) L.c[fy][fx] = RK.verde.D;
-    else if (ch === RK.verde.m && Math.abs(lx - cx) < 0.5 && Math.abs(ly - cy) < 0.5) L.c[fy][fx] = RK.verde.l;
-  });
-}
-
-// Tortuga (enemigo "shell"): caparazón con placas, cabeza clara con ojo, pies con garras
-function tortugaFilas(frame) {
-  const L = new Lienzo(16, 18);
-  L.esfera(7.5, 10.5, 6.6, 5.8, RK.verde, 16.4);
-  placasCaparazon(L);
-  L.caja(3, 15, 9, 1, RK.crema.m);
-  L.esfera(13.3, 5.7, 3.0, 3.0, RK.crema, 9);
-  L.elipse(14.1, 5.1, 0.9, 1.0, "w");
-  L.caja(14, 5, 1, 1, "k");
-  L.pfl(14.1, 4.9, "w");
-  L.caja(13, 7, 2, 1, RK.crema.D);      // boca
-  const pies = frame % 2 === 0 ? [[4.4, 16.6], [10.6, 16.6]] : [[4.4, 15.8], [11.2, 16.8]];
-  for (const [x, y] of pies) {
-    L.esfera(x, y, 2.2, 1.7, RK.crema);
-    L.pfl(x - 1.6, y + 1.3, "w");       // garras
-    L.pfl(x + 1.6, y + 1.3, "w");
-  }
-  return L.filas();
-}
-
-// Caparazón suelto: media esfera verde con placas y borde claro
-function caparazonFilas() {
-  const L = new Lienzo(14, 10);
-  L.esfera(6.5, 8.5, 6.4, 7.6, RK.verde, 9);
-  placasCaparazon(L);
-  L.caja(1, 9, 12, 1, RK.crema.m);
-  L.pfl(3.4, 2.6, RK.verde.h);          // brillo
-  return L.filas();
-}
-
-// Goomba alado: alas con barbas que aletean en dos frames
-function voladorFilas(frame) {
-  const L = new Lienzo(16, 14);
-  const ya = frame % 2 === 0 ? 4.2 : 7.6;
-  for (const x of [3.5, 12.5]) {
-    L.esfera(x, ya, 3.2, 2.2, RK.blanco, 13);
-    // Barbas de pluma: líneas oscuras en diagonal
-    L.recorrer(13, (fx, fy) => {
-      if (L.c[fy][fx] !== "." && (fx + fy) % (3 * U) === 0) L.c[fy][fx] = RK.blanco.D;
-    });
-  }
-  L.esfera(8, 9.2, 4.6, 4.2, RK.cafe, 13);
-  L.esfera(8, 10.6, 3.0, 1.6, RK.crema, 13);
-  L.elipse(6.2, 8.2, 1.3, 1.5, "w");
-  L.elipse(9.8, 8.2, 1.3, 1.5, "w");
-  L.caja(6, 8, 1, 1, "k");
-  L.caja(10, 8, 1, 1, "k");
-  L.pfl(6.1, 7.9, "w");
-  L.esfera(5.6, 13.2, 1.8, 1.2, RK.cafe);
-  L.esfera(10.4, 13.2, 1.8, 1.2, RK.cafe);
-  return L.filas();
-}
-
-// Planta piraña: tallo cilíndrico, hojas con venas, cabeza roja con manchas,
-// labios y dientes; la boca se abre y cierra
-function plantaFilas(frame) {
-  const L = new Lienzo(16, 22);
-  L.cilindro(6, 4, 13, 9, RK.verde);
-  for (const [x, y] of [[3.2, 14.6], [12.8, 15.4]]) {
-    L.esfera(x, y, 2.8, 1.8, RK.verde);
-    L.recorrer(22, (fx, fy, lx, ly) => {
-      if (L.c[fy][fx] !== "." && Math.abs(ly - y) < 0.12) L.c[fy][fx] = RK.verde.D;
-    });
-  }
-  L.esfera(8, 7.4, 5.6, 5.6, RK.rojo, 13);
-  L.bordeOscuro(RK.rojo);
-  L.elipse(5.2, 4.8, 1.2, 1.2, "w");
-  L.elipse(10.6, 4.4, 1.2, 1.2, "w");
-  L.pfl(5.4, 4.6, RK.blanco.D);
-  if (frame % 2 === 0) {
-    L.elipse(8, 10.5, 3.4, 2.4, "k");
-    for (const x of [6, 8, 10]) L.pfl(x, 8.6, "w");       // dientes superiores
-    for (const x of [6.8, 9.2]) L.pfl(x, 12.2, "w");      // dientes inferiores
-  } else {
-    L.caja(5, 10, 6, 1, "k");
-    for (const x of [6, 8.5, 10.5]) L.pfl(x, 10.4, "w");
-  }
-  return L.filas();
-}
 
 /* ---------- Jefe ---------- */
 
@@ -654,32 +1848,6 @@ function jefeFilas() {
 }
 
 /* ---------- Monedas y objetos ---------- */
-
-// Moneda girando en 3 anchos: canto con relieve, círculo grabado y brillo
-function monedaFilas(f) {
-  if (f === 0) {
-    const L = new Lienzo(10, 10);
-    L.esfera(5, 5, 4.6, 4.6, RK.oro, 9.9);
-    L.recorrer(9.9, (fx, fy, lx, ly) => {
-      const d = Math.hypot(lx - 5, ly - 5);
-      if (L.c[fy][fx] === ".") return;
-      if (d > 4.1 && d < 4.6) L.c[fy][fx] = RK.oro.D;     // canto
-      if (d > 2.9 && d < 3.2) L.c[fy][fx] = RK.oro.d;     // círculo grabado
-    });
-    L.pfl(2.6, 2.4, "w");
-    L.pfl(3.2, 2.0, "w");
-    return L.filas();
-  }
-  if (f === 1) {
-    const L = new Lienzo(6, 10);
-    L.cilindro(0, 6, 0, 10, RK.oro);
-    L.pfl(1.2, 2.1, "w");
-    return L.filas();
-  }
-  const L = new Lienzo(3, 10);
-  L.cilindro(0, 3, 0, 10, RK.oro);
-  return L.filas();
-}
 
 // Hongo: sombrero rojo con manchas en relieve, tallo crema con ojos
 function setaFilas() {
@@ -759,17 +1927,7 @@ function arte(key, filas, pal = PAL_ENT) {
   return spritesArte.get(key);
 }
 
-// Enemigo según su tipo y frame de animación
-function enemigoSprite(t, frame, muerto) {
-  const f = frame % 2;
-  if (t === "walker") return muerto ? arte("gomba-ap", goombaAplastado()) : arte("gomba" + f, goombaFilas(f));
-  if (t === "shell") return arte("tortuga" + f, tortugaFilas(f));
-  if (t === "caparazon") return arte("caparazon", caparazonFilas());
-  if (t === "flyer") return arte("volador" + f, voladorFilas(f));
-  return arte("planta" + f, plantaFilas(f));
-}
 function jefeSprite() { return arte("jefe", jefeFilas()); }
-function monedaSprite(f) { return arte("moneda" + f, monedaFilas(f)); }
 function objetoSprite(tipo) {
   if (tipo === "hongo") return arte("hongo", setaFilas());
   if (tipo === "flor") return arte("flor", florFilas());
@@ -777,102 +1935,6 @@ function objetoSprite(tipo) {
   return arte("estrella", estrellaFilas());
 }
 
-/* ---------- Bloques con volumen (16x16 lógicos, sin contorno) ---------- */
-// Paleta de un tema: cada tipo de bloque usa sus propias familias de tonos
-function paletaTile(p) {
-  return Object.assign(
-    { k: "#000000", w: "#ffffff" },
-    coloresRK(RK.cafe, p.G),
-    coloresRK(RK.verde, p.g),
-    coloresRK(RK.crema, p.O),
-    coloresRK(RK.oro, p.Y),
-    coloresRK(RK.blanco, p.U),
-    coloresRK(RK.naranja, p.U),
-  );
-}
-
-// flags: primer carácter = hay hierba arriba, segundo = hay vacío debajo
-function crearTile(tipo, p, flags) {
-  const arriba = flags[0] === "1", abajo = flags[1] === "1";
-  const L = new Lienzo(16, 16);
-  if (tipo === "G") {
-    // Tierra: piedrecillas con brillo, grietas finas y hierba con puntas en la superficie
-    L.caja(0, 0, 16, 16, RK.cafe.m);
-    for (let y = 2; y < 16; y += 3) for (let x = (y * 5) % 7; x < 15; x += 7) {
-      L.px(x, y, RK.cafe.d);
-      L.px(x + 1, y, RK.cafe.h);
-    }
-    for (const [x, y] of [[3, 6], [4, 7], [5, 7], [11, 11], [12, 12]]) L.px(x, y, RK.cafe.d);
-    if (arriba) {
-      L.caja(0, 0, 16, 1, RK.verde.h);
-      L.caja(0, 1, 16, 1, RK.verde.l);
-      L.caja(0, 2, 16, 1, RK.verde.m);
-      for (let x = 0; x < 16; x++) {
-        if (x % 4 === 1) L.px(x, 3, RK.verde.d);
-        if (x % 4 === 3) L.pf(x * U, 3 * U + 1, RK.verde.D);   // puntas de hierba
-      }
-    }
-    if (abajo) {
-      L.caja(0, 14, 16, 1, RK.cafe.d);
-      L.caja(0, 15, 16, 1, RK.cafe.D);
-    }
-  } else if (tipo === "S") {
-    // Piedra: marco en relieve, juntas en cruz y grietas
-    const N = RK.naranja;
-    L.caja(0, 0, 16, 16, N.m);
-    L.caja(0, 0, 16, 1, N.h);
-    L.caja(0, 0, 1, 16, N.l);
-    L.caja(0, 15, 16, 1, N.D);
-    L.caja(15, 0, 1, 16, N.d);
-    L.caja(1, 7, 14, 1, N.D);
-    L.caja(7, 1, 1, 14, N.D);
-    L.caja(1, 8, 14, 1, N.d);
-    for (const [x, y] of [[3, 3], [4, 4], [11, 10], [12, 11]]) L.px(x, y, N.d);   // grieta
-  } else if (tipo === "B") {
-    // Arenisca: dos hiladas de ladrillos en relieve, con motas claras y oscuras
-    const C = RK.crema;
-    for (let c = 0; c < 2; c++) {
-      const y0 = c * 8, off = c * 4;
-      for (let bx = -off; bx < 16; bx += 8) for (let y = y0; y < y0 + 8; y++) for (let x = bx; x < bx + 8; x++) {
-        if (x < 0 || x > 15) continue;
-        let ch = C.m;
-        if (y === y0) ch = C.h;
-        else if (y === y0 + 7) ch = C.D;
-        else if (x === bx) ch = C.l;
-        else if (x === bx + 7) ch = C.D;
-        else if (x === bx + 6) ch = C.d;
-        L.px(x, y, ch);
-      }
-      for (const [x, y] of [[2, y0 + 3], [9, y0 + 5], [12, y0 + 2]]) L.px(x, y, C.h);
-    }
-  } else if (tipo === "Q" || tipo === "U") {
-    // Bloque ? (dorado) o bloque usado (metal): marco biselado, brillo y remaches
-    const K = tipo === "Q" ? RK.oro : RK.blanco;
-    L.caja(0, 0, 16, 16, K.m);
-    L.caja(0, 0, 16, 1, K.h);
-    L.caja(0, 0, 1, 16, K.h);
-    L.caja(0, 15, 16, 1, K.D);
-    L.caja(15, 0, 1, 16, K.D);
-    L.caja(1, 1, 14, 1, K.l);
-    L.caja(1, 1, 1, 14, K.l);
-    L.caja(1, 14, 14, 1, K.d);
-    L.caja(14, 1, 1, 14, K.d);
-    L.pf(3 * U, 2 * U, "w");                       // brillo de la esquina
-    for (const [x, y] of [[3, 3], [12, 3], [3, 12], [12, 12]]) {
-      L.px(x, y, K.D);
-      L.px(x - 1, y - 1, "w");
-    }
-    if (tipo === "Q") {
-      // Interrogación en negro, con el glifo de la fuente bitmap escalado x2
-      const g = GLIFOS["?"];
-      for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++) {
-        if (g[r][c] !== "1") continue;
-        L.caja(5 + c * 2, 3 + r * 2, 2, 2, "k");
-      }
-    }
-  }
-  return filasACanvas(L.filas(), paletaTile(p));
-}
 
 /* =====================================================================
    5c. PERSONAJE CON VOLUMEN Y DETALLE (dibujado a resolución real)
@@ -1146,6 +2208,9 @@ const PALETA_CASTILLO = {
   G: "#6e6e80", g: "#9a9aae", O: "#7d7d90", Y: "#ffd23f", U: "#4f4f60", tubo: "#7a7a8c",
   sol: "#ffb35a",
 };
+
+/* Carácter de bloques.js para el suelo de cada tema (ver LEYENDA en bloques.js) */
+const TERRENO_DE_TEMA = { pradera: "#", desierto: "A", bosque: "W", cueva: "R", hielo: "I", agua: "#", castillo: "R", cielo: "N" };
 
 /* =====================================================================
    7. GENERADOR DE NIVELES
@@ -1590,104 +2655,6 @@ class Player {
    10. ENEMIGOS, JEFE, MONEDAS, OBJETOS Y PARTÍCULAS
    ===================================================================== */
 
-/* Enemigo genérico. t = "walker" | "shell" | "flyer" | "plant" | "caparazon"
-   - walker: camina, da la vuelta en paredes y cae en huecos.
-   - shell: como walker, pero al pisarlo se convierte en caparazón.
-   - caparazon: quieto (se puede empujar) o deslizándose (mata enemigos).
-   - flyer: vuela en onda senoidal, sin gravedad.
-   - plant: sale y entra de una tubería, no se puede pisar. */
-class Enemy {
-  constructor(t, x, y) {
-    this.t = t;
-    this.x = x; this.y = y;
-    this.vx = 0; this.vy = 0;
-    this.alive = true;
-    this.anim = 0;
-    this.baseY = y;
-    this.slideT = 0;     // tiempo que lleva el caparazón deslizándose
-    this.muerteT = 0;    // animación de muerte antes de desaparecer
-    const dims = { walker: [14, 14], shell: [14, 18], caparazon: [14, 10], flyer: [14, 12], plant: [12, 22] };
-    [this.w, this.h] = dims[t];
-    this.vx = t === "flyer" ? 0 : -28;
-    this.dir = -1;
-    this.esPeligroso = true;
-  }
-
-  // Lo llamamos cuando el jugador pisa al enemigo
-  // Devuelve "rebota" si el jugador debe rebotar
-  pisado(player, game) {
-    if (this.t === "plant") return "daña";
-    if (this.t === "walker") { this.morir(game); return "rebota"; }
-    if (this.t === "shell") {
-      this.t = "caparazon"; this.vx = 0; this.h = 8; this.w = 12; this.y += 2;
-      game.sfx("pisar");
-      return "rebota";
-    }
-    if (this.t === "caparazon") {
-      // Pisar un caparazón quieto lo empuja en la dirección del jugador
-      if (this.vx === 0) {
-        this.vx = player.x < this.x ? PHYS.shellSpeed : -PHYS.shellSpeed;
-        this.slideT = 0;
-        game.sfx("patear");
-      } else {
-        this.vx = 0; // lo detiene
-      }
-      return "rebota";
-    }
-    if (this.t === "flyer") { this.t = "walker"; this.vy = 0; game.sfx("pisar"); return "rebota"; }
-    return "daña";
-  }
-
-  morir(game) {
-    this.alive = false;
-    this.muerteT = 0.35;
-    game.puntos(100);
-    game.efectoEnemigo(this.x, this.y);
-  }
-
-  update(dt, lvl, game) {
-    this.anim += dt;
-    if (!this.alive) {
-      this.muerteT -= dt;
-      this.y += 200 * dt;
-      return;
-    }
-    if (this.t === "flyer") {
-      this.x += -40 * dt;
-      this.y = this.baseY + Math.sin(this.anim * 3) * 14;
-      if (this.x < -20) this.alive = false;
-      return;
-    }
-    if (this.t === "plant") {
-      // Ciclo de tubería: sube (visible) y baja (escondida)
-      const ciclo = (this.anim % 3) / 3;
-      const alzada = ciclo < 0.5 ? ciclo * 2 : (1 - ciclo) * 2;
-      this.y = this.baseY - 14 * Math.min(1, alzada * 1.4);
-      return;
-    }
-    if (this.t === "caparazon" && this.vx !== 0) this.slideT += dt;
-
-    // Gravedad común a caminantes y caparazones
-    this.vy += GRAVITY * dt;
-    if (this.vy > MAX_FALL) this.vy = MAX_FALL;
-    const r = moverEntidad(lvl, this, dt);
-
-    if (this.t === "caparazon") {
-      // Un caparazón deslizándose rebota en las paredes
-      if (r.pared) this.vx = -this.vx;
-      return;
-    }
-    // Caminante: da la vuelta en paredes y al borde de un hueco
-    if (r.pared) { this.dir = -this.dir; }
-    if (r.suelo && !tocaSolido(lvl, this.x + (this.dir > 0 ? this.w + 1 : -1), this.y + this.h + 1, 1, 1)) {
-      this.dir = -this.dir;
-    }
-    this.vx = 28 * this.dir;
-    // Caparazón que cae fuera del nivel desaparece
-    if (this.y > lvl.rows * TILE) this.alive = false;
-  }
-}
-
 /* Jefe del castillo: 3 golpes en la cabeza. Salta hacia el jugador. */
 class Boss {
   constructor(x, y) {
@@ -2004,10 +2971,11 @@ function escenaDesierto(cam, pal) {
   capaPeriodica(dunas, cam.x, 0.45, 0);
 }
 
-// Suelo de tiles bajo el área de diseño (solo si la pantalla es más alta)
+// Suelo de bloques.js bajo el área de diseño (solo si la pantalla es más alta)
 function pintarExtension(pal, tema) {
+  const ch = TERRENO_DE_TEMA[tema] || "#";
   for (let y = OY + H_MIN; y < H; y += TILE) {
-    const sp = tileSprite("G", pal, tema + "G-00");
+    const sp = Bloques.sprite(ch + "|" + (y === OY + H_MIN ? "1000" : "0000"));
     for (let x = 0; x < W; x += TILE) drawSprite(sp, x, y);
   }
 }
@@ -2032,12 +3000,6 @@ function dibujarFondo(cam, pal, tema) {
 /* =====================================================================
    13b. TILES CON BISELADO (cacheados por tema y por "tiene hierba")
    ===================================================================== */
-const tileCache = new Map();
-function tileSprite(tipo, p, key) {
-  if (!tileCache.has(key)) tileCache.set(key, crearTile(tipo, p, key.slice(-2)));
-  return tileCache.get(key);
-}
-
 // Castillo del mapa: dos hileras de almenas, cuerpo liso y puerta oscura
 function castilloRows() {
   const rows = [];
@@ -2185,6 +3147,21 @@ class Camera {
    14. NIVEL EN EJECUCIÓN
    Crea entidades a partir de los datos, actualiza y dibuja.
    ===================================================================== */
+// Tipos del juego -> tipos de enemigos.js (ver TIPOS allí)
+const TIPO_ENEMIGO = {
+  walker: "erizo", shell: "caracol", flyer: "abeja", plant: "planta",
+  hormiga: "hormiga", esqueleto: "esqueleto",
+  erizo_zombie: "erizo_zombie", caracol_zombie: "caracol_zombie", planta_zombie: "planta_zombie",
+};
+
+// Crea el enemigo de enemigos.js sobre la entidad (e.x, e.y = esquina superior izquierda)
+function crearEnemigo(e) {
+  const tipo = TIPO_ENEMIGO[e.t] || "erizo";
+  // La planta sale de la tubería: su maceta queda dentro del tubo (centro de los dos bloques)
+  if (tipo === "planta" || tipo === "planta_zombie") return Enemigos.create(tipo, e.x + TILE - 1, e.y + 8);
+  return Enemigos.create(tipo, e.x + TILE / 2, e.y + TILE / 2);
+}
+
 class Level {
   constructor(def, mundo) {
     const data = construirNivel(def, mundo.tema);
@@ -2202,7 +3179,9 @@ class Level {
     this.temaKey = this.castillo ? "castillo" : mundo.tema;   // separa la caché de sprites por tema
     this.avisoT = 0;   // tiempo que se muestra el aviso "derrota al jefe"
     this.player = new Player(data.start.x, data.start.y);
-    this.enemies = [];
+    this.enemigos = [];   // { e: objeto de enemigos.js, llevado: true si el jugador lo lleva }
+    this.mundo = { tile: TILE, jugador: null, solid: (x, y) => this.solidoEn(x, y) };   // lo que usan los enemigos
+    this.terreno = TERRENO_DE_TEMA[this.temaKey] || "#";   // carácter de bloques.js para el suelo
     this.coins = [];
     this.items = [];
     this.qItems = new Map();   // "col,fila" -> objeto del bloque ?
@@ -2218,8 +3197,16 @@ class Level {
   spawn(e) {
     if (e.t === "coin") this.coins.push(new Coin(e.x, e.y));
     else if (e.t === "qitem") this.qItems.set(Math.floor(e.x / TILE) + "," + Math.floor(e.y / TILE), e.item);
-    else if (e.t === "boss") { this.bossRef = new Boss(e.x, e.y); this.enemies.push(this.bossRef); }
-    else this.enemies.push(new Enemy(e.t, e.x, e.y));
+    else if (e.t === "boss") this.bossRef = new Boss(e.x, e.y);
+    else this.enemigos.push({ e: crearEnemigo(e), llevado: false });
+  }
+
+  // Suelo para los enemigos: a los lados hay pared; por debajo, vacío (y caen)
+  solidoEn(x, y) {
+    const c = Math.floor(x / TILE), r = Math.floor(y / TILE);
+    if (c < 0 || c >= this.cols) return true;
+    if (r < 0 || r >= this.rows) return false;
+    return !!SOLIDOS[this.tiles[r][c]];
   }
 
   // Golpe desde abajo a un tile (el jugador salta contra él)
@@ -2274,13 +3261,15 @@ class Level {
     p.update(dt, this, game);
     if (p.spinT > 0) this.romperConGiro(p, game);
 
-    // Enemigos y jefe
-    for (const e of this.enemies) {
-      if (e.carried) continue; // el caparazón llevado lo mueve el jugador
-      if (e.t === "boss") e.update(dt, this, game, p);
-      else e.update(dt, this, game);
+    // Enemigos (enemigos.js) y jefe
+    this.mundo.jugador = { x: p.x + p.w / 2, y: p.y + p.h / 2 };
+    for (const w of this.enemigos) {
+      if (w.llevado) continue;                     // el caparazón que lleva el jugador se mueve con él
+      Enemigos.update(w.e, dt, this.mundo);
+      if (w.e.y > this.rows * TILE + 60) w.e.remove = true;   // se cayó del nivel
     }
-    this.enemies = this.enemies.filter((e) => e.alive || e.muerteT > 0);
+    this.enemigos = this.enemigos.filter((w) => !w.e.remove);
+    if (this.bossRef) this.bossRef.update(dt, this, game, p);
     for (const c of this.coins) c.update(dt);
     this.coins = this.coins.filter((c) => c.alive);
     for (const it of this.items) it.update(dt, this);
@@ -2314,67 +3303,53 @@ class Level {
         this.dibujarTile(t, x, y, c, r);
       }
     }
-    // Monedas (3 anchos para el giro), objetos y enemigos, centrados en su hitbox
-    const FRAMES_MONEDA = [0, 1, 2, 1];
+    // Monedas: arte de bloques.js (8 frames de giro), centradas en su hitbox
     for (const c of this.coins) {
-      const sp = monedaSprite(FRAMES_MONEDA[Math.floor(c.anim) % 4]);
-      drawSprite(sp, c.x + (c.w - sp.lw) / 2 - cam.x, c.y + (c.h - sp.lh) / 2 - cam.y);
+      drawSprite(Bloques.sprite("o" + (Math.floor(c.anim) % 8)), c.x + c.w / 2 - 8 - cam.x, c.y + c.h / 2 - 8 - cam.y);
     }
     for (const it of this.items) {
       const sp = objetoSprite(it.tipo);
       drawSprite(sp, it.x + it.w / 2 - sp.lw / 2 - cam.x, it.y + it.h - sp.lh - cam.y);
     }
-    for (const e of this.enemies) this.dibujarEnemigo(e, cam);
+    // Enemigos dibujados por enemigos.js, en coordenadas del mundo
+    ctx.save();
+    ctx.translate(-cam.x, 0);
+    for (const w of this.enemigos) Enemigos.draw(ctx, w.e);
+    ctx.restore();
+    if (this.bossRef) this.dibujarJefe(this.bossRef, cam);
     this.dibujarJugador(game, cam);
     dibujarParticulas(cam);
     ctx.restore();
   }
 
-  // Tiles: cada tipo tiene su propio sprite con los colores del tema
+  // Bloques con el arte de bloques.js. El borde de un terreno depende de los vecinos que dan al aire
   dibujarTile(t, x, y, c, r) {
-    if (t === "T") return this.dibujarTuberia(x, y, c, r);
-    if (t === "F") return this.dibujarPoste(x, y);
-    // Tiles biselados generados por código, con los colores del tema
-    // Hierba arriba y borde oscuro abajo solo en la superficie real (flags en la clave de caché)
-    const arriba = !SOLIDOS[tileAt(this, c, r - 1)] ? "1" : "0";
-    // Borde oscuro inferior solo si hay vacío debajo (no en la unión con el suelo extendido)
-    const abajo = r + 1 < this.rows && !SOLIDOS[tileAt(this, c, r + 1)] ? "1" : "0";
-    drawSprite(tileSprite(t, this.pal, this.temaKey + t + "-" + arriba + abajo), x, y);
+    if (t === "T") {
+      // Tubería: boca arriba (P/Q) y cuerpo debajo (p/q); la mitad derecha tiene tubo a la izquierda
+      const cuerpo = tileAt(this, c, r - 1) === "T", derecha = tileAt(this, c - 1, r) === "T";
+      drawSprite(Bloques.sprite(cuerpo ? (derecha ? "q" : "p") : (derecha ? "Q" : "P")), x, y);
+    } else if (t === "F") {
+      // Poste de meta: la bandera va en el bloque de arriba; el resto es poste
+      if (tileAt(this, c, r - 1) === "F") this.dibujarPoste(x, y);
+      else drawSprite(Bloques.sprite("E"), x, y);
+    } else if (t === "G") {
+      drawSprite(Bloques.sprite(this.terreno + "|" + this.aireDe(c, r)), x, y);
+    } else if (t === "S") {
+      drawSprite(Bloques.sprite("X"), x, y);        // piedra suelta
+    } else {
+      drawSprite(Bloques.sprite({ B: "=", Q: "?", U: "x" }[t]), x, y);   // ladrillo, interrogación, usado
+    }
   }
 
-  // Tubería con volumen: borde superior (boca) y cuerpo con luz a la izquierda y sombra a la derecha
-  dibujarTuberia(x, y, c, r) {
-    const tubo = this.pal.tubo;
-    const luz = mezclar(tubo, 0.45, "#ffffff"), sombra = mezclar(tubo, 0.4);
-    const up = tileAt(this, c, r - 1) !== "T";
-    if (up) {
-      rect(x, y, 16, 4, PAL.k);
-      rect(x + 1, y + 1, 14, 3, tubo);
-      rect(x + 1, y + 1, 14, 1, luz);
-      rect(x + 1, y + 3, 14, 1, sombra);
-    } else {
-      rect(x + 1, y, 1, 16, PAL.k);
-      rect(x + 2, y, 13, 16, tubo);
-      rect(x + 3, y, 3, 16, luz);
-      rect(x + 12, y, 3, 16, sombra);
-      rect(x + 15, y, 1, 16, PAL.k);
-    }
+  // Lados que dan al aire (arriba, izquierda, derecha, abajo): "1" = aire, "0" = bloque
+  aireDe(c, r) {
+    const aire = (cc, rr) => (SOLIDOS[tileAt(this, cc, rr)] ? "0" : "1");
+    return aire(c, r - 1) + aire(c - 1, r) + aire(c + 1, r) + aire(c, r + 1);
   }
 
   dibujarPoste(x, y) {
     rect(x + 6, y, 2, 16, PAL.w);
     rect(x + 7, y, 1, 16, PAL.gr);
-  }
-
-  dibujarEnemigo(e, cam) {
-    if (e.t === "boss") return this.dibujarJefe(e, cam);
-    const muerto = !e.alive && (e.t === "walker" || e.t === "shell");
-    const sp = enemigoSprite(e.t, Math.floor(e.anim * 6), muerto);
-    // Centrado en X y apoyado en el borde inferior del hitbox
-    const x = e.x + e.w / 2 - sp.lw / 2 - cam.x;
-    const y = e.y + e.h - sp.lh - cam.y;
-    if (x < -24 || x > W + 4) return;
-    drawSprite(sp, x, y);
   }
 
   dibujarJefe(b, cam) {
@@ -2487,22 +3462,27 @@ class Game {
     }
   }
 
-  // Lanzamiento o recogida de caparazones con el botón X
+  // Recoge un caparazón parado con X; con X de nuevo lo lanza hacia donde mira
   manejarCaparazon(lvl, p) {
     if (p.carrying) {
-      const e = p.carrying;
-      e.carried = false;
-      e.vx = p.facing * PHYS.shellSpeed;
-      e.slideT = 0;
+      const w = p.carrying;
+      w.llevado = false;
       p.carrying = null;
+      w.e.state = "kicked";
+      w.e.dir = p.facing;
+      w.e.vx = p.facing * 320;
+      w.e.harmful = true;
+      w.e.timer = 6;
       this.sfx("patear");
       return;
     }
-    for (const e of lvl.enemies) {
-      if (e.t !== "caparazon" || e.vx !== 0 || e.carried) continue;
-      if (aabb({ x: p.x - 4, y: p.y, w: p.w + 8, h: p.h }, e)) {
-        e.carried = true;
-        p.carrying = e;
+    for (const w of lvl.enemigos) {
+      const e = w.e;
+      if (e.type !== "caracol" || e.state !== "shell" || w.llevado) continue;
+      const b = Enemigos.box(e);
+      if (b && aabb({ x: p.x - 4, y: p.y, w: p.w + 8, h: p.h }, b)) {
+        w.llevado = true;
+        p.carrying = w;
         this.sfx("moneda");
         return;
       }
@@ -2516,8 +3496,9 @@ class Game {
 
     // Caparazón llevado: se queda delante del jugador
     if (p.carrying) {
-      p.carrying.x = p.facing > 0 ? p.x + p.w : p.x - p.carrying.w;
-      p.carrying.y = p.y + p.h - p.carrying.h;
+      const e = p.carrying.e;
+      e.x = p.x + p.w / 2 + p.facing * (p.w / 2 + 10);
+      e.y = p.y + p.h - e.h / 2;
     }
     if (consume("run")) this.manejarCaparazon(lvl, p);
 
@@ -2544,31 +3525,65 @@ class Game {
       }
     }
 
-    // Enemigos y jefe
-    for (const e of lvl.enemies) {
-      if (!e.alive || e.carried) continue;
-      if (!aabb(hitbox, e)) continue;
-      // Caparazón deslizándose: daña si el jugador no lo pisa
-      const cayendoSobre = p.vy > 0 && (p.prevBottom <= e.y + 3 || p.y + p.h - e.y < 9);
-      if (cayendoSobre && e.t !== "plant") {
-        const res = e.pisado(p, this);
-        if (res === "rebota") {
-          // Se apoya justo sobre el enemigo: así el rebote no lo deja solapado (y no cuenta como daño)
-          p.y = e.y - p.h;
-          // El salto giratorio rebota más alto
-          p.vy = p.spinT > 0 ? -PHYS.jumpV * 0.8 : -PHYS.jumpV * 0.55;
-          p.spinT = 0;
-          this.puntos(e.t === "boss" ? 0 : 100);
-          continue;
+    // Caparazón lanzado: derriba a los demás enemigos que toca
+    for (const w of lvl.enemigos) {
+      if (w.llevado || !Enemigos.harmful(w.e)) continue;
+      const bs = Enemigos.box(w.e);
+      if (!bs) continue;
+      for (const o of lvl.enemigos) {
+        const bo = o !== w && !o.e.dead && !o.e.remove ? Enemigos.box(o.e) : null;
+        if (bo && aabb(bs, bo)) {
+          o.e.dead = true; o.e.deadT = 0; o.e.vx = 0; o.e.vy = 0;
+          this.puntos(200);
+          this.efectoEnemigo(bo.x + bo.w / 2, bo.y + bo.h / 2);
         }
       }
-      if (e.t === "caparazon" && e.vx === 0) continue;
-      if (p.star > 0 && e.t !== "boss") {
-        if (e.alive) { e.morir(this); }
+    }
+
+    // Enemigos (enemigos.js): según el tipo, se pisan, se patean o hacen daño
+    for (const w of lvl.enemigos) {
+      const e = w.e;
+      if (w.llevado || e.remove) continue;
+      const b = Enemigos.box(e);
+      if (!b || !aabb(hitbox, b)) continue;
+      // Con estrella, el enemigo cae al tocarlo
+      if (p.star > 0) {
+        if (!e.dead) {
+          e.dead = true; e.deadT = 0; e.vx = 0; e.vy = 0;
+          this.puntos(200);
+          this.efectoEnemigo(b.x + b.w / 2, b.y + b.h / 2);
+        }
         continue;
       }
-      if (e.t === "boss" && !e.alive) continue;
-      this.recibirDano(p);
+      const cayendo = p.vy > 0 && p.prevBottom <= b.y + 4;     // venía de arriba
+      const dir = p.x + p.w / 2 < b.x + b.w / 2 ? -1 : 1;      // lado desde el que llega
+      const res = Enemigos.onTouch(e, { falling: cayendo, dir: dir });
+      if (res === "bounce") {
+        // Se apoya justo sobre el enemigo: el rebote no lo deja solapado (ni cuenta como daño)
+        p.y = b.y - p.h;
+        p.vy = p.spinT > 0 ? -PHYS.jumpV * 0.9 : -PHYS.jumpV * 0.7;
+        p.spinT = 0;
+        this.puntos(100);
+        this.sfx("pisar");
+      } else if (res === "kick") {
+        this.sfx("patear");
+      } else if (res === "hurt") {
+        this.recibirDano(p);
+      }
+    }
+
+    // Jefe: se pisa tres veces; tocarlo de lado hace daño
+    const jefe = lvl.bossRef;
+    if (jefe && jefe.alive && aabb(hitbox, jefe)) {
+      const cayendoSobre = p.vy > 0 && (p.prevBottom <= jefe.y + 3 || p.y + p.h - jefe.y < 9);
+      if (cayendoSobre) {
+        jefe.pisado(p, this);
+        p.y = jefe.y - p.h;
+        p.vy = p.spinT > 0 ? -PHYS.jumpV * 0.8 : -PHYS.jumpV * 0.55;
+        p.spinT = 0;
+      } else if (p.star <= 0) {
+        this.recibirDano(p);
+      }
     }
 
     // Bloquear la meta del castillo hasta derrotar al jefe
@@ -2863,7 +3878,7 @@ function dibujarHUD(game) {
   // Izquierda: jugador, vidas y monedas con icono
   txt("MARIO " + poder, 6, 6);
   txt("X" + String(game.vidas).padStart(2, "0"), 22, 17);
-  drawSprite(monedaSprite(0), 6, 27);
+  drawSprite(Bloques.sprite("o0"), 4, 25);
   txt("X" + String(game.monedas).padStart(3, "0"), 22, 30, PAL.y);
   // Centro: mundo y nivel
   txt(game.lvl.castillo ? "CASTILLO " + MUNDOS[game.mundoIdx].id : "MUNDO " + MUNDOS[game.mundoIdx].id + "-" + (game.nivelIdx + 1), W / 2, 6, PAL.w, "center");
