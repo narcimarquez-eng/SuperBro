@@ -1043,7 +1043,7 @@ const MUNDOS = [
       { nombre: "1-2 Colinas", tiempo: 300, gen: { seed: 102, dif: 1, enemigos: ["walker", "shell"] } },
       { nombre: "1-3 Huecos", tiempo: 300, gen: { seed: 103, dif: 2, enemigos: ["walker", "shell", "flyer"] } },
       { nombre: "1-4 Tubos", tiempo: 280, gen: { seed: 104, dif: 2, enemigos: ["walker", "shell", "plant"] } },
-      { nombre: "1-C Castillo", tiempo: 250, jefe: true, gen: { seed: 105, dif: 3, enemigos: ["walker", "shell", "flyer", "plant"] } },
+      { nombre: "1-C Castillo", tiempo: 250, jefe: true, castillo: true, gen: { seed: 105, dif: 3, enemigos: ["walker", "shell", "flyer", "plant"] } },
     ],
   },
   {
@@ -1139,6 +1139,13 @@ const MUNDOS = [
     ],
   },
 ];
+
+/* Paleta de los niveles de castillo (piedra, atardecer y antorchas) */
+const PALETA_CASTILLO = {
+  cielo: "#2b1d3f", lejos: "#3a2b52", cerca: "#4b4a5c", arbusto: "#3a2b52",
+  G: "#6e6e80", g: "#9a9aae", O: "#7d7d90", Y: "#ffd23f", U: "#4f4f60", tubo: "#7a7a8c",
+  sol: "#ffb35a",
+};
 
 /* =====================================================================
    7. GENERADOR DE NIVELES
@@ -1687,6 +1694,8 @@ class Boss {
     this.t = "boss";
     this.x = x; this.y = y;
     this.w = 24; this.h = 28;
+    this.x0 = x; this.y0 = y;   // punto de aparición: si cae fuera del nivel, vuelve aquí
+    this.enSuelo = false;       // estaba apoyado en el suelo al final del frame anterior
     this.vx = 0; this.vy = 0;
     this.hp = 3;
     this.alive = true;
@@ -1721,6 +1730,10 @@ class Boss {
   update(dt, lvl, game, player) {
     this.anim += dt;
     if (!this.alive) { this.muerteT -= dt; this.y += 60 * dt; return; }
+    if (this.y > lvl.rows * TILE + 40) {   // cayó fuera del nivel: vuelve a su punto de aparición
+      this.x = this.x0; this.y = this.y0; this.vx = 0; this.vy = 0;
+      return;
+    }
     if (this.inmuneT > 0) this.inmuneT -= dt;
     // Persigue al jugador: camina y salta a ritmo fijo
     this.dir = player.x < this.x ? -1 : 1;
@@ -1740,7 +1753,10 @@ class Boss {
       this.saltoT = 1.4 - (3 - this.hp) * 0.2;
     }
     if (this.vy > MAX_FALL) this.vy = MAX_FALL;
+    // No camina al vacío: si delante no hay suelo, se detiene en el borde del hueco
+    if (this.enSuelo && this.vx !== 0 && !tocaSolido(lvl, this.x + (this.vx > 0 ? this.w + 2 : -2), this.y + this.h + 1, 1, 1)) this.vx = 0;
     const r = moverEntidad(lvl, this, dt);
+    this.enSuelo = r.suelo;
     if (r.pared) this.vx = 0;
     // Límites: no sale del nivel por la izquierda ni la derecha
     if (this.x < 40) this.x = 40;
@@ -1997,6 +2013,7 @@ function pintarExtension(pal, tema) {
 }
 
 function dibujarFondo(cam, pal, tema) {
+  if (tema === "castillo") return escenaCastillo(cam, pal);
   // Cielo de toda la pantalla: bandas hasta el horizonte (suelo de diseño + desplazamiento)
   const horizonte = OY + 176;
   rect(0, 0, W, H, pal.cielo);
@@ -2036,6 +2053,85 @@ function castilloRows() {
     rows.push(f);
   }
   return rows;
+}
+
+/* =====================================================================
+   13c. ESCENARIO DE CASTILLO: atardecer, torres lejanas, muro de piedra y antorchas
+   ===================================================================== */
+// Torres recortadas contra el cielo (periódicas, apoyadas en el suelo de diseño)
+function texTorres() {
+  return textura("torres", () => {
+    const ancho = 512, base = 176;
+    const torres = [[30, 46, 120], [150, 34, 96], [262, 52, 136], [390, 40, 104]]; // [x, ancho, alto]
+    const rows = [];
+    for (let y = 0; y < H_MIN; y++) {
+      let f = "";
+      for (let x = 0; x < ancho; x++) {
+        let ch = ".";
+        for (const [tx, tw, th] of torres) {
+          if (x < tx || x >= tx + tw || y < base - th || y >= base) continue;
+          const merlon = y < base - th + 8 && (x - tx) % 8 >= 5;   // almenas en lo alto
+          if (merlon) continue;
+          const ventana = x >= tx + tw / 2 - 2 && x <= tx + tw / 2 + 1 && y >= base - th + 16 && y <= base - th + 26;
+          ch = ventana ? "w" : "c";
+        }
+        f += ch;
+      }
+      rows.push(f);
+    }
+    const sp = spriteFromRows(expandir(rows), { c: "#3a2b52", w: "#ffd23f" }, false, true, false);
+    sp.tw = ancho;
+    return sp;
+  });
+}
+
+// Muro de piedra con hiladas de ladrillos desfasadas (periódico)
+function texMuro() {
+  return textura("muro", () => {
+    const ancho = 512, alto = 80;   // solo el muro de la base: de y=96 al suelo
+    const rows = [];
+    for (let y = 0; y < alto; y++) {
+      const hilada = Math.floor(y / 8), yy = y % 8, desfase = (hilada % 2) * 8;
+      let f = "";
+      for (let x = 0; x < ancho; x++) {
+        const bx = (x + desfase) % 16;
+        f += yy === 0 || bx === 0 ? "d" : yy === 1 || bx === 1 ? "l" : "m";   // juntas, bisel de luz, piedra
+      }
+      rows.push(f);
+    }
+    const sp = spriteFromRows(expandir(rows), { m: "#4b4a5c", l: "#62617a", d: "#2c2b3b" }, false, true, false);
+    sp.tw = ancho;
+    return sp;
+  });
+}
+
+// Antorcha con llama de tres frames (parpadeo)
+const FILAS_ANTORCHA = [
+  ["..r..", ".oyo.", "oyyyo", "oyyyo", ".oyo.", "..o..", "..k..", ".kkk."],
+  [".r...", ".ory.", ".oyo.", "oyyyo", ".yyy.", ".oyo.", "..k..", ".kkk."],
+  ["...r.", "..ryo", ".oyo.", "oyyyo", "oyyy.", "..o..", "..k..", ".kkk."],
+];
+function antorchaSprite(f) {
+  return textura("antorcha" + f, () => spriteFromRows(expandir(FILAS_ANTORCHA[f]), { k: "#2a2a30", o: "#ff8a1e", y: "#ffe066", r: "#e0392b" }, true, false, false));
+}
+
+function escenaCastillo(cam, pal) {
+  // Atardecer: de púrpura arriba a naranja cerca del horizonte
+  const horizonte = OY + 176;
+  rect(0, 0, W, H, pal.cielo);
+  const banda = Math.ceil(horizonte / 8);
+  for (let i = 0; i < 8; i++) rect(0, i * banda, W, banda, mezclar(pal.cielo, i * 0.1, "#ff9a5a"));
+  dibujarSol(pal, W - 70, 56 + OY * 0.2);
+  ctx.save();
+  ctx.translate(0, OY);
+  capaPeriodica(texTorres(), cam.x, 0.2, 0);
+  capaPeriodica(texMuro(), cam.x, 0.5, 96);
+  // Antorchas sobre el muro, con parpadeo
+  const fr = Math.floor(performance.now() / 110) % 3;
+  const off = mod(cam.x * 0.5, 96);
+  for (let k = -1; k < 6; k++) drawSprite(antorchaSprite(fr), k * 96 + 44 - off, 84);
+  ctx.restore();
+  pintarExtension(pal, "castillo");
 }
 
 /* =====================================================================
@@ -2100,8 +2196,11 @@ class Level {
     this.goalX = data.goalX;
     this.boss = data.boss;
     this.tiempo = data.tiempo;
-    this.pal = mundo.paleta;
-    this.temaKey = mundo.tema;   // separa la caché de sprites por tema
+    // Los niveles marcados como castillo usan piedra y atardecer en vez del tema del mundo
+    this.castillo = !!def.castillo;
+    this.pal = this.castillo ? PALETA_CASTILLO : mundo.paleta;
+    this.temaKey = this.castillo ? "castillo" : mundo.tema;   // separa la caché de sprites por tema
+    this.avisoT = 0;   // tiempo que se muestra el aviso "derrota al jefe"
     this.player = new Player(data.start.x, data.start.y);
     this.enemies = [];
     this.coins = [];
@@ -2171,6 +2270,7 @@ class Level {
       this.tiempoRest -= dt;
       if (this.tiempoRest <= 0) { this.tiempoRest = 0; p.dead = true; }
     }
+    if (this.avisoT > 0) this.avisoT -= dt;
     p.update(dt, this, game);
     if (p.spinT > 0) this.romperConGiro(p, game);
 
@@ -2475,6 +2575,7 @@ class Game {
     if (lvl.boss && lvl.bossRef && lvl.bossRef.alive && p.x + p.w >= lvl.goalX) {
       p.x = lvl.goalX - p.w - 1;
       p.vx = 0;
+      lvl.avisoT = 1.5;   // aviso: hay que derrotar al jefe
     }
   }
 
@@ -2765,7 +2866,7 @@ function dibujarHUD(game) {
   drawSprite(monedaSprite(0), 6, 27);
   txt("X" + String(game.monedas).padStart(3, "0"), 22, 30, PAL.y);
   // Centro: mundo y nivel
-  txt("MUNDO " + MUNDOS[game.mundoIdx].id + "-" + (game.nivelIdx + 1), W / 2, 6, PAL.w, "center");
+  txt(game.lvl.castillo ? "CASTILLO " + MUNDOS[game.mundoIdx].id : "MUNDO " + MUNDOS[game.mundoIdx].id + "-" + (game.nivelIdx + 1), W / 2, 6, PAL.w, "center");
   // Derecha: puntos y temporizador con icono de reloj
   txt(String(game.score).padStart(8, "0"), W - 6, 6, PAL.w, "right");
   drawSprite(getSprite("reloj", circuloRows(3, "c"), { c: PAL.w }), W - 42, 18);
@@ -2775,6 +2876,7 @@ function dibujarHUD(game) {
 function dibujarNivelYHUD(game) {
   game.lvl.dibujar(game);
   dibujarHUD(game);
+  if (game.lvl.avisoT > 0) txt("DERROTA AL JEFE", W / 2, 22, PAL.y, "center", 2);
 }
 
 function velo(texto, sub) {
