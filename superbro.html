@@ -160,21 +160,49 @@ const PAL = {
    ===================================================================== */
 const spriteCache = new Map();
 
-function spriteFromRows(rows, pal = PAL) {
+/* Convierte una silueta de colores planos en un sprite con volumen:
+   - contorno negro de 1 px alrededor (margen P)
+   - bisel: los bordes que miran arriba/izquierda se aclaran y los que miran
+     abajo/derecha se oscurecen, como en el pixel art de consolas de 16 bits
+   Así cualquier matriz gana profundidad sin reescribirla a mano. */
+function spriteFromRows(rows, pal = PAL, contorno = true, periodico = false) {
   const h = rows.length;
-  const w = rows[0].length;
+  const w = Math.max(...rows.map((r) => r.length));
+  const P = 1;
   const c = document.createElement("canvas");
-  c.width = w;
-  c.height = h;
+  c.width = w + 2 * P;
+  c.height = h + 2 * P;
   const g = c.getContext("2d");
-  for (let y = 0; y < h; y++) {
-    for (let x = 0; x < w; x++) {
-      const ch = rows[y][x];
-      if (ch === "." || !pal[ch]) continue;
-      g.fillStyle = pal[ch];
-      g.fillRect(x, y, 1, 1);
+  // En texturas periódicas (que se repiten en X) el borde izquierdo y el derecho son vecinos
+  const op = (x, y) => {
+    if (periodico) x = ((x % w) + w) % w;
+    if (y < 0 || y >= h || (!periodico && (x < 0 || x >= w))) return false;
+    const ch = rows[y][x];
+    return !!ch && ch !== "." && pal[ch] !== undefined;
+  };
+  // Contorno: celdas vacías que tocan un píxel del sprite (opcional, no para fondos)
+  if (contorno) {
+    g.fillStyle = PAL.k;
+    for (let y = -1; y <= h; y++) for (let x = -1; x <= w; x++) {
+      if (op(x, y)) continue;
+      if (op(x - 1, y) || op(x + 1, y) || op(x, y - 1) || op(x, y + 1)) g.fillRect(x + P, y + P, 1, 1);
     }
   }
+  // Relleno con bisel (las claves k y w no se sombrean)
+  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
+    if (!op(x, y)) continue;
+    const ch = rows[y][x];
+    let col = pal[ch];
+    if (ch !== "k" && ch !== "w") {
+      const luz = !op(x, y - 1) || !op(x - 1, y);
+      const sombra = !op(x, y + 1) || !op(x + 1, y);
+      if (luz && !sombra) col = mezclar(col, 0.45, "#ffffff");
+      else if (sombra && !luz) col = mezclar(col, 0.4);
+    }
+    g.fillStyle = col;
+    g.fillRect(x + P, y + P, 1, 1);
+  }
+  c.pad = P;
   return c;
 }
 
@@ -186,8 +214,9 @@ function getSprite(key, rows, pal) {
 
 // Dibuja un sprite en coordenadas enteras de canvas (cámara ya restada)
 function drawSprite(sp, x, y, flipX = false) {
-  x = Math.round(x);
-  y = Math.round(y);
+  // Los sprites llevan margen de contorno: se compensa para que la posición sea la del contenido
+  x = Math.round(x) - (sp.pad || 0);
+  y = Math.round(y) - (sp.pad || 0);
   if (flipX) {
     ctx.save();
     ctx.translate(x + sp.width, y);
@@ -454,8 +483,9 @@ const MUNDOS = [
     nombre: "Pradera",
     tema: "pradera",
     paleta: {
-      cielo: "#5c94fc", lejos: "#6d8cd8", cerca: "#3f9e4a", arbusto: "#2f7d3a",
-      G: "#c0703a", g: "#43b043", O: "#e07a3a", Y: "#ffd23f", U: "#8a8fa6", tubo: "#43b043",
+      cielo: "#4aa8ff", lejos: "#8ee07a", cerca: "#3cb84a", arbusto: "#2a9a3a",
+      G: "#b8733c", g: "#5ad84a", O: "#eba24e", Y: "#ffd23f", U: "#9a9aa8", tubo: "#3cc24e",
+      sol: "#ffe36b",
     },
     // Mapa del overworld: nodos con coordenadas en la pantalla 256x224
     // vec = índices de nodos conectados. ref = índice en niveles.
@@ -481,8 +511,9 @@ const MUNDOS = [
     nombre: "Desierto",
     tema: "desierto",
     paleta: {
-      cielo: "#f7c880", lejos: "#d99a5b", cerca: "#e8b06a", arbusto: "#7a9a3a",
-      G: "#e0b060", g: "#c08840", O: "#c06a30", Y: "#ffd23f", U: "#8a6a4a", tubo: "#3f8a3f",
+      cielo: "#4fc3f7", lejos: "#f2c38a", cerca: "#f0b860", arbusto: "#7aa83a",
+      G: "#e9b35d", g: "#ffe39a", O: "#d9873a", Y: "#ffd23f", U: "#a5865a", tubo: "#3f8a3f",
+      sol: "#fff19a", piedraClara: "#f7d58a", piedraOscura: "#c98a3e", piedraJunta: "#9c6328",
     },
     mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
     niveles: [
@@ -1191,6 +1222,252 @@ function dibujarParticulas(cam) {
   }
 }
 
+/* Mezcla un color hex con negro o blanco en proporción t (sombreado) */
+function mezclar(hex, t, hacia = "#000000") {
+  const a = parseInt(hex.slice(1), 16), b = parseInt(hacia.slice(1), 16);
+  const out = [16, 8, 0].map((s) => {
+    const x = (a >> s) & 255, y = (b >> s) & 255;
+    return Math.round(x + (y - x) * t);
+  });
+  return "#" + out.map((v) => v.toString(16).padStart(2, "0")).join("");
+}
+
+/* =====================================================================
+   13. ESCENARIO CON VOLUMEN (estilo consola de 16 bits, colores vivos)
+   Todo se genera como matrices y pasa por spriteFromRows: el contorno
+   y el bisel salen solos. Las texturas se cachean y se repiten en X
+   con desplazamiento de parallax.
+   ===================================================================== */
+const mod = (a, n) => ((a % n) + n) % n;
+const texturas = new Map();
+function textura(key, fabricar) {
+  if (!texturas.has(key)) texturas.set(key, fabricar());
+  return texturas.get(key);
+}
+
+// Matriz de un círculo relleno (para soles, arbustos, etc.)
+function circuloRows(r, ch) {
+  const rows = [];
+  for (let y = -r; y <= r; y++) {
+    let f = "";
+    for (let x = -r; x <= r; x++) f += x * x + y * y <= r * r ? ch : ".";
+    rows.push(f);
+  }
+  return rows;
+}
+
+// Colina periódica: fnAlt(x) da la altura de la cima en cada columna
+function texColinas(key, ancho, color, fnAlt, contorno = false) {
+  return textura(key, () => {
+    const alto = H;
+    const rows = [];
+    for (let y = 0; y < alto; y++) rows.push("");
+    for (let x = 0; x < ancho; x++) {
+      const top = Math.round(fnAlt(x));
+      for (let y = 0; y < alto; y++) rows[y] += y >= top ? "c" : ".";
+    }
+    const sp = spriteFromRows(rows, { c: color }, contorno, true);
+    sp.tw = ancho;
+    return sp;
+  });
+}
+
+// Pinta una capa periódica con parallax (factor = fracción de la cámara)
+function capaPeriodica(sp, camX, factor, y) {
+  const off = mod(Math.floor(camX * factor), sp.tw);
+  for (let x = -off; x < W; x += sp.tw) drawSprite(sp, x, y);
+}
+
+// Cielo en bandas: del color del cielo a un tono más claro hacia el horizonte
+function bandasCielo(pal) {
+  for (let i = 0; i < 8; i++) {
+    rect(0, i * 22, W, 22, mezclar(pal.cielo, i * 0.06, "#ffffff"));
+  }
+}
+
+// Sol con borde de luz y contorno
+function dibujarSol(pal, x, y) {
+  const color = pal.sol || "#ffe36b";
+  const sp = textura("sol-" + color, () => spriteFromRows(circuloRows(11, "c"), { c: color }));
+  drawSprite(sp, x, y);
+}
+
+// Nube de tres bultos con base plana (se sombrea sola)
+function texNube() {
+  return textura("nube", () => {
+    const rows = [];
+    for (let y = 0; y < 18; y++) {
+      let f = "";
+      for (let x = 0; x < 42; x++) {
+        const enCirculo =
+          (x - 11) ** 2 + (y - 11) ** 2 <= 49 ||
+          (x - 23) ** 2 + (y - 8) ** 2 <= 81 ||
+          (x - 33) ** 2 + (y - 11) ** 2 <= 36;
+        const base = y >= 11 && x >= 5 && x <= 37;
+        f += enCirculo || base ? "c" : ".";
+      }
+      rows.push(f);
+    }
+    return spriteFromRows(rows, { c: "#ffffff" });
+  });
+}
+function dibujarNubes(cam) {
+  const nube = texNube();
+  for (let i = 0; i < 5; i++) {
+    const x = mod(i * 97 - cam.x * 0.12, W + 90) - 45;
+    drawSprite(nube, x, 24 + (i % 3) * 20);
+  }
+}
+
+// Arbusto redondeado con sombreado (repetible)
+function texArbusto(color) {
+  return textura("arbusto-" + color, () => {
+    const rows = [];
+    for (let y = 0; y < 20; y++) {
+      let f = "";
+      for (let x = 0; x < 48; x++) {
+        const en = (x - 12) ** 2 + (y - 13) ** 2 <= 81 || (x - 26) ** 2 + (y - 12) ** 2 <= 100 || (x - 38) ** 2 + (y - 14) ** 2 <= 64 || (y >= 14 && x >= 6 && x <= 42);
+        f += en && y <= 19 ? "a" : ".";
+      }
+      rows.push(f);
+    }
+    const sp = spriteFromRows(rows, { a: color });
+    sp.tw = 96;
+    return sp;
+  });
+}
+
+// Pirámide con bloques de piedra: cara iluminada a la izquierda, sombra a la derecha
+function texPiramide(alto, base, pal) {
+  return textura("piramide-" + alto + "-" + base, () => {
+    const rows = [];
+    const cx = base / 2;
+    for (let y = 0; y < alto; y++) {
+      const mitad = ((y + 1) / alto) * cx;
+      let f = "";
+      for (let x = 0; x < base; x++) {
+        const dx = x + 0.5 - cx;
+        if (Math.abs(dx) > mitad) { f += "."; continue; }
+        const hilada = y % 7 === 6;
+        f += hilada ? "m" : dx < 0 ? "l" : "d";
+      }
+      rows.push(f);
+    }
+    return spriteFromRows(rows, { l: pal.piedraClara, d: pal.piedraOscura, m: pal.piedraJunta }, true);
+  });
+}
+
+// Escenario de pradera / genérico: cielo, sol, nubes, colinas y arbustos
+function escenaColinas(cam, pal) {
+  bandasCielo(pal);
+  dibujarSol(pal, 196, 30);
+  dibujarNubes(cam);
+  const lejos = texColinas("lejos-" + pal.lejos, 512, pal.lejos,
+    (x) => 96 + Math.sin((x / 512) * Math.PI * 4) * 14 + Math.sin((x / 512) * Math.PI * 10) * 6);
+  capaPeriodica(lejos, cam.x, 0.18, 0);
+  const cerca = texColinas("cerca-" + pal.cerca, 512, pal.cerca,
+    (x) => 128 + Math.sin((x / 512) * Math.PI * 6) * 12 + Math.sin((x / 512) * Math.PI * 14) * 4, true);
+  capaPeriodica(cerca, cam.x, 0.4, 0);
+  const arb = texArbusto(pal.arbusto);
+  capaPeriodica(arb, cam.x, 0.7, 156);
+}
+
+// Escenario de desierto: pirámides, dunas y sol fuerte
+function escenaDesierto(cam, pal) {
+  bandasCielo(pal);
+  dibujarSol(pal, 200, 22);
+  dibujarNubes(cam);
+  const pir = texPiramide(74, 96, pal);
+  const off = mod(cam.x * 0.3, 360);
+  for (let k = -1; k < 4; k++) drawSprite(pir, k * 170 - off, 176 - 74);
+  const dunas = texColinas("dunas-" + pal.cerca, 512, pal.cerca,
+    (x) => 130 + Math.sin((x / 512) * Math.PI * 4) * 16 + Math.sin((x / 512) * Math.PI * 9) * 5, true);
+  capaPeriodica(dunas, cam.x, 0.45, 0);
+}
+
+function dibujarFondo(cam, pal, tema) {
+  if (tema === "desierto") escenaDesierto(cam, pal);
+  else escenaColinas(cam, pal);
+}
+
+/* =====================================================================
+   13b. TILES CON BISELADO (cacheados por tema y por "tiene hierba")
+   ===================================================================== */
+const tileCache = new Map();
+function crearTile(tipo, p, flags) {
+  const arriba = flags[0] === "1", abajo = flags[1] === "1";
+  const c = document.createElement("canvas");
+  c.width = 16; c.height = 16;
+  const g = c.getContext("2d");
+  const px = (x, y, col) => { g.fillStyle = col; g.fillRect(x, y, 1, 1); };
+  const claro = (t) => mezclar(t, 0.45, "#ffffff");
+  const oscuro = (t) => mezclar(t, 0.4);
+  const marco = (base) => {
+    for (let i = 0; i < 16; i++) { px(i, 0, claro(base)); px(0, i, claro(base)); px(i, 15, oscuro(base)); px(15, i, oscuro(base)); }
+  };
+  if (tipo === "G") {
+    // Tierra con puntos de textura; hierba solo donde no hay bloque encima
+    g.fillStyle = p.G; g.fillRect(0, 0, 16, 16);
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+      if ((x * 5 + y * 7) % 13 === 0) px(x, y, oscuro(p.G));
+      else if ((x * 3 + y * 11) % 17 === 0) px(x, y, claro(p.G));
+    }
+    if (arriba) {
+      for (let x = 0; x < 16; x++) {
+        px(x, 0, claro(p.g));
+        px(x, 1, p.g);
+        px(x, 2, p.g);
+        px(x, 3, oscuro(p.g));
+        if (x % 4 === 1) px(x, 4, oscuro(p.g));
+      }
+    }
+    if (abajo) for (let x = 0; x < 16; x++) px(x, 15, oscuro(p.G));
+  } else if (tipo === "S") {
+    // Piedra: marco y cruz de juntas
+    g.fillStyle = p.G; g.fillRect(0, 0, 16, 16);
+    marco(p.G);
+    for (let i = 1; i < 15; i++) { px(i, 7, oscuro(p.G)); px(7, i, oscuro(p.G)); }
+  } else if (tipo === "B") {
+    // Ladrillo de arenisca: dos hiladas con bisel por ladrillo
+    g.fillStyle = p.O; g.fillRect(0, 0, 16, 16);
+    for (const y0 of [0, 8]) {
+      for (let x = 0; x < 16; x++) { px(x, y0, claro(p.O)); px(x, y0 + 7, oscuro(p.O)); }
+    }
+    for (let y = 0; y < 8; y++) px(7, y, oscuro(p.O));
+    for (let y = 8; y < 16; y++) { px(3, y, oscuro(p.O)); px(11, y, oscuro(p.O)); }
+    for (let x = 0; x < 16; x++) px(x, 15, oscuro(p.O));
+  } else if (tipo === "Q" || tipo === "U") {
+    // Bloque ? dorado o bloque usado: marco con remaches
+    const base = tipo === "Q" ? p.Y : p.U;
+    g.fillStyle = base; g.fillRect(0, 0, 16, 16);
+    marco(base);
+    for (const [x, y] of [[2, 2], [12, 2], [2, 12], [12, 12]]) { px(x, y, oscuro(base)); px(x + 1, y, claro(base)); }
+    if (tipo === "Q") dibujarGlifo("?", 6, 5, PAL.k, g);
+  }
+  return c;
+}
+function tileSprite(tipo, p, key) {
+  if (!tileCache.has(key)) tileCache.set(key, crearTile(tipo, p, key.slice(-2)));
+  return tileCache.get(key);
+}
+
+// Castillo del mapa: dos hileras de almenas, cuerpo liso y puerta oscura
+function castilloRows() {
+  const rows = [];
+  for (let y = 0; y < 16; y++) {
+    let f = "";
+    for (let x = 0; x < 16; x++) {
+      const dentro = x > 0 && x < 15;
+      if (y < 3 && (!dentro || x % 4 >= 2)) f += ".";           // huecos entre almenas
+      else if (!dentro) f += ".";
+      else if (y >= 10 && x >= 6 && x <= 9) f += "d";            // puerta
+      else f += "c";
+    }
+    rows.push(f);
+  }
+  return rows;
+}
+
 /* =====================================================================
    11. SONIDO SENCILLO (ondas cuadradas con Web Audio, sin archivos)
    ===================================================================== */
@@ -1236,127 +1513,6 @@ class Camera {
     this.x = clamp(objetivo.x + objetivo.w / 2 - W / 2, 0, lvl.cols * TILE - W);
     this.y = 0;
   }
-}
-
-/* =====================================================================
-   13. FONDOS CON PARALLAX (capas de columnas de 1 px: look pixel art)
-   ===================================================================== */
-function dibujarCapa(camX, factor, altura, base, color, freq, amp) {
-  const off = camX * factor;
-  for (let x = 0; x < W; x++) {
-    const wx = x + off;
-    // Suma de senos: colinas suaves pero cuantizadas a píxeles
-    const h = altura + Math.round(Math.sin(wx * freq) * amp + Math.sin(wx * freq * 2.7) * amp * 0.5);
-    rect(x, h, 1, H - h, color);
-  }
-}
-/* Mezcla un color hex con otro (negro o blanco) en proporción t: sombreado */
-function mezclar(hex, t, hacia = "#000000") {
-  const a = parseInt(hex.slice(1), 16), b = parseInt(hacia.slice(1), 16);
-  const ch = (s) => [(a >> s) & 255, (b >> s) & 255];
-  const out = [16, 8, 0].map((s) => {
-    const [x, y] = ch(s);
-    return Math.round(x + (y - x) * t);
-  });
-  return "#" + out.map((v) => v.toString(16).padStart(2, "0")).join("");
-}
-
-/* Capa con borde iluminado: color claro arriba, cuerpo medio, base oscura */
-function dibujarColinas(camX, factor, altura, color, freq, amp) {
-  const off = camX * factor;
-  for (let x = 0; x < W; x++) {
-    const wx = x + off;
-    const h = altura + Math.round(Math.sin(wx * freq) * amp + Math.sin(wx * freq * 2.7) * amp * 0.5);
-    rect(x, h, 1, 2, mezclar(color, 0.35, "#ffffff"));   // borde de luz
-    rect(x, h + 2, 1, H - h - 2, color);
-  }
-}
-
-// Nube de píxeles (dos bloques redondeados y sombra)
-function dibujarNube(x, y, color) {
-  rect(x + 4, y, 16, 3, color);
-  rect(x, y + 3, 26, 5, color);
-  rect(x + 6, y - 3, 10, 3, color);
-  rect(x, y + 7, 26, 1, mezclar(color, 0.2));
-}
-
-function dibujarFondo(cam, pal) {
-  // Cielo por bandas horizontales (sin degradados suaves, como SNES)
-  const bandas = [0, 40, 80, 120, 160];
-  bandas.forEach((y, i) => rect(0, y, W, 40, mezclar(pal.cielo, i * 0.06, "#ffffff")));
-  // Nubes con parallax lento
-  const offN = Math.floor(cam.x * 0.15);
-  for (let i = 0; i < 6; i++) {
-    const nx = ((i * 97 - offN) % (W + 60) + W + 60) % (W + 60) - 30;
-    dibujarNube(nx, 22 + (i % 3) * 14, mezclar(pal.cielo, 0.7, "#ffffff"));
-  }
-  dibujarColinas(cam.x, 0.12, 110, pal.lejos, 0.02, 14);   // montañas lejanas
-  dibujarColinas(cam.x, 0.35, 150, pal.cerca, 0.035, 10);  // colinas
-  // Arbustos con sombra en la capa más cercana
-  const off = Math.floor(cam.x * 0.7);
-  for (let i = 0; i < 20; i++) {
-    const bx = i * 48 - (off % 48);
-    rect(bx, 186, 28, 10, pal.arbusto);
-    rect(bx + 2, 184, 24, 3, mezclar(pal.arbusto, 0.3, "#ffffff"));
-    rect(bx + 4, 180, 20, 6, pal.arbusto);
-    rect(bx, 195, 28, 1, mezclar(pal.arbusto, 0.4));
-  }
-}
-
-/* =====================================================================
-   13b. TILES PROCEDURALES 16x16 CON BISELADO (cacheados por tema)
-   Cada tipo se pinta una sola vez en un canvas y luego se copia.
-   ===================================================================== */
-const tileCache = new Map();
-function crearTile(tipo, p) {
-  const c = document.createElement("canvas");
-  c.width = 16; c.height = 16;
-  const g = c.getContext("2d");
-  const px = (x, y, col) => { g.fillStyle = col; g.fillRect(x, y, 1, 1); };
-  const claro = (t) => mezclar(t, 0.45, "#ffffff");
-  const oscuro = (t) => mezclar(t, 0.4);
-  if (tipo === "G") {
-    // Tierra con franja de hierba arriba y puntos de textura
-    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
-      px(x, y, (x * 7 + y * 13) % 11 === 0 ? oscuro(p.G) : p.G);
-    }
-    for (let x = 0; x < 16; x++) {
-      px(x, 0, claro(p.g));
-      px(x, 1, p.g);
-      if (x % 3 === 0) px(x, 2, oscuro(p.g));
-    }
-    // Sin líneas verticales: así no se confunde con ladrillos
-    for (let x = 0; x < 16; x++) px(x, 15, oscuro(p.G));
-  } else if (tipo === "S") {
-    // Bloque de piedra: marco claro/oscuro
-    g.fillStyle = p.G; g.fillRect(0, 0, 16, 16);
-    for (let i = 0; i < 16; i++) { px(i, 0, claro(p.G)); px(0, i, claro(p.G)); px(i, 15, oscuro(p.G)); px(15, i, oscuro(p.G)); }
-    g.fillStyle = oscuro(p.G); g.fillRect(3, 3, 10, 10);
-    g.fillStyle = p.G; g.fillRect(4, 4, 8, 8);
-  } else if (tipo === "B") {
-    // Ladrillo: juntas oscuras con dos hiladas desfasadas
-    g.fillStyle = p.O; g.fillRect(0, 0, 16, 16);
-    for (let i = 0; i < 16; i++) { px(i, 0, claro(p.O)); px(i, 15, oscuro(p.O)); }
-    for (const y of [4, 9]) for (let x = 0; x < 16; x++) px(x, y, oscuro(p.O));
-    for (const x of [4, 12]) for (let y = 0; y < 4; y++) px(x, y, oscuro(p.O));
-    for (const x of [8]) for (let y = 5; y < 9; y++) px(x, y, oscuro(p.O));
-    for (const x of [4, 12]) for (let y = 10; y < 15; y++) px(x, y, oscuro(p.O));
-  } else if (tipo === "Q" || tipo === "U") {
-    // Bloque ? (dorado con interrogación) o usado (gris plano)
-    const base = tipo === "Q" ? p.Y : p.U;
-    g.fillStyle = base; g.fillRect(0, 0, 16, 16);
-    for (let i = 0; i < 16; i++) { px(i, 0, claro(base)); px(0, i, claro(base)); px(i, 15, oscuro(base)); px(15, i, oscuro(base)); }
-    for (let i = 1; i < 15; i++) { px(i, 1, base); }
-    if (tipo === "Q") {
-      // Signo de interrogación con el glifo de la fuente bitmap
-      dibujarGlifo("?", 6, 4, PAL.k, g);
-    }
-  }
-  return c;
-}
-function tileSprite(tipo, p, key) {
-  if (!tileCache.has(key)) tileCache.set(key, crearTile(tipo, p));
-  return tileCache.get(key);
 }
 
 /* =====================================================================
@@ -1481,7 +1637,7 @@ class Level {
   // Dibuja el nivel completo con la cámara actual
   dibujar(game) {
     const cam = this.cam;
-    dibujarFondo(cam, this.pal);
+    dibujarFondo(cam, this.pal, this.temaKey);
     // Tiles visibles
     const c0 = Math.max(0, Math.floor(cam.x / TILE));
     const c1 = Math.min(this.cols - 1, Math.floor((cam.x + W) / TILE) + 1);
@@ -1514,19 +1670,28 @@ class Level {
     if (t === "T") return this.dibujarTuberia(x, y, c, r);
     if (t === "F") return this.dibujarPoste(x, y);
     // Tiles biselados generados por código, con los colores del tema
-    drawSprite(tileSprite(t, this.pal, this.temaKey + t), x, y);
+    // Hierba arriba y borde oscuro abajo solo en la superficie real (flags en la clave de caché)
+    const arriba = !SOLIDOS[tileAt(this, c, r - 1)] ? "1" : "0";
+    const abajo = !SOLIDOS[tileAt(this, c, r + 1)] ? "1" : "0";
+    drawSprite(tileSprite(t, this.pal, this.temaKey + t + "-" + arriba + abajo), x, y);
   }
 
+  // Tubería con volumen: borde superior (boca) y cuerpo con luz a la izquierda y sombra a la derecha
   dibujarTuberia(x, y, c, r) {
+    const tubo = this.pal.tubo;
+    const luz = mezclar(tubo, 0.45, "#ffffff"), sombra = mezclar(tubo, 0.4);
     const up = tileAt(this, c, r - 1) !== "T";
     if (up) {
-      rect(x, y, 16, 3, PAL.k);
-      rect(x + 1, y + 1, 14, 2, this.pal.tubo);
-      rect(x, y + 3, 16, 1, PAL.k);
+      rect(x, y, 16, 4, PAL.k);
+      rect(x + 1, y + 1, 14, 3, tubo);
+      rect(x + 1, y + 1, 14, 1, luz);
+      rect(x + 1, y + 3, 14, 1, sombra);
     } else {
-      rect(x + 2, y, 1, 16, PAL.k);
-      rect(x + 3, y, 11, 16, this.pal.tubo);
-      rect(x + 14, y, 1, 16, PAL.k);
+      rect(x + 1, y, 1, 16, PAL.k);
+      rect(x + 2, y, 13, 16, tubo);
+      rect(x + 3, y, 3, 16, luz);
+      rect(x + 12, y, 3, 16, sombra);
+      rect(x + 15, y, 1, 16, PAL.k);
     }
   }
 
@@ -1959,7 +2124,8 @@ class Overworld {
 
   draw() {
     const p = this.m.paleta;
-    rect(0, 0, W, H, p.cielo);
+    // Mismo escenario que en los niveles, con la cámara fija
+    dibujarFondo({ x: 0 }, p, this.m.tema);
     // Ruta punteada entre nodos (píxeles sueltos, look de mapa SNES)
     const nodos = this.m.mapa.nodos;
     for (let i = 0; i < nodos.length; i++) {
@@ -1980,14 +2146,9 @@ class Overworld {
       const abierto = this.g.nivelDesbloqueado(this.mIdx, n.ref);
       const color = hecho ? PAL.y : abierto ? PAL.w : PAL.gr;
       if (n.castillo) {
-        // Castillo: bloque con almenas
-        rect(n.x - 8, n.y - 8, 16, 16, PAL.k);
-        rect(n.x - 7, n.y - 7, 14, 14, color);
-        rect(n.x - 8, n.y - 9, 4, 3, PAL.k);
-        rect(n.x + 4, n.y - 9, 4, 3, PAL.k);
+        drawSprite(getSprite("castillo-" + color, castilloRows(), { c: color, d: PAL.dgr }), n.x - 8, n.y - 8);
       } else {
-        rect(n.x - 5, n.y - 5, 10, 10, PAL.k);
-        rect(n.x - 4, n.y - 4, 8, 8, color);
+        drawSprite(getSprite("nodo-" + color, circuloRows(5, "c"), { c: color }), n.x - 5, n.y - 5);
       }
     });
     // Cursor: el jugador parpadea sobre el nodo actual
@@ -1996,7 +2157,7 @@ class Overworld {
       drawSprite(getSprite("playerIdle", SPR.playerIdle, PAL), n.x - 5, n.y - 22);
     }
     // Cabecera con el nombre del mundo
-    rect(0, 0, W, 14, PAL.k);
+    rect(0, 0, W, 14, "rgba(0,0,0,0.5)");
     txt("MUNDO " + this.m.id + " - " + this.m.nombre.toUpperCase(), W / 2, 3, PAL.w, "center");
     const nivel = this.m.niveles[n.ref];
     txt(nivel.nombre, W / 2, H - 12, PAL.w, "center");
@@ -2025,18 +2186,22 @@ function dibujarSelMundo(game) {
 /* =====================================================================
    17. HUD Y PANTALLAS
    ===================================================================== */
+/* HUD sin barra: iconos y textos con sombra sobre el escenario (estilo NSMB) */
 function dibujarHUD(game) {
   const lvl = game.lvl;
-  rect(0, 0, W, 14, "rgba(0,0,0,0.55)");
-  const m = MUNDOS[game.mundoIdx];
-  // Indicador de poder: F = fuego, C = capa, G = grande, P = pequeño
   const p = lvl.player;
-  const poder = p.fire ? "F" : p.cape ? "C" : p.big ? "G" : "P";
-  txt("MUNDO " + m.id + "-" + (game.nivelIdx + 1), 4, 3);
-  txt("VIDAS " + String(game.vidas).padStart(2, "0") + " " + poder, 64, 3, PAL.w);
-  txt("MON " + String(game.monedas).padStart(3, "0"), 124, 3, PAL.y);
-  txt("PTS " + String(game.score).padStart(6, "0"), 168, 3, PAL.w);
-  txt("T" + String(Math.ceil(lvl.tiempoRest)).padStart(3, "0"), W - 4, 3, PAL.w, "right");
+  const poder = p.fire ? "FUEGO" : p.cape ? "CAPA" : p.big ? "GRANDE" : "PEQUENO";
+  // Izquierda: jugador, vidas y monedas con icono
+  txt("MARIO " + poder, 6, 6);
+  txt("X" + String(game.vidas).padStart(2, "0"), 22, 17);
+  drawSprite(getSprite("coin0", SPR.coin0, PAL), 6, 28);
+  txt("X" + String(game.monedas).padStart(3, "0"), 22, 30, PAL.y);
+  // Centro: mundo y nivel
+  txt("MUNDO " + MUNDOS[game.mundoIdx].id + "-" + (game.nivelIdx + 1), W / 2, 6, PAL.w, "center");
+  // Derecha: puntos y temporizador con icono de reloj
+  txt(String(game.score).padStart(8, "0"), W - 6, 6, PAL.w, "right");
+  drawSprite(getSprite("reloj", circuloRows(3, "c"), { c: PAL.w }), W - 42, 18);
+  txt(String(Math.ceil(lvl.tiempoRest)).padStart(3, "0"), W - 6, 17, PAL.w, "right");
 }
 
 function dibujarNivelYHUD(game) {
@@ -2054,15 +2219,17 @@ function velo(texto, sub) {
 function dibujarJuego(game) {
   const e = game.estado;
   if (e === "titulo") {
-    rect(0, 0, W, H, "#5c94fc");
-    rect(0, 150, W, 74, "#c0703a");
-    rect(0, 150, W, 4, "#43b043");
-    txt("SUPERBRO", W / 2, 40, PAL.y, "center", 2);
-    txt("PLATAFORMAS 2D SNES", W / 2, 60, PAL.w, "center");
-    drawSprite(getSprite("playerIdle", SPR.playerIdle, PAL), W / 2 - 6, 110);
+    // Pradera de fondo, logo con sombra y el personaje apoyado en el suelo
+    dibujarFondo({ x: performance.now() / 40 }, MUNDOS[0].paleta, MUNDOS[0].tema);
+    rect(W / 2 - 96, 24, 192, 66, "rgba(0,0,0,0.4)");
+    txt("SUPERBRO", W / 2 + 2, 42, PAL.k, "center", 3);
+    txt("SUPERBRO", W / 2, 40, PAL.y, "center", 3);
+    txt("PLATAFORMAS 2D", W / 2, 72, PAL.w, "center");
+    drawSprite(getSprite("playerIdle", SPR.playerIdle, PAL), W / 2 - 7, 158);
     const parpadeo = Math.floor(performance.now() / 500) % 2 === 0;
-    if (parpadeo) txt("PULSA ENTER", W / 2, 186, PAL.w, "center");
-    txt("BACKSPACE: borrar progreso", W / 2, 206, PAL.w, "center");
+    rect(0, 186, W, 38, "rgba(0,0,0,0.45)");
+    if (parpadeo) txt("PULSA ENTER", W / 2, 192, PAL.w, "center");
+    txt("BACKSPACE: BORRAR PROGRESO", W / 2, 206, PAL.w, "center");
     return;
   }
   if (e === "selMundo") return dibujarSelMundo(game);
