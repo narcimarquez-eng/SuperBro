@@ -96,6 +96,10 @@ const PAL = {
   g: "#43b043", // verde
   dg: "#1f6b2a", // verde oscuro
   d: "#1f6b2a",  // sombra de verde (caparazones y plantas)
+  // Tonos de sombreado del personaje (estilo SNES: claro, medio y oscuro)
+  R: "#8c1a14", // rojo oscuro
+  S: "#f6b99a", // piel
+  B: "#1d3c8c", // azul oscuro
   gr: "#8a8fa6", // gris
   dgr: "#3b3f55", // gris oscuro
   lb: "#6ec8ff", // celeste
@@ -204,126 +208,6 @@ function consume(action) {
    Son datos puros: para cambiar el look, edita las matrices.
    ===================================================================== */
 const SPR = {
-  // Jugador pequeño 12x14: gorra roja, overol azul
-  playerIdle: [
-    "....kkkk....",
-    "...krrrrk...",
-    "..krrrrrrk..",
-    "..kbbbbbbk..",
-    "..kssssssk..",
-    ".ksksskssk..",
-    ".kssssssssk.",
-    "..ssssssss..",
-    "...bbyybb...",
-    "..bbbbbbbb..",
-    ".bbbbbbbbbb.",
-    ".ssbbbbbbss.",
-    "..bb....bb..",
-    ".kkk....kkk.",
-  ],
-  playerRun1: [
-    "....kkkk....",
-    "...krrrrk...",
-    "..krrrrrrk..",
-    "..kbbbbbbk..",
-    "..kssssssk..",
-    ".ksksskssk..",
-    ".kssssssssk.",
-    "..ssssssss..",
-    "...bbyybb...",
-    "..bbbbbbbb..",
-    ".bbbbbbbbbb.",
-    "..bbbbbbbbs.",
-    "..kk..kkk...",
-    ".kkk....kk..",
-  ],
-  playerRun2: [
-    "....kkkk....",
-    "...krrrrk...",
-    "..krrrrrrk..",
-    "..kbbbbbbk..",
-    "..kssssssk..",
-    ".ksksskssk..",
-    ".kssssssssk.",
-    "..ssssssss..",
-    "...bbyybb...",
-    "..bbbbbbbb..",
-    ".bbbbbbbbbb.",
-    "s.bbbbbbbb..",
-    "..kkk..kk...",
-    "...kk....kkk",
-  ],
-  playerJump: [
-    "....kkkk....",
-    "...krrrrk...",
-    "..krrrrrrk..",
-    "..kbbbbbbk..",
-    "..kssssssk..",
-    ".ksksskssk..",
-    ".kssssssssk.",
-    "..ssssssss..",
-    ".bbbyybbbb..",
-    "bbbbbbbbbbb.",
-    "ssbbbbbbbss.",
-    "...bbbbbb...",
-    "..kk....kk..",
-    ".kk......kk.",
-  ],
-  playerDuck: [
-    "............",
-    "............",
-    "............",
-    "............",
-    "............",
-    "............",
-    "............",
-    "............",
-    "....kkkk....",
-    "...krrrrk...",
-    "..krrrrrrk..",
-    "..kbbbbbbk..",
-    ".bbbbbbbbbb.",
-    ".kkkkkkkkkk.",
-  ],
-  playerHurt: [
-    "............",
-    "............",
-    "............",
-    "....kkkk....",
-    "...krrrrk...",
-    "..krrrrrrk..",
-    "..kssssssk..",
-    ".ksksskssk..",
-    ".kssssssssk.",
-    "..ssssssss..",
-    "...bbyybb...",
-    ".bbbbbbbbbb.",
-    "..bb....bb..",
-    ".kkk....kkk.",
-  ],
-  // Jugador grande: misma cabeza, cuerpo más alto (20 px)
-  bigIdle: [
-    "....kkkk....",
-    "...krrrrk...",
-    "..krrrrrrk..",
-    "..kbbbbbbk..",
-    "..kssssssk..",
-    ".ksksskssk..",
-    ".kssssssssk.",
-    "..ssssssss..",
-    "...bbyybb...",
-    "..bbbbbbbb..",
-    ".bbbbbbbbbb.",
-    ".bbbbbbbbbb.",
-    ".ssbbbbbbss.",
-    "..bbbbbbbb..",
-    "..bb....bb..",
-    "..bb....bb..",
-    ".bbb....bbb.",
-    ".kkk....kkk.",
-    "............",
-    "............",
-  ],
   // Goomba-like (caminante)
   walker: [
     "....kkkkkk..",
@@ -435,82 +319,48 @@ const SPR = {
     "..yy..yy....",
     ".yy....yy...",
   ],
-  // Bloques: 16x16
-  brick: [
-    "kkkkkkkkkkkkkkkk",
-    "kOOOOOOOkOOOOOOk",
-    "kOOOOOOOkOOOOOOk",
-    "kOOOOOOOkOOOOOOk",
-    "kkkkkkkkkkkkkkkk",
-    "kOOOkOOOOOOOkOOk",
-    "kOOOkOOOOOOOkOOk",
-    "kOOOkOOOOOOOkOOk",
-    "kkkkkkkkkkkkkkkk",
-    "kOOOOOOOkOOOOOOk",
-    "kOOOOOOOkOOOOOOk",
-    "kOOOOOOOkOOOOOOk",
-    "kkkkkkkkkkkkkkkk",
-    "kOOOkOOOOOOOkOOk",
-    "kOOOkOOOOOOOkOOk",
-    "kkkkkkkkkkkkkkkk",
-  ],
-  qblock: [
-    "kkkkkkkkkkkkkkkk",
-    "kYYYYYYYYYYYYYYk",
-    "kYYYYYYYYYYYYYYk",
-    "kYYYYkkkkkkYYYYk",
-    "kYYYYkWWWWkYYYYk",
-    "kYYYYkkkkWWYYYYk",
-    "kYYYYYYYYWWYYYYk",
-    "kYYYYYYYWWYYYYYk",
-    "kYYYYYYYWWYYYYYk",
-    "kYYYYYYYYYYYYYYk",
-    "kYYYYYYYWWYYYYYk",
-    "kYYYYYYYWWYYYYYk",
-    "kYYYYYYYYYYYYYYk",
-    "kYYYYYYYYYYYYYYk",
-    "kYYYYYYYYYYYYYYk",
-    "kkkkkkkkkkkkkkkk",
-  ],
-  usedBlock: [
-    "kkkkkkkkkkkkkkkk",
-    "kUUUUUUUUUUUUUUk",
-    "kUUUUUUUUUUUUUUk",
-    "kUUUUUUUUUUUUUUk",
-    "kUUUUUUUUUUUUUUk",
-    "kUUUUUUUUUUUUUUk",
-    "kUUUUUUUUUUUUUUk",
-    "kUUUUUUUUUUUUUUk",
-    "kUUUUUUUUUUUUUUk",
-    "kUUUUUUUUUUUUUUk",
-    "kUUUUUUUUUUUUUUk",
-    "kUUUUUUUUUUUUUUk",
-    "kUUUUUUUUUUUUUUk",
-    "kUUUUUUUUUUUUUUk",
-    "kUUUUUUUUUUUUUUk",
-    "kkkkkkkkkkkkkkkk",
-  ],
-  // Suelo sólido 16x16. Las letras mayúsculas (O, Y, G, W, F) son colores
-  // del TEMA del mundo: cada tema aporta su propia paleta de bloques.
-  ground: [
-    "GGGGGGGGGGGGGGGG",
-    "GgggGGGGGgggGGgG",
-    "GGGGGGGGGGGGGGGG",
-    "GGgGGGGGGGGGgGGG",
-    "GGGGGGGGGGGGGGGG",
-    "GgGGGGGGGGgGGGGG",
-    "GGGGGGGGGGGGGGGG",
-    "GGGGGGgGGGGGGGgG",
-    "GGGGGGGGGGGGGGGG",
-    "GGGGGGGGGGGGGGGG",
-    "GGGGGGGGGGGGGGGG",
-    "GGGGGgGGGGGGGGGG",
-    "GGGGGGGGGGGGGGGG",
-    "GGGGGGGGGGGGGGGG",
-    "GGGGGGGGGGGGGGGG",
-    "GGGGGGGGGGGGGGGG",
-  ],
 };
+
+/* =====================================================================
+   5b. PERSONAJE CON SOMBREADO (estilo SNES: 14x18, 3 tonos + contorno)
+   Claves: k contorno, R/r rojo oscuro/claro, S piel, B azul oscuro,
+           b azul, y botones amarillos. Las piernas se cambian por frame.
+   ===================================================================== */
+const HERO_TOP = [
+  "....kkkkkk....",
+  "...kRRRRRRk...",
+  "..kRrrrrrrRk..",
+  "..kRrrrrrrRk..",
+  "..kSSSSSSSSk..",
+  "..kSkSSSSkSk..",
+  "..kSSSSSSSSk..",
+  "...kSSSSSSk...",
+  "..kbbbbbbbbk..",
+  "..kbbybbybbk..",
+  ".kbbbbbbbbbbk.",
+  ".kSbbbbbbbbSk.",
+  "..kbbbbbbbbk..",
+  "..kbbbbbbbbk..",
+];
+const LEGS_IDLE = ["..kBBk..kBBk..", "..kBBk..kBBk..", ".kkkk....kkkk.", ".kkkk....kkkk."];
+const LEGS_RUN1 = ["..kBBk.kBBk...", ".kBBk...kBBk..", ".kkkk.....kkkk", ".kkk.....kkkk."];
+const LEGS_RUN2 = ["...kBBk.kBBk..", "..kBBk...kBBk.", ".kkkk.....kkk.", ".kkk.....kkkk."];
+const LEGS_JUMP = [".kBBk....kBBk.", ".kBBk....kBBk.", "kkkk......kkkk", "kkkk......kkkk"];
+const VACIO = "..............";
+
+const hero = (legs) => HERO_TOP.concat(legs);
+Object.assign(SPR, {
+  playerIdle: hero(LEGS_IDLE),
+  playerRun1: hero(LEGS_RUN1),
+  playerRun2: hero(LEGS_RUN2),
+  playerJump: hero(LEGS_JUMP),
+  playerHurt: hero(LEGS_IDLE).map((r) => r.replace(/r/g, "w")),
+  // Agachado: cuerpo bajo y ancho
+  playerDuck: [VACIO, VACIO, VACIO, VACIO].concat(HERO_TOP.slice(4), ["..kkkkkkkkkk.."]),
+  // Grande: el torso tiene dos filas más
+  bigIdle: HERO_TOP.slice(0, 12)
+    .concat(["..kbbbbbbbbk..", "..kbbbbbbbbk.."], HERO_TOP.slice(12), LEGS_IDLE),
+});
 
 /* =====================================================================
    6. DATOS DE MUNDOS Y NIVELES  (separados de la lógica)
@@ -1337,17 +1187,113 @@ function dibujarCapa(camX, factor, altura, base, color, freq, amp) {
     rect(x, h, 1, H - h, color);
   }
 }
+/* Mezcla un color hex con otro (negro o blanco) en proporción t: sombreado */
+function mezclar(hex, t, hacia = "#000000") {
+  const a = parseInt(hex.slice(1), 16), b = parseInt(hacia.slice(1), 16);
+  const ch = (s) => [(a >> s) & 255, (b >> s) & 255];
+  const out = [16, 8, 0].map((s) => {
+    const [x, y] = ch(s);
+    return Math.round(x + (y - x) * t);
+  });
+  return "#" + out.map((v) => v.toString(16).padStart(2, "0")).join("");
+}
+
+/* Capa con borde iluminado: color claro arriba, cuerpo medio, base oscura */
+function dibujarColinas(camX, factor, altura, color, freq, amp) {
+  const off = camX * factor;
+  for (let x = 0; x < W; x++) {
+    const wx = x + off;
+    const h = altura + Math.round(Math.sin(wx * freq) * amp + Math.sin(wx * freq * 2.7) * amp * 0.5);
+    rect(x, h, 1, 2, mezclar(color, 0.35, "#ffffff"));   // borde de luz
+    rect(x, h + 2, 1, H - h - 2, color);
+  }
+}
+
+// Nube de píxeles (dos bloques redondeados y sombra)
+function dibujarNube(x, y, color) {
+  rect(x + 4, y, 16, 3, color);
+  rect(x, y + 3, 26, 5, color);
+  rect(x + 6, y - 3, 10, 3, color);
+  rect(x, y + 7, 26, 1, mezclar(color, 0.2));
+}
+
 function dibujarFondo(cam, pal) {
-  rect(0, 0, W, H, pal.cielo);
-  dibujarCapa(cam.x, 0.12, 110, 0, pal.lejos, 0.02, 14);   // montañas lejanas
-  dibujarCapa(cam.x, 0.35, 150, 0, pal.cerca, 0.035, 10);  // colinas
-  // Arbustos con paso de 1 tile en la capa más cercana
+  // Cielo por bandas horizontales (sin degradados suaves, como SNES)
+  const bandas = [0, 40, 80, 120, 160];
+  bandas.forEach((y, i) => rect(0, y, W, 40, mezclar(pal.cielo, i * 0.06, "#ffffff")));
+  // Nubes con parallax lento
+  const offN = Math.floor(cam.x * 0.15);
+  for (let i = 0; i < 6; i++) {
+    const nx = ((i * 97 - offN) % (W + 60) + W + 60) % (W + 60) - 30;
+    dibujarNube(nx, 22 + (i % 3) * 14, mezclar(pal.cielo, 0.7, "#ffffff"));
+  }
+  dibujarColinas(cam.x, 0.12, 110, pal.lejos, 0.02, 14);   // montañas lejanas
+  dibujarColinas(cam.x, 0.35, 150, pal.cerca, 0.035, 10);  // colinas
+  // Arbustos con sombra en la capa más cercana
   const off = Math.floor(cam.x * 0.7);
   for (let i = 0; i < 20; i++) {
     const bx = i * 48 - (off % 48);
     rect(bx, 186, 28, 10, pal.arbusto);
+    rect(bx + 2, 184, 24, 3, mezclar(pal.arbusto, 0.3, "#ffffff"));
     rect(bx + 4, 180, 20, 6, pal.arbusto);
+    rect(bx, 195, 28, 1, mezclar(pal.arbusto, 0.4));
   }
+}
+
+/* =====================================================================
+   13b. TILES PROCEDURALES 16x16 CON BISELADO (cacheados por tema)
+   Cada tipo se pinta una sola vez en un canvas y luego se copia.
+   ===================================================================== */
+const tileCache = new Map();
+function crearTile(tipo, p) {
+  const c = document.createElement("canvas");
+  c.width = 16; c.height = 16;
+  const g = c.getContext("2d");
+  const px = (x, y, col) => { g.fillStyle = col; g.fillRect(x, y, 1, 1); };
+  const claro = (t) => mezclar(t, 0.45, "#ffffff");
+  const oscuro = (t) => mezclar(t, 0.4);
+  if (tipo === "G") {
+    // Tierra con franja de hierba arriba y puntos de textura
+    for (let y = 0; y < 16; y++) for (let x = 0; x < 16; x++) {
+      px(x, y, (x * 7 + y * 13) % 11 === 0 ? oscuro(p.G) : p.G);
+    }
+    for (let x = 0; x < 16; x++) {
+      px(x, 0, claro(p.g));
+      px(x, 1, p.g);
+      if (x % 3 === 0) px(x, 2, oscuro(p.g));
+    }
+    // Sin líneas verticales: así no se confunde con ladrillos
+    for (let x = 0; x < 16; x++) px(x, 15, oscuro(p.G));
+  } else if (tipo === "S") {
+    // Bloque de piedra: marco claro/oscuro
+    g.fillStyle = p.G; g.fillRect(0, 0, 16, 16);
+    for (let i = 0; i < 16; i++) { px(i, 0, claro(p.G)); px(0, i, claro(p.G)); px(i, 15, oscuro(p.G)); px(15, i, oscuro(p.G)); }
+    g.fillStyle = oscuro(p.G); g.fillRect(3, 3, 10, 10);
+    g.fillStyle = p.G; g.fillRect(4, 4, 8, 8);
+  } else if (tipo === "B") {
+    // Ladrillo: juntas oscuras con dos hiladas desfasadas
+    g.fillStyle = p.O; g.fillRect(0, 0, 16, 16);
+    for (let i = 0; i < 16; i++) { px(i, 0, claro(p.O)); px(i, 15, oscuro(p.O)); }
+    for (const y of [4, 9]) for (let x = 0; x < 16; x++) px(x, y, oscuro(p.O));
+    for (const x of [4, 12]) for (let y = 0; y < 4; y++) px(x, y, oscuro(p.O));
+    for (const x of [8]) for (let y = 5; y < 9; y++) px(x, y, oscuro(p.O));
+    for (const x of [4, 12]) for (let y = 10; y < 15; y++) px(x, y, oscuro(p.O));
+  } else if (tipo === "Q" || tipo === "U") {
+    // Bloque ? (dorado con interrogación) o usado (gris plano)
+    const base = tipo === "Q" ? p.Y : p.U;
+    g.fillStyle = base; g.fillRect(0, 0, 16, 16);
+    for (let i = 0; i < 16; i++) { px(i, 0, claro(base)); px(0, i, claro(base)); px(i, 15, oscuro(base)); px(15, i, oscuro(base)); }
+    for (let i = 1; i < 15; i++) { px(i, 1, base); }
+    if (tipo === "Q") {
+      // Signo de interrogación con el glifo de la fuente bitmap
+      dibujarGlifo("?", 6, 4, PAL.k, g);
+    }
+  }
+  return c;
+}
+function tileSprite(tipo, p, key) {
+  if (!tileCache.has(key)) tileCache.set(key, crearTile(tipo, p));
+  return tileCache.get(key);
 }
 
 /* =====================================================================
@@ -1502,14 +1448,10 @@ class Level {
 
   // Tiles: cada tipo tiene su propio sprite con los colores del tema
   dibujarTile(t, x, y, c, r) {
-    const map = { G: "ground", B: "brick", Q: "qblock", U: "usedBlock", S: "ground", T: null, F: null };
     if (t === "T") return this.dibujarTuberia(x, y, c, r);
     if (t === "F") return this.dibujarPoste(x, y);
-    const key = "tile-" + this.temaKey + "-" + t;
-    const rows = SPR[map[t]];
-    const pal = this.tilePal;
-    const sp = getSprite(key, rows, pal);
-    drawSprite(sp, x, y);
+    // Tiles biselados generados por código, con los colores del tema
+    drawSprite(tileSprite(t, this.pal, this.temaKey + t), x, y);
   }
 
   dibujarTuberia(x, y, c, r) {
@@ -1851,16 +1793,54 @@ class Game {
 /* =====================================================================
    16. MAPA DE MUNDO (overworld) Y SELECCIÓN DE MUNDO
    ===================================================================== */
-// Texto en pantalla (fuente de sistema pequeña; cambiar aquí por una bitmap si se quiere)
-function txt(s, x, y, color = PAL.w, align = "left") {
-  ctx.font = "8px 'Courier New', monospace";
-  ctx.textBaseline = "top";
-  ctx.textAlign = align;
-  ctx.fillStyle = PAL.k;
-  ctx.fillText(s, Math.round(x) + 1, Math.round(y) + 1);
-  ctx.fillStyle = color;
-  ctx.fillText(s, Math.round(x), Math.round(y));
-  ctx.textAlign = "left";
+/* Fuente bitmap 3x5 (cada fila es una cadena de 3 píxeles) */
+const GLIFOS = {
+  A: ["010", "101", "111", "101", "101"], B: ["110", "101", "110", "101", "110"],
+  C: ["011", "100", "100", "100", "011"], D: ["110", "101", "101", "101", "110"],
+  E: ["111", "100", "110", "100", "111"], F: ["111", "100", "110", "100", "100"],
+  G: ["011", "100", "101", "101", "011"], H: ["101", "101", "111", "101", "101"],
+  I: ["111", "010", "010", "010", "111"], J: ["001", "001", "001", "101", "010"],
+  K: ["101", "101", "110", "101", "101"], L: ["100", "100", "100", "100", "111"],
+  M: ["101", "111", "111", "101", "101"], N: ["101", "111", "111", "111", "101"],
+  O: ["010", "101", "101", "101", "010"], P: ["110", "101", "110", "100", "100"],
+  Q: ["010", "101", "101", "110", "011"], R: ["110", "101", "110", "101", "101"],
+  S: ["011", "100", "010", "001", "110"], T: ["111", "010", "010", "010", "010"],
+  U: ["101", "101", "101", "101", "111"], V: ["101", "101", "101", "101", "010"],
+  W: ["101", "101", "111", "111", "101"], X: ["101", "101", "010", "101", "101"],
+  Y: ["101", "101", "010", "010", "010"], Z: ["111", "001", "010", "100", "111"],
+  0: ["111", "101", "101", "101", "111"], 1: ["010", "110", "010", "010", "111"],
+  2: ["110", "001", "010", "100", "111"], 3: ["110", "001", "010", "001", "110"],
+  4: ["101", "101", "111", "001", "001"], 5: ["111", "100", "110", "001", "110"],
+  6: ["011", "100", "110", "101", "010"], 7: ["111", "001", "010", "010", "010"],
+  8: ["010", "101", "010", "101", "010"], 9: ["010", "101", "011", "001", "110"],
+  ":": ["000", "010", "000", "010", "000"], ".": ["000", "000", "000", "000", "010"],
+  "-": ["000", "000", "111", "000", "000"], "!": ["010", "010", "010", "000", "010"],
+  "?": ["110", "001", "010", "000", "010"], "/": ["001", "001", "010", "100", "100"],
+  "(": ["010", "100", "100", "100", "010"], ")": ["010", "001", "001", "001", "010"],
+  "'": ["010", "010", "000", "000", "000"], " ": ["000", "000", "000", "000", "000"],
+};
+
+// Dibuja un glifo en (x,y) sobre el contexto dado (por defecto, la pantalla)
+function dibujarGlifo(ch, x, y, color, g = ctx, escala = 1) {
+  const filas = GLIFOS[ch] || GLIFOS[" "];
+  g.fillStyle = color;
+  for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++) {
+    if (filas[r][c] === "1") g.fillRect(x + c * escala, y + r * escala, escala, escala);
+  }
+}
+
+// Texto en pantalla con sombra. escala 2 = titulares
+function txt(s, x, y, color = PAL.w, align = "left", escala = 1) {
+  const texto = s.toUpperCase().replace(/¡/g, "!");
+  const ancho = texto.length * 4 * escala - escala;
+  let cx = Math.round(x);
+  if (align === "center") cx -= Math.floor(ancho / 2);
+  else if (align === "right") cx -= ancho;
+  for (const ch of texto) {
+    dibujarGlifo(ch, cx + escala, Math.round(y) + escala, PAL.k, ctx, escala);
+    dibujarGlifo(ch, cx, Math.round(y), color, ctx, escala);
+    cx += 4 * escala;
+  }
 }
 
 // Dirección pulsada (consume flancos): devuelve {x,y} o null
@@ -2014,7 +1994,7 @@ function dibujarJuego(game) {
     rect(0, 0, W, H, "#5c94fc");
     rect(0, 150, W, 74, "#c0703a");
     rect(0, 150, W, 4, "#43b043");
-    txt("SUPERBRO", W / 2, 46, PAL.y, "center");
+    txt("SUPERBRO", W / 2, 40, PAL.y, "center", 2);
     txt("PLATAFORMAS 2D SNES", W / 2, 60, PAL.w, "center");
     drawSprite(getSprite("playerIdle", SPR.playerIdle, PAL), W / 2 - 6, 110);
     const parpadeo = Math.floor(performance.now() / 500) % 2 === 0;
