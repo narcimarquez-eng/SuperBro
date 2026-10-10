@@ -1188,7 +1188,8 @@ function generarNivel(gen) {
 
   // Límites de las 3 secciones: abierta, plataformas flotantes y meta
   const A1 = 90, B1 = 146, C1 = 180;
-  const gapMax = Math.min(4, 2 + Math.floor(dif / 3)); // huecos saltables
+  // Huecos saltables caminando (2 tiles) en los primeros mundos; más anchos al subir la dificultad
+  const gapMax = dif <= 3 ? 2 : dif <= 5 ? 3 : 4;
 
   // Suelo base con huecos controlados (nunca dos huecos juntos)
   const suelo = new Array(cols).fill(true);
@@ -1246,6 +1247,12 @@ function generarNivel(gen) {
     }
   }
 
+  // Aire libre sobre cada hueco: un bloque encima frena el salto (la cabeza choca) y el jugador cae
+  for (let x = 0; x < cols; x++) {
+    if (suelo[x]) continue;
+    for (let r = 4; r <= GY - 3; r++) for (let c = x - 1; c <= x + 1; c++) if (c >= 0 && c < cols) tiles[r][c] = ".";
+  }
+
   // Tuberías con plantas (si el enemigo "plant" está permitido)
   if (tipos.includes("plant")) {
     for (let x = 30; x < B1; x += ri(22, 30)) {
@@ -1253,6 +1260,9 @@ function generarNivel(gen) {
       tiles[GY - 1][x] = "T"; tiles[GY - 2][x] = "T";
       tiles[GY - 1][x + 1] = "T"; tiles[GY - 2][x + 1] = "T";
       ents.push({ t: "plant", x: x * TILE + 1, y: (GY - 2) * TILE - 8 });
+      // Despeja el aire sobre la tubería: un bloque a esa altura deja un hueco de 16 px
+      // que el jugador (también de 16 px) no puede cruzar sin un salto perfecto
+      for (let c = x - 2; c <= x + 3; c++) for (let r = 4; r <= GY - 3; r++) if (c >= 0 && c < cols) tiles[r][c] = ".";
     }
   }
 
@@ -1451,6 +1461,7 @@ class Player {
 
   // Lógica del jugador por frame (entrada + física + colisiones)
   update(dt, lvl, game) {
+    this.prevBottom = this.y + this.h;   // base del jugador antes de moverse (para pisotones)
     this.animT += dt;
     if (this.star > 0) this.star -= dt;
     if (this.hurtT > 0) this.hurtT -= dt;
@@ -1681,6 +1692,8 @@ class Boss {
     this.alive = true;
     this.inmuneT = 0;
     this.saltoT = 1.2;
+    this.retrocesoT = 0;   // tiempo que retrocede tras un pisotón
+    this.pausaT = 0;       // tiempo que se queda quieto tras retroceder
     this.dir = -1;
     this.anim = 0;
     this.muerteT = 0;
@@ -1690,8 +1703,11 @@ class Boss {
   pisado(player, game) {
     if (this.inmuneT > 0) return "rebota";
     this.hp--;
-    this.inmuneT = 1.0;
-    this.vy = -180;
+    this.inmuneT = 1.2;
+    // Retrocede y se queda quieto un momento: así el jugador puede volver a pisarlo
+    this.vx = (player.x < this.x ? 1 : -1) * 110;
+    this.retrocesoT = 0.45;
+    this.pausaT = 1.4;
     game.sfx("pisar");
     if (this.hp <= 0) {
       this.alive = false;
@@ -1708,10 +1724,18 @@ class Boss {
     if (this.inmuneT > 0) this.inmuneT -= dt;
     // Persigue al jugador: camina y salta a ritmo fijo
     this.dir = player.x < this.x ? -1 : 1;
-    this.vx = this.dir * (34 + (3 - this.hp) * 10);
+    const cerca = Math.abs(player.x - this.x) < 120;
+    if (this.retrocesoT > 0) {
+      this.retrocesoT -= dt;                  // retrocede tras un pisotón
+    } else if (this.pausaT > 0) {
+      this.pausaT -= dt;                      // se queda quieto un momento
+      this.vx = 0;
+    } else {
+      this.vx = this.dir * (34 + (3 - this.hp) * 10);   // persigue al jugador
+    }
     this.saltoT -= dt;
     this.vy += GRAVITY * dt;
-    if (this.saltoT <= 0 && this.vy === 0) {
+    if (this.saltoT <= 0 && this.vy === 0 && cerca && this.retrocesoT <= 0 && this.pausaT <= 0) {
       this.vy = -300;
       this.saltoT = 1.4 - (3 - this.hp) * 0.2;
     }
@@ -2425,10 +2449,12 @@ class Game {
       if (!e.alive || e.carried) continue;
       if (!aabb(hitbox, e)) continue;
       // Caparazón deslizándose: daña si el jugador no lo pisa
-      const cayendoSobre = p.vy > 0 && p.y + p.h - e.y < 9;
+      const cayendoSobre = p.vy > 0 && (p.prevBottom <= e.y + 3 || p.y + p.h - e.y < 9);
       if (cayendoSobre && e.t !== "plant") {
         const res = e.pisado(p, this);
         if (res === "rebota") {
+          // Se apoya justo sobre el enemigo: así el rebote no lo deja solapado (y no cuenta como daño)
+          p.y = e.y - p.h;
           // El salto giratorio rebota más alto
           p.vy = p.spinT > 0 ? -PHYS.jumpV * 0.8 : -PHYS.jumpV * 0.55;
           p.spinT = 0;
