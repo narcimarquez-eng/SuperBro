@@ -86,6 +86,7 @@
     <button data-act="right">&#9654;</button>
   </div>
   <div class="grupo der">
+    <button class="peq" data-act="item">ITEM</button>
     <button class="peq" data-act="spin">GIRO</button>
     <button data-act="run">X</button>
     <button data-act="jump">SALTO</button>
@@ -95,7 +96,7 @@
     <button class="peq" data-act="pause">II</button>
   </div>
 </div>
-<div id="hint">Flechas: mover · Z/Espacio: saltar · X: correr/disparar · C/Shift: salto giratorio · Enter: entrar · P/Esc: pausa</div>
+<div id="hint">Flechas: mover · Z/Espacio: saltar · X: correr/disparar · C/Shift: salto giratorio · Q: usar potenciador · Enter: entrar · P/Esc: pausa</div>
 <script>
 "use strict";
 
@@ -116,7 +117,7 @@ const ALTO_BOTONES_PX = 150; // alto reservado a los botones táctiles, en píxe
 const TILE = 16;           // tamaño de tile en píxeles
 const GRAVITY = 900;       // px/s²
 const MAX_FALL = 360;      // velocidad máxima de caída
-const SAVE_KEY = "superbro_save_v1";
+const SAVE_KEY = "superbro_save_v2";
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -309,8 +310,9 @@ const KEYMAP = {
   KeyC: "spin", ShiftLeft: "spin", ShiftRight: "spin",
   Enter: "enter",
   KeyP: "pause", Escape: "pause",
+  KeyQ: "item",
 };
-const held = { left: 0, right: 0, up: 0, down: 0, jump: 0, run: 0, spin: 0, enter: 0, pause: 0 };
+const held = { left: 0, right: 0, up: 0, down: 0, jump: 0, run: 0, spin: 0, enter: 0, pause: 0, item: 0 };
 
 addEventListener("keydown", (e) => {
   const act = KEYMAP[e.code];
@@ -2656,33 +2658,62 @@ function dibujarProtagonista(px, py, alto, opt) {
 }
 
 /* =====================================================================
-   6. DATOS DE MUNDOS Y NIVELES  (separados de la lógica)
+   6. DATOS DE MUNDOS Y FASES  (separados de la lógica)
    ---------------------------------------------------------------------
-   Para AÑADIR un mundo: copia un objeto de MUNDOS, cambia id, nombre,
-   paleta, niveles y nodos del mapa. Ver las instrucciones al final.
+   Cada mundo tiene 8 fases; la 8 es el castillo con jefe.
+     id, nombre, tema, hora, paleta : aspecto del mundo (ver abajo)
+     ruta   : puntos [x, y] por los que pasa el camino del mapa
+     bonus  : fases tras las que hay una casa de minijuegos (1 = fase 1)
+     niveles: las 8 fases, creadas con fases()
 
-   Cada nivel tiene:
-     nombre   : texto que aparece en la pantalla de nivel
-     tiempo   : segundos del temporizador
-     gen      : especificación para GENERAR el mapa de tiles:
-                  seed      -> semilla (mismo número = mismo nivel)
-                  dif       -> 1 (fácil) .. 8 (muy difícil)
-                  enemigos  -> tipos que pueden aparecer:
-                               "walker" | "shell" | "flyer" | "plant"
-     mapa     : (opcional) array de strings con tiles escritos a mano,
-                 sobrescribe a gen. Ver LEYENDA_MAPA en la lógica.
-     jefe     : true => el último tramo lo ocupa el jefe (castillo)
-     hora     : (opcional) momento del día del fondo: 0 amanecer, 0.25 día,
-                0.5 atardecer, 0.75 noche. Si falta, se usa la del mundo.
-
-   Cada mundo tiene hora (su momento del día por defecto) y tema, que elige
-   el suelo y el fondo (cielo de bloques.js, cueva o castillo).
+   Cada fase tiene:
+     nombre    : texto que aparece en la pantalla de nivel
+     tiempo    : segundos del temporizador
+     gen       : semilla, dificultad (1..8) y tipos de enemigo
+     mecanicas : trampas y plataformas de la fase (ver MECANICAS_POR_FASE)
+     hora      : (opcional) momento del día del fondo
+     jefe      : true en el castillo
 
    Paleta del mundo (claves de colores de tema):
      cielo, lejos (montañas), cerca (colinas), arbusto,
      G (suelo), g (detalle del suelo), O (ladrillo), Y (bloque ?),
      U (bloque usado), tubo (tuberías)
    ===================================================================== */
+
+// Mecánicas de cada fase: cada fase añade una trampa o plataforma más
+const MECANICAS_POR_FASE = [
+  [],                                                                                        // 1
+  ["muelle"],                                                                                // 2
+  ["muelle", "una_direccion"],                                                               // 3
+  ["muelle", "una_direccion", "pinchos"],                                                    // 4
+  ["muelle", "una_direccion", "pinchos", "plataforma_movil"],                                // 5
+  ["muelle", "una_direccion", "pinchos", "plataforma_movil", "escalera"],                    // 6
+  ["muelle", "una_direccion", "pinchos", "plataforma_movil", "escalera", "plataforma_caida"], // 7
+  ["muelle", "una_direccion", "pinchos", "plataforma_movil", "escalera", "plataforma_caida", "lava"], // 8
+];
+
+/* Crea las 8 fases de un mundo con sus nombres. w: número del mundo.
+   Las dos primeras fases usan solo dos tipos de enemigo; la 8 es el castillo.
+   opc.horas: momento del día de cada fase; opc.castillo: el castillo usa el escenario de piedra. */
+function fases(w, nombres, enemigos, opc = {}) {
+  return nombres.map((nombre, i) => {
+    const k = i + 1, castillo = k === 8;
+    const lv = {
+      nombre: castillo ? w + "-C " + nombre : w + "-" + k + " " + nombre,
+      tiempo: castillo ? 250 : 300,
+      gen: {
+        seed: w * 100 + k,
+        dif: Math.min(8, w + Math.floor((k - 1) / 3) + (castillo ? 1 : 0)),
+        enemigos: k <= 2 ? enemigos.slice(0, 2) : enemigos,
+      },
+      mecanicas: MECANICAS_POR_FASE[i],
+    };
+    if (opc.horas && opc.horas[i] !== undefined) lv.hora = opc.horas[i];
+    if (castillo) { lv.jefe = true; if (opc.castillo) lv.castillo = true; }
+    return lv;
+  });
+}
+
 const MUNDOS = [
   {
     id: 1,
@@ -2694,24 +2725,10 @@ const MUNDOS = [
       G: "#b8733c", g: "#5ad84a", O: "#eba24e", Y: "#ffd23f", U: "#9a9aa8", tubo: "#3cc24e",
       sol: "#ffe36b",
     },
-    // Mapa del overworld: nodos con coordenadas en la pantalla 256x224
-    // vec = índices de nodos conectados. ref = índice en niveles.
-    mapa: {
-      nodos: [
-        { x: 30,  y: 170, ref: 0, vec: [1] },
-        { x: 80,  y: 130, ref: 1, vec: [0, 2] },
-        { x: 130, y: 160, ref: 2, vec: [1, 3] },
-        { x: 175, y: 110, ref: 3, vec: [2, 4] },
-        { x: 220, y: 60,  ref: 4, vec: [3], castillo: true },
-      ],
-    },
-    niveles: [
-      { nombre: "1-1 Pradera", tiempo: 300, gen: { seed: 101, dif: 1, enemigos: ["walker"] } },
-      { nombre: "1-2 Colinas", tiempo: 300, hora: 0, gen: { seed: 102, dif: 1, enemigos: ["walker", "shell"] } },
-      { nombre: "1-3 Huecos", tiempo: 300, hora: 0.5, gen: { seed: 103, dif: 2, enemigos: ["walker", "shell", "flyer"] } },
-      { nombre: "1-4 Tubos", tiempo: 280, hora: 0.75, gen: { seed: 104, dif: 2, enemigos: ["walker", "shell", "plant"] } },
-      { nombre: "1-C Castillo", tiempo: 250, jefe: true, castillo: true, gen: { seed: 105, dif: 3, enemigos: ["walker", "shell", "flyer", "plant"] } },
-    ],
+    ruta: [[24, 150], [64, 126], [58, 88], [104, 64], [150, 92], [186, 62], [226, 44]],
+    bonus: [2, 5],
+    niveles: fases(1, ["Pradera", "Colinas", "Huecos", "Tubos", "Nubes", "Escalera", "Puentes", "Castillo"],
+      ["walker", "shell", "flyer", "plant"], { horas: [undefined, 0, 0.5, 0.75, 0.25, 0.75, 0.5], castillo: true }),
   },
   {
     id: 2,
@@ -2723,10 +2740,10 @@ const MUNDOS = [
       G: "#e9b35d", g: "#ffe39a", O: "#d9873a", Y: "#ffd23f", U: "#a5865a", tubo: "#3f8a3f",
       sol: "#fff19a", piedraClara: "#f7d58a", piedraOscura: "#c98a3e", piedraJunta: "#9c6328",
     },
-    mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
-    niveles: [
-      { nombre: "2-C Pirámide", tiempo: 300, jefe: true, placeholder: true, gen: { seed: 201, dif: 4, enemigos: ["walker", "shell"] } },
-    ],
+    ruta: [[20, 96], [60, 140], [110, 150], [150, 120], [126, 70], [170, 44], [226, 60]],
+    bonus: [3, 6],
+    niveles: fases(2, ["Dunas", "Oasis", "Cactus", "Arenas", "Ruinas", "Escorpiones", "Escalones", "Pirámide"],
+      ["walker", "shell"]),
   },
   {
     id: 3,
@@ -2737,10 +2754,10 @@ const MUNDOS = [
       cielo: "#2d6b3a", lejos: "#245a2f", cerca: "#1d4d28", arbusto: "#16381e",
       G: "#6b4a2a", g: "#3f8a3f", O: "#8a5a2a", Y: "#ffd23f", U: "#5a5a4a", tubo: "#2f7d3a",
     },
-    mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
-    niveles: [
-      { nombre: "3-C Bosque", tiempo: 300, jefe: true, placeholder: true, gen: { seed: 301, dif: 4, enemigos: ["walker", "flyer"] } },
-    ],
+    ruta: [[24, 60], [80, 40], [120, 70], [84, 108], [120, 146], [176, 132], [226, 100]],
+    bonus: [2, 6],
+    niveles: fases(3, ["Sendero", "Claro", "Raíces", "Río", "Copas", "Tronco", "Cabaña", "Guarida"],
+      ["walker", "flyer"]),
   },
   {
     id: 4,
@@ -2751,10 +2768,10 @@ const MUNDOS = [
       cielo: "#2a2438", lejos: "#3b3350", cerca: "#4a4262", arbusto: "#3b3350",
       G: "#5a5470", g: "#7a7290", O: "#6a6480", Y: "#ffd23f", U: "#3b3950", tubo: "#5a5470",
     },
-    mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
-    niveles: [
-      { nombre: "4-C Cueva", tiempo: 300, jefe: true, placeholder: true, gen: { seed: 401, dif: 5, enemigos: ["walker", "shell"] } },
-    ],
+    ruta: [[30, 44], [70, 60], [60, 104], [112, 124], [160, 100], [140, 50], [210, 40], [228, 120]],
+    bonus: [1, 4],
+    niveles: fases(4, ["Entrada", "Estalactitas", "Túnel", "Lago", "Minas", "Puentes", "Grietas", "Corazón"],
+      ["walker", "shell"]),
   },
   {
     id: 5,
@@ -2765,10 +2782,10 @@ const MUNDOS = [
       cielo: "#a8dcf5", lejos: "#c8e8f8", cerca: "#e6f6ff", arbusto: "#8fc8e0",
       G: "#b8e0f0", g: "#ffffff", O: "#7fb8d8", Y: "#ffd23f", U: "#8aa6b4", tubo: "#6ec8ff",
     },
-    mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
-    niveles: [
-      { nombre: "5-C Glaciar", tiempo: 300, jefe: true, placeholder: true, gen: { seed: 501, dif: 5, enemigos: ["walker", "flyer"] } },
-    ],
+    ruta: [[20, 140], [70, 110], [120, 130], [156, 88], [200, 108], [236, 60]],
+    bonus: [2, 5],
+    niveles: fases(5, ["Ventisca", "Lago helado", "Témpanos", "Pendientes", "Iglús", "Grietas", "Tormenta", "Glaciar"],
+      ["walker", "flyer"]),
   },
   {
     id: 6,
@@ -2779,10 +2796,10 @@ const MUNDOS = [
       cielo: "#1f5fa8", lejos: "#2a74c0", cerca: "#2f86d0", arbusto: "#2a6fb0",
       G: "#c9b070", g: "#e0c890", O: "#a08050", Y: "#ffd23f", U: "#6a6a7a", tubo: "#43b043",
     },
-    mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
-    niveles: [
-      { nombre: "6-C Océano", tiempo: 300, jefe: true, placeholder: true, gen: { seed: 601, dif: 6, enemigos: ["shell", "flyer"] } },
-    ],
+    ruta: [[24, 96], [80, 58], [134, 94], [184, 58], [236, 100]],
+    bonus: [3, 6],
+    niveles: fases(6, ["Muelle", "Olas", "Islas", "Barcos", "Arrecife", "Corriente", "Faro", "Océano"],
+      ["shell", "flyer"]),
   },
   {
     id: 7,
@@ -2793,10 +2810,10 @@ const MUNDOS = [
       cielo: "#1a1a2e", lejos: "#2a2a44", cerca: "#363656", arbusto: "#2a2a44",
       G: "#6a6a7a", g: "#8a8a9a", O: "#5a5a6a", Y: "#ffd23f", U: "#3a3a4a", tubo: "#6a6a7a",
     },
-    mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
-    niveles: [
-      { nombre: "7-C Fortaleza", tiempo: 300, jefe: true, placeholder: true, gen: { seed: 701, dif: 7, enemigos: ["walker", "shell", "plant"] } },
-    ],
+    ruta: [[24, 130], [96, 130], [96, 70], [160, 70], [160, 130], [232, 130]],
+    bonus: [2, 5],
+    niveles: fases(7, ["Foso", "Almenas", "Torres", "Patio", "Mazmorra", "Puente levadizo", "Armería", "Fortaleza"],
+      ["walker", "shell", "plant"]),
   },
   {
     id: 8,
@@ -2807,12 +2824,40 @@ const MUNDOS = [
       cielo: "#9ad8ff", lejos: "#ffffff", cerca: "#f0f8ff", arbusto: "#ffffff",
       G: "#fff4c8", g: "#ffd23f", O: "#e0e8ff", Y: "#ffd23f", U: "#b8c4e0", tubo: "#ffd23f",
     },
-    mapa: { nodos: [{ x: 128, y: 140, ref: 0, vec: [], castillo: true }] },
-    niveles: [
-      { nombre: "8-C Torre final", tiempo: 300, jefe: true, placeholder: true, gen: { seed: 801, dif: 8, enemigos: ["walker", "shell", "flyer", "plant"] } },
-    ],
+    ruta: [[30, 120], [78, 70], [126, 120], [176, 60], [226, 110]],
+    bonus: [3, 6],
+    niveles: fases(8, ["Nubes", "Islas", "Viento", "Arcoíris", "Escalera", "Tormenta", "Nube oscura", "Torre final"],
+      ["walker", "shell", "flyer", "plant"]),
   },
 ];
+
+/* Nodos del mapa de un mundo: las fases y las casas de minijuegos en orden,
+   repartidos a lo largo de la ruta según la distancia recorrida.
+   Cada nodo lleva vec (vecinos anterior y siguiente) para moverse con las flechas. */
+function construirMapa(m) {
+  const seq = [];
+  m.niveles.forEach((nv, i) => {
+    seq.push({ ref: i, castillo: i === m.niveles.length - 1 });
+    if (m.bonus.includes(i + 1)) seq.push({ bonus: i + 1 });   // casa de minijuegos tras la fase i+1
+  });
+  const r = m.ruta, largos = [];
+  let total = 0;
+  for (let i = 1; i < r.length; i++) {
+    const d = Math.hypot(r[i][0] - r[i - 1][0], r[i][1] - r[i - 1][1]);
+    largos.push(d);
+    total += d;
+  }
+  seq.forEach((nodo, i) => {
+    let s = (total * i) / (seq.length - 1), t = 0;
+    while (t < largos.length - 1 && s > largos[t]) { s -= largos[t]; t++; }
+    const f = largos[t] ? s / largos[t] : 0;
+    nodo.x = Math.round(r[t][0] + (r[t + 1][0] - r[t][0]) * f);
+    nodo.y = Math.round(r[t][1] + (r[t + 1][1] - r[t][1]) * f);
+    nodo.vec = [i - 1, i + 1].filter((j) => j >= 0 && j < seq.length);
+  });
+  return seq;
+}
+for (const m of MUNDOS) m.mapa = construirMapa(m);
 
 /* Paleta de los niveles de castillo (piedra, atardecer y antorchas) */
 const PALETA_CASTILLO = {
@@ -2836,10 +2881,13 @@ const DECOR_DE_TEMA = {
 /* =====================================================================
    7. GENERADOR DE NIVELES
    Convierte la especificación "gen" (o un "mapa" escrito a mano) en:
-     { cols, rows, tiles[][], ents[], goalX, theme, boss }
+     { cols, rows, tiles[][], ents[], plats[], decor[], goalX, theme, boss }
    Tiles: "." vacío, "G" suelo, "B" ladrillo, "Q" bloque ?, "S" bloque
-          sólido, "T" tubería, "F" poste de meta.
+          sólido, "T" tubería, "F" poste de meta,
+          "M" muelle (lanza al pisarlo), "H" pinchos, "V" lava,
+          "L" escalera, "D" plataforma de una dirección.
    Entidades: "walker" "shell" "flyer" "plant" "coin" "boss".
+   Plataformas (plats): "movil" (va y viene) y "caida" (se cae al pisarla).
    ===================================================================== */
 const LEYENDA_MAPA = {
   ".": null, G: "G", B: "B", Q: "Q", S: "S", T: "T", F: "F",
@@ -2847,6 +2895,7 @@ const LEYENDA_MAPA = {
 };
 const ROWS = 14;           // 14 tiles * 16px = 224px de alto
 const GY = 11;             // fila del suelo (la superior)
+const FILA_PLAT = 8;       // fila de las plataformas sobre los huecos y de las escaleras
 const ITEMS_Q = ["moneda", "moneda", "hongo", "hongo", "flor", "pluma", "estrella"];
 
 // Generador pseudoaleatorio determinista (mulberry32): misma semilla = mismo nivel
@@ -2868,16 +2917,18 @@ function gridVacia(cols) {
   return t;
 }
 
-/* Genera un nivel a partir de gen = { seed, dif, enemigos, huecos? } */
-function generarNivel(gen) {
+/* Genera un nivel a partir de gen = { seed, dif, enemigos } y de sus mecánicas */
+function generarNivel(gen, mecanicas = []) {
   const rnd01 = prng(gen.seed);
   const r = (a, b) => a + rnd01() * (b - a);
   const ri = (a, b) => Math.floor(r(a, b + 1));
   const dif = clamp(gen.dif || 1, 1, 8);
   const tipos = gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"];
+  const usa = (m) => mecanicas.includes(m);
   const cols = 188;                 // ~3000px de ancho
   const tiles = gridVacia(cols);
   const ents = [];
+  const plats = [];
 
   // Límites de las 3 secciones: abierta, plataformas flotantes y meta
   const A1 = 90, B1 = 146, C1 = 180;
@@ -2959,6 +3010,88 @@ function generarNivel(gen) {
     }
   }
 
+  // Huecos de la zona B: [primera columna, última columna]
+  const huecos = [];
+  for (let x = A1; x < B1;) {
+    if (suelo[x]) { x++; continue; }
+    let fin = x;
+    while (fin + 1 < B1 && !suelo[fin + 1]) fin++;
+    huecos.push([x, fin]);
+    x = fin + 1;
+  }
+
+  /* ----- Mecánicas de la fase ----- */
+  // Plataformas de una dirección: se pisan desde arriba y se atraviesan saltando desde abajo
+  if (usa("una_direccion")) {
+    for (let x = A1 + 4; x < B1 - 4; x += ri(9, 14)) {
+      if (![x, x + 1, x + 2].every((cc) => tiles[FILA_PLAT][cc] === ".")) continue;
+      for (let k = 0; k < 3; k++) tiles[FILA_PLAT][x + k] = "D";
+    }
+  }
+  // Muelles: un bloque bajo que lanza muy alto al pisarlo
+  if (usa("muelle")) {
+    for (let k = 0, n = 0; k < 12 && n < 2; k++) {
+      const x = ri(14, A1 - 6);
+      if (!suelo[x - 1] || !suelo[x] || !suelo[x + 1]) continue;
+      if (tiles[GY - 1][x - 1] !== "." || tiles[GY - 1][x] !== "." || tiles[GY - 1][x + 1] !== ".") continue;
+      tiles[GY - 1][x] = "M";
+      n++;
+    }
+  }
+  // Pinchos: una punta sobre el suelo que hace daño al tocarla
+  if (usa("pinchos")) {
+    for (let k = 0, n = 0; k < 24 && n < 4; k++) {
+      const x = ri(14, A1 - 6);
+      if (!suelo[x - 1] || !suelo[x] || !suelo[x + 1]) continue;
+      if (tiles[GY - 1][x - 1] !== "." || tiles[GY - 1][x] !== "." || tiles[GY - 1][x + 1] !== ".") continue;
+      tiles[GY - 1][x] = "H";
+      n++;
+    }
+  }
+  // Escalera: una columna que sube a una plataforma de piedra en el aire
+  if (usa("escalera")) {
+    for (let x = A1 + 2; x < B1 - 6; x++) {
+      if (!suelo[x] || tiles[GY - 1][x] !== ".") continue;
+      if (![7, 8, 9, 10].every((rr) => tiles[rr][x] === ".")) continue;
+      if (![x + 1, x + 2, x + 3].every((cc) => tiles[FILA_PLAT][cc] === "." && tiles[FILA_PLAT - 1][cc] === ".")) continue;
+      for (let rr = 7; rr <= GY - 1; rr++) tiles[rr][x] = "L";
+      for (let cc = x + 1; cc <= x + 3; cc++) tiles[FILA_PLAT][cc] = "S";
+      break;
+    }
+  }
+  // Lava: los huecos de la zona B se llenan de lava (caer en ella es mortal)
+  if (usa("lava")) {
+    for (const [a, b] of huecos) for (let cc = a; cc <= b; cc++) for (let rr = GY; rr < ROWS; rr++) tiles[rr][cc] = "V";
+  }
+  // Plataforma móvil: va y viene por encima de un hueco. Quita los ladrillos que estorban en su camino
+  let usado = null;
+  if (usa("plataforma_movil")) {
+    // Vale cualquier hueco cuyo camino no choque con la escalera ni con su plataforma de piedra
+    const libre = (a, b) => {
+      for (let cc = a - 2; cc <= b + 3; cc++) {
+        if (cc < 0 || cc >= cols) return false;
+        if (["S", "L"].includes(tiles[FILA_PLAT][cc])) return false;
+      }
+      return true;
+    };
+    const h = huecos.find(([a, b]) => b - a >= 1 && libre(a, b));
+    usado = h || null;
+    if (h) {
+      const [a, b] = h;
+      for (let cc = a - 2; cc <= b + 3; cc++) tiles[FILA_PLAT][cc] = ".";
+      plats.push({ t: "movil", x: (a - 2) * TILE, y: FILA_PLAT * TILE, w: 3 * TILE, h: TILE, x0: (a - 2) * TILE, x1: (b + 1) * TILE, vel: 36 });
+    }
+  }
+  // Plataforma que cae: se hunde al pisarla durante un momento; sobre un hueco
+  if (usa("plataforma_caida")) {
+    // Las plataformas que caen van sobre los huecos que no usa la móvil
+    for (const [a, b] of huecos.filter((h) => h !== usado).slice(-2)) {
+      // Tres bloques centrados sobre el hueco, alineados con la rejilla
+      const x = (Math.floor((a + b + 1) / 2) - 1) * TILE;
+      plats.push({ t: "caida", x, y: FILA_PLAT * TILE, w: 3 * TILE, h: TILE });
+    }
+  }
+
   // Enemigos caminantes/caparazones/voladores sobre el suelo
   const nEnem = 4 + dif * 2;
   for (let i = 0; i < nEnem; i++) {
@@ -3009,7 +3142,7 @@ function generarNivel(gen) {
   return {
     cols, rows: ROWS, tiles,
     ents: ents.filter((e) => e.x >= 10 * TILE),
-    decor,
+    plats, decor,
     start: { x: 3 * TILE, y: (GY - 2) * TILE },
     goalX: goalX * TILE,
     theme: gen.theme || null,
@@ -3038,13 +3171,14 @@ function parsearMapa(strs) {
       ents.push({ t: tipo, x: x * TILE, y: y * TILE });
     }
   }
-  return { cols, rows: ROWS, tiles, ents, decor: [], start, goalX, theme: null, boss: false };
+  return { cols, rows: ROWS, tiles, ents, plats: [], decor: [], start, goalX, theme: null, boss: false };
 }
 
 /* Punto de entrada: usa el mapa escrito a mano si existe, si no genera */
 function construirNivel(def, tema) {
   // Los niveles de castillo no llevan decoración de su mundo (usan su propio escenario)
-  const lv = def.mapa ? parsearMapa(def.mapa) : generarNivel(Object.assign({ theme: def.castillo ? "castillo" : tema }, def.gen, { jefe: def.jefe }));
+  const gen = Object.assign({ theme: def.castillo ? "castillo" : tema }, def.gen, { jefe: def.jefe });
+  const lv = def.mapa ? parsearMapa(def.mapa) : generarNivel(gen, def.mecanicas || []);
   lv.nombre = def.nombre;
   lv.tiempo = def.tiempo || 300;
   return lv;
@@ -3054,7 +3188,7 @@ function construirNivel(def, tema) {
    8. COLISIÓN CON TILES Y FÍSICA DEL JUGADOR
    Movimiento por ejes: primero X (y paredes), luego Y (suelo/techo).
    ===================================================================== */
-const SOLIDOS = { G: 1, B: 1, Q: 1, S: 1, T: 1, U: 1 };
+const SOLIDOS = { G: 1, B: 1, Q: 1, S: 1, T: 1, U: 1, M: 1 };
 
 // Devuelve el carácter del tile en (col,fila); fuera del nivel: lateral = pared, abajo = vacío
 function tileAt(lvl, col, row) {
@@ -3101,6 +3235,35 @@ function moverEntidad(lvl, e, dt) {
   return res;
 }
 
+// Tile que hay bajo los pies (la base de la caja): true si es del tipo indicado
+function bajoPies(lvl, p, tipo) {
+  const R = Math.floor((p.y + p.h) / TILE);
+  const c0 = Math.floor(p.x / TILE), c1 = Math.floor((p.x + p.w - 0.01) / TILE);
+  for (let c = c0; c <= c1; c++) if (tileAt(lvl, c, R) === tipo) return true;
+  return false;
+}
+
+// Escalera: la caja del jugador toca una columna de escalera en su centro
+function enEscalera(lvl, p) {
+  const c = Math.floor((p.x + p.w / 2) / TILE);
+  const r0 = Math.floor(p.y / TILE), r1 = Math.floor((p.y + p.h - 0.01) / TILE);
+  for (let r = r0; r <= r1; r++) if (tileAt(lvl, c, r) === "L") return true;
+  return false;
+}
+
+/* Plataformas de una dirección ('D'): la base cruza su borde superior cayendo y la caja queda encima.
+   Por debajo, la plataforma no se toca: se puede saltar a través de ella. */
+function aterrizaEnDireccional(lvl, p, basePrev) {
+  const base = p.y + p.h;
+  const R = Math.floor(base / TILE);
+  if (basePrev > R * TILE + 0.5) return false;
+  const c0 = Math.floor(p.x / TILE), c1 = Math.floor((p.x + p.w - 0.01) / TILE);
+  for (let c = c0; c <= c1; c++) {
+    if (tileAt(lvl, c, R) === "D") { p.y = R * TILE - p.h; return true; }
+  }
+  return false;
+}
+
 /* =====================================================================
    9. JUGADOR
    Estados: pequeño/grande, fuego, capa (planeo) e invencible (estrella).
@@ -3114,6 +3277,8 @@ const PHYS = {
   coyote: 0.1, buffer: 0.12,
   glideV: 70, glideTime: 1.6,  // planeo con capa
   shellSpeed: 230,
+  climbV: 110,    // velocidad al trepar por una escalera
+  springV: 430,   // impulso de un muelle (unos 6 bloques de altura)
 };
 
 class Player {
@@ -3141,6 +3306,8 @@ class Player {
     this.carrying = null;    // caparazón que lleva en la mano
     this.dead = false;
     this.duck = false;
+    this.trepando = false;   // agarrado a una escalera
+    this.plat = null;        // plataforma móvil sobre la que está de pie
   }
 
   // Aplica el estado de tamaño (pequeño = 10x14, grande = 10x20)
@@ -3199,6 +3366,15 @@ class Player {
     if (this.frenadoT > 0 && this.onGround) this.vx -= Math.sign(this.vx) * PHYS.friction * 1.6 * dt;
     if (this.duck) this.vx = 0;
 
+    // --- Escaleras: con arriba o abajo se trepa; saltar suelta la escalera ---
+    if (!enEscalera(lvl, this)) this.trepando = false;
+    else if (!this.trepando && (held.up || held.down)) this.trepando = true;
+    if (this.trepando && pressed.jump) { this.trepando = false; this.coyoteT = PHYS.coyote; }
+    if (this.trepando) {
+      this.vy = held.up ? -PHYS.climbV : held.down ? PHYS.climbV : 0;
+      this.jumping = false;
+    }
+
     // --- Salto: buffer (recordar pulsación) y coyote time (saltar tras caer) ---
     if (consume("jump")) this.bufferT = PHYS.buffer;
     else this.bufferT -= dt;
@@ -3230,7 +3406,7 @@ class Player {
     // --- Gravedad: más suave si se mantiene salto subiendo (salto variable) ---
     const subiendoConSalto = this.vy < 0 && held.jump && this.jumping;
     const g = subiendoConSalto ? PHYS.jumpHoldG : GRAVITY;
-    if (!(this.cape && held.jump && this.glideT > 0 && this.vy >= 0 && this.vy <= PHYS.glideV)) {
+    if (!this.trepando && !(this.cape && held.jump && this.glideT > 0 && this.vy >= 0 && this.vy <= PHYS.glideV)) {
       this.vy += g * dt;
     }
     if (this.vy > MAX_FALL) this.vy = MAX_FALL;
@@ -3244,7 +3420,17 @@ class Player {
     if (r.techo) {
       game.golpearDesdeAbajo(this);
     }
+    // Plataformas de una dirección: solo paran al caer desde arriba
+    if (!r.suelo && this.vy >= 0 && aterrizaEnDireccional(lvl, this, this.prevBottom)) { r.suelo = true; this.vy = 0; }
     this.onGround = r.suelo;
+    // Muelle: al pisarlo, salta muy alto
+    if (r.suelo && vyAntes >= 0 && bajoPies(lvl, this, "M")) {
+      this.vy = -PHYS.springV;
+      this.onGround = false;
+      this.jumping = true;
+      game.sfx("salto");
+      emitir(this.x + this.w / 2, this.y + this.h, 6, [PAL.y, PAL.w], { up: 80, spread: 60, life: 0.3, size: 2 });
+    }
     // Aterrizaje fuerte: aplastamiento y polvo
     if (r.suelo && enAireAntes && vyAntes > 150) {
       this.aterrizajeT = 0.12;
@@ -3437,6 +3623,90 @@ function dibujarParticulas(cam) {
   for (const p of particulas) {
     rect(p.x - cam.x, p.y - cam.y, p.size, p.size, p.color);
   }
+}
+
+/* =====================================================================
+   7d. PLATAFORMAS MÓVILES Y QUE CAEN
+   Son de una dirección: se pisan desde arriba. Una móvil va y viene entre x0 y x1.
+   Una que cae tiembla un momento al pisarla, se hunde y reaparece unos segundos después.
+   ===================================================================== */
+class Plataforma {
+  constructor(d) {
+    this.t = d.t;                   // "movil" | "caida"
+    this.x = d.x; this.y = d.y;
+    this.w = d.w; this.h = d.h;
+    this.x0 = d.x0; this.x1 = d.x1;
+    this.vel = d.vel || 36;
+    this.dir = 1;
+    this.homeX = d.x; this.homeY = d.y;
+    this.dx = 0; this.dy = 0;       // desplazamiento de este frame (lo lleva consigo al jugador)
+    this.vy = 0;
+    this.pisada = false;            // la pisó el jugador en el frame anterior
+    this.temblor = 0;               // tiempo que tiembla antes de caer
+    this.caida = false;             // ya cae
+    this.vivo = true;
+    this.respawn = 0;
+  }
+
+  update(dt, lvl) {
+    const x0 = this.x, y0 = this.y;
+    if (this.t === "movil") {
+      this.x += this.dir * this.vel * dt;
+      if (this.x >= this.x1) { this.x = this.x1; this.dir = -1; }
+      if (this.x <= this.x0) { this.x = this.x0; this.dir = 1; }
+    } else if (this.vivo) {
+      if (this.pisada && this.temblor <= 0 && !this.caida) this.temblor = 0.45;
+      if (this.temblor > 0) {
+        this.temblor -= dt;
+        if (this.temblor <= 0) this.caida = true;
+      } else if (this.caida) {
+        this.vy += GRAVITY * dt;
+        this.y += this.vy * dt;
+        if (this.y > lvl.rows * TILE + 40) { this.vivo = false; this.respawn = 2.5; }
+      }
+    } else {
+      this.respawn -= dt;
+      if (this.respawn <= 0) {
+        this.vivo = true; this.caida = false; this.temblor = 0; this.vy = 0;
+        this.x = this.homeX; this.y = this.homeY;
+      }
+    }
+    this.dx = this.x - x0;
+    this.dy = this.y - y0;
+    this.pisada = false;
+  }
+
+  // Si el jugador cae desde arriba sobre la franja superior, queda de pie sobre la plataforma
+  pisa(p, basePrev) {
+    if (!this.vivo || p.vy < 0) return false;
+    if (p.x + p.w <= this.x + 2 || p.x >= this.x + this.w - 2) return false;
+    const base = p.y + p.h;
+    if (basePrev > this.y + 0.5 || base < this.y) return false;
+    p.y = this.y - p.h;
+    p.vy = 0;
+    p.onGround = true;
+    return true;
+  }
+}
+
+// Muelle (tile "M"): base oscura, resorte de espiral y plato rojo arriba
+let muelleCache = null;
+function muelleSprite() {
+  if (!muelleCache) {
+    const filas = [
+      "", "", "",
+      "  rrrrrrrrrrrr  ",
+      " rwwrrrrrrrrrrr ",
+      " rwrrrrrrrrrrrr ",
+      "  rrrrrrrrrrrr  ",
+      "      gggg      ", "      ssss      ", "      gggg      ", "      ssss      ", "      gggg      ", "      ssss      ", "      gggg      ",
+      "  dddddddddddd  ",
+      " dddddddddddddd ",
+    ];
+    const rows = filas.map((f) => f.padEnd(16, " ").replace(/ /g, "."));
+    muelleCache = spriteFromRows(expandir(rows), { r: "#e52521", w: "#ffb3a8", g: "#c8c8d8", s: "#8a8aa0", d: "#5a5a6e" });
+  }
+  return muelleCache;
 }
 
 /* Mezcla un color hex con negro o blanco en proporción t (sombreado) */
@@ -3750,6 +4020,7 @@ class Level {
     this.avisoT = 0;   // tiempo que se muestra el aviso "derrota al jefe"
     this.player = new Player(data.start.x, data.start.y);
     this.enemigos = [];   // { e: objeto de enemigos.js, llevado: true si el jugador lo lleva }
+    this.plats = (data.plats || []).map((d) => new Plataforma(d));   // plataformas móviles y que caen
     this.mundo = { tile: TILE, jugador: null, solid: (x, y) => this.solidoEn(x, y) };   // lo que usan los enemigos
     this.terreno = TERRENO_DE_TEMA[this.temaKey] || "#";   // carácter de bloques.js para el suelo
     this.coins = [];
@@ -3828,7 +4099,14 @@ class Level {
       if (this.tiempoRest <= 0) { this.tiempoRest = 0; p.dead = true; }
     }
     if (this.avisoT > 0) this.avisoT -= dt;
+    // Plataformas móviles y que caen: se mueven antes y llevan consigo al jugador que está de pie sobre ellas
+    for (const pl of this.plats) pl.update(dt, this);
+    if (p.plat) { p.x += p.plat.dx; p.y += p.plat.dy; }
     p.update(dt, this, game);
+    let sobre = null;
+    for (const pl of this.plats) if (pl.pisa(p, p.prevBottom)) { sobre = pl; break; }
+    if (sobre) sobre.pisada = true;
+    p.plat = sobre;
     if (p.spinT > 0) this.romperConGiro(p, game);
 
     // Enemigos (enemigos.js) y jefe
@@ -3879,6 +4157,13 @@ class Level {
         this.dibujarTile(t, x, y, c, r);
       }
     }
+    // Plataformas móviles (tablones) y que caen (piedra): tres bloques de ancho
+    for (const pl of this.plats) {
+      if (!pl.vivo) continue;
+      for (let k = 0; k < pl.w / TILE; k++) {
+        drawSprite(Bloques.sprite(pl.t === "movil" ? "W|1000" : "X"), pl.x + k * TILE - cam.x, pl.y - cam.y);
+      }
+    }
     // Monedas: arte de bloques.js (8 frames de giro), centradas en su hitbox
     for (const c of this.coins) {
       drawSprite(Bloques.sprite("o" + (Math.floor(c.anim) % 8)), c.x + c.w / 2 - 8 - cam.x, c.y + c.h / 2 - 8 - cam.y);
@@ -3912,6 +4197,16 @@ class Level {
       drawSprite(Bloques.sprite(this.terreno + "|" + this.aireDe(c, r)), x, y);
     } else if (t === "S") {
       drawSprite(Bloques.sprite("X"), x, y);        // piedra suelta
+    } else if (t === "H") {
+      drawSprite(Bloques.sprite("^"), x, y);        // pinchos
+    } else if (t === "V") {
+      drawSprite(Bloques.sprite("~"), x, y);        // lava
+    } else if (t === "L") {
+      drawSprite(Bloques.sprite("L"), x, y);        // escalera
+    } else if (t === "D") {
+      drawSprite(Bloques.sprite("-"), x, y);        // plataforma de una dirección
+    } else if (t === "M") {
+      drawSprite(muelleSprite(), x, y);             // muelle
     } else {
       drawSprite(Bloques.sprite({ B: "=", Q: "?", U: "x" }[t]), x, y);   // ladrillo, interrogación, usado
     }
@@ -3967,7 +4262,7 @@ class Level {
 /* =====================================================================
    15. JUEGO: estados, colisiones y progreso
    Estados: "titulo" | "selMundo" | "overworld" | "nivel" | "pausa"
-            | "muerte" | "nivelOK" | "mundoOK" | "gameover" | "final"
+            | "muerte" | "nivelOK" | "mundoOK" | "gameover" | "final" | "minijuego"
    ===================================================================== */
 class Game {
   constructor() {
@@ -3981,7 +4276,10 @@ class Game {
     this.timerEstado = 0;     // para pantallas que pasan solas (muerte, nivelOK...)
     this.selMundo = 0;        // cursor en la pantalla de selección de mundo
     this.ov = null;           // Overworld activo
-    this.completados = {};    // "mundo:ref" -> true
+    this.completados = {};    // "mundo:fase" -> true
+    this.bonus = {};          // "mundo:fase" -> casa de minijuegos ya jugada
+    this.reserva = { seta: 0, estrella: 0, flor: 0, pluma: 0 };   // potenciadores guardados (tecla Q)
+    this.mini = null;         // minijuego en curso
     this.cargarProgreso();
   }
 
@@ -3992,7 +4290,10 @@ class Game {
       if (!raw) return;
       const d = JSON.parse(raw);
       this.completados = d.completados || {};
+      this.bonus = d.bonus || {};
+      this.reserva = Object.assign({ seta: 0, estrella: 0, flor: 0, pluma: 0 }, d.reserva);
       this.mundoIdx = clamp(d.mundoIdx || 0, 0, MUNDOS.length - 1);
+      this.vidas = clamp(d.vidas || 3, 1, 99);
       this.monedas = d.monedas || 0;
       this.score = d.score || 0;
     } catch (e) { /* save corrupto o bloqueado: empezamos de cero */ }
@@ -4000,21 +4301,19 @@ class Game {
   guardarProgreso() {
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
-        completados: this.completados, mundoIdx: this.mundoIdx,
-        monedas: this.monedas, score: this.score,
+        completados: this.completados, bonus: this.bonus, reserva: this.reserva,
+        mundoIdx: this.mundoIdx, vidas: this.vidas, monedas: this.monedas, score: this.score,
       }));
     } catch (e) { /* sin almacenamiento: el juego sigue funcionando */ }
   }
   borrarProgreso() {
     try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* nada que borrar */ }
-    this.completados = {}; this.mundoIdx = 0; this.monedas = 0; this.score = 0;
+    this.completados = {}; this.bonus = {}; this.reserva = { seta: 0, estrella: 0, flor: 0, pluma: 0 };
+    this.mundoIdx = 0; this.vidas = 3; this.monedas = 0; this.score = 0;
   }
 
-  // Un nivel está desbloqueado si es el primero o el anterior está completado
+  // Una fase está desbloqueada si es la primera del mundo (y el mundo está abierto) o la anterior está completada
   nivelDesbloqueado(mIdx, ref) {
-    const m = MUNDOS[mIdx];
-    const nodo = m.mapa.nodos.find((n) => n.ref === ref);
-    if (!nodo) return false;
     if (ref === 0) return this.mundoDesbloqueado(mIdx);
     return this.completados[mIdx + ":" + (ref - 1)] === true;
   }
@@ -4080,6 +4379,7 @@ class Game {
       e.y = p.y + p.h - e.h / 2;
     }
     if (consume("run")) this.manejarCaparazon(lvl, p);
+    if (consume("item")) this.usarReserva(p);
 
     // Objetos de bloque ?
     for (const it of lvl.items) {
@@ -4091,6 +4391,9 @@ class Game {
       else if (it.tipo === "estrella") { p.star = 10; this.puntos(1000); }
       this.sfx(it.tipo === "estrella" ? "estrella" : "hongo");
     }
+
+    // Pinchos (hacen daño) y lava (mata) en los tiles que toca el jugador
+    this.peligrosTiles(lvl, p);
 
     // Monedas
     for (const c of lvl.coins) {
@@ -4171,6 +4474,57 @@ class Game {
       p.vx = 0;
       lvl.avisoT = 1.5;   // aviso: hay que derrotar al jefe
     }
+  }
+
+  // Pinchos (hacen daño) y lava (mata) en los tiles que toca la caja del jugador
+  peligrosTiles(lvl, p) {
+    const c0 = Math.floor(p.x / TILE), c1 = Math.floor((p.x + p.w - 0.01) / TILE);
+    const r0 = Math.floor(p.y / TILE), r1 = Math.floor((p.y + p.h - 0.01) / TILE);
+    for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+      const t = tileAt(lvl, c, r);
+      if (t === "V") { p.dead = true; return; }
+      if (t === "H") this.recibirDano(p);
+    }
+  }
+
+  // Usa un potenciador guardado (tecla Q o botón ITEM): el primero que tenga efecto
+  usarReserva(p) {
+    const r = this.reserva;
+    let usado = null;
+    if (r.estrella > 0 && p.star <= 0) { r.estrella--; p.star = 10; usado = "estrella"; }
+    else if (r.flor > 0 && !p.fire) { r.flor--; p.setBig(true); p.fire = true; usado = "flor"; }
+    else if (r.seta > 0 && !p.big) { r.seta--; p.setBig(true); usado = "seta"; }
+    else if (r.pluma > 0 && !p.cape) { r.pluma--; p.cape = true; p.glideT = PHYS.glideTime; usado = "pluma"; }
+    if (!usado) { this.sfx("golpe"); return; }
+    this.sfx(usado === "estrella" ? "estrella" : "hongo");
+    emitir(p.x + p.w / 2, p.y + p.h / 2, 8, [PAL.y, PAL.w], { up: 90, spread: 80, life: 0.4 });
+  }
+
+  // Suma los premios de un minijuego: vidas y monedas al momento; potenciadores a la reserva (máx. 9)
+  premiar(premios) {
+    for (const { tipo, n } of premios) {
+      if (tipo === "vida") this.vidas = Math.min(99, this.vidas + n);
+      else if (tipo === "moneda") { this.monedas += n; this.puntos(100 * n); }
+      else this.reserva[tipo] = Math.min(9, this.reserva[tipo] + n);
+    }
+    this.guardarProgreso();
+  }
+
+  // Casa de minijuegos del mapa: abre el minijuego que le toca a esa casa
+  empezarMinijuego(mIdx, fase) {
+    this.mundoIdx = mIdx;
+    const orden = MUNDOS[mIdx].bonus.indexOf(fase);   // la primera casa de cada mundo, la segunda...
+    this.mini = new Minijuego(this, MINIJUEGOS[(mIdx * 2 + orden) % MINIJUEGOS.length], mIdx + ":" + fase);
+    this.estado = "minijuego";
+  }
+
+  // Al terminar el minijuego: se dan los premios, la casa queda hecha y vuelve el mapa
+  terminarMinijuego(premios, clave) {
+    this.premiar(premios);
+    this.bonus[clave] = true;
+    this.guardarProgreso();
+    this.mini = null;
+    this.volverAlMapa(this.ov ? this.ov.cur : 0);
   }
 
   // Daño del jugador (usa el estado del jugador para decidir)
@@ -4267,11 +4621,249 @@ class Game {
     }
   }
 
-  // Vuelve al mapa del mundo actual (overworld)
-  volverAlMapa() {
+  // Vuelve al mapa del mundo actual (overworld); cursor: nodo donde queda el jugador
+  volverAlMapa(cursor) {
     this.lvl = null;
-    this.ov = new Overworld(this, this.mundoIdx);
+    this.ov = new Overworld(this, this.mundoIdx, cursor);
     this.estado = "overworld";
+  }
+}
+
+/* =====================================================================
+   19. MINIJUEGOS DE LAS CASAS DEL MAPA
+   Cada casa juega un minijuego y gana premios: vidas (1UP), setas,
+   estrellas, flores, plumas y monedas. Los potenciadores van a la reserva.
+   Tipos: "tragaperras" (3 carretes), "cofres" (elige uno) y "recoge" (cesta).
+   ===================================================================== */
+const MINIJUEGOS = ["tragaperras", "cofres", "recoge"];
+const SPRITE_POTENCIADOR = { seta: "hongo", estrella: "estrella", flor: "flor", pluma: "pluma" };
+const NOMBRE_PREMIO = { vida: "1UP", seta: "SETA", estrella: "ESTRELLA", flor: "FLOR", pluma: "PLUMA", moneda: "MONEDAS" };
+
+// Elige una clave de {clave: peso} al azar según los pesos
+function elegirPonderado(pesos) {
+  const total = Object.values(pesos).reduce((a, b) => a + b, 0);
+  let x = Math.random() * total;
+  for (const k in pesos) { x -= pesos[k]; if (x < 0) return k; }
+  return Object.keys(pesos)[0];
+}
+
+// Enter o salto confirman en los minijuegos
+function pulsa() { return consume("enter") || consume("jump"); }
+
+// Dibuja un símbolo centrado en (cx, cy): potenciador, 1UP o moneda
+function dibujarSimbolo(tipo, cx, cy) {
+  if (tipo === "moneda") {
+    drawSprite(Bloques.sprite("o0"), cx - 8, cy - 8);
+  } else if (tipo === "vida") {
+    rect(cx - 9, cy - 6, 18, 12, PAL.k);
+    rect(cx - 8, cy - 5, 16, 10, PAL.g);
+    txt("1UP", cx, cy - 3, PAL.w, "center");
+  } else if (tipo === "bomba") {
+    drawSprite(getSprite("bomba", circuloRows(5, "c"), { c: PAL.k }), cx - 5, cy - 5);
+    rect(cx + 2, cy - 8, 2, 3, PAL.o);
+  } else {
+    const sp = objetoSprite(SPRITE_POTENCIADOR[tipo]);
+    drawSprite(sp, cx - sp.lw / 2, cy - sp.lh / 2);
+  }
+}
+
+class Minijuego {
+  constructor(game, tipo, clave) {
+    this.g = game;
+    this.tipo = tipo;         // "tragaperras" | "cofres" | "recoge"
+    this.clave = clave;       // "mundo:fase" de la casa, para no repetirla
+    this.fase = "intro";      // intro -> juego -> resultado
+    this.t = 0;
+    this.premios = [];        // [{tipo, n}] que se entregan al salir
+    this.textoFinal = "";
+    this.esperaT = 0;
+    if (tipo === "tragaperras") {
+      this.carretes = [0, 1, 2].map(() => ({ pos: rndi(0, 5), reloj: 0, parado: false, valor: null }));
+      this.paso = ["seta", "estrella", "flor", "pluma", "moneda", "vida"];   // orden de los símbolos al girar
+    } else if (tipo === "cofres") {
+      this.sel = 1;
+      this.abierto = false;
+      const premio = elegirPonderado({ vida: 1, seta: 2, estrella: 2, flor: 2, pluma: 2 });
+      this.contenido = [0, 1, 2].map(() => ({ tipo: "moneda", n: rndi(2, 4) }));
+      this.contenido[rndi(0, 2)] = { tipo: premio, n: premio === "vida" ? 1 : 2 };
+    } else {
+      this.tiempoJuego = 20;
+      this.cesta = W / 2;
+      this.caen = [];
+      this.reloj = 0;
+      this.recogidos = {};
+      this.aviso = "";
+      this.avisoT = 0;
+    }
+  }
+
+  // Devuelve true cuando el jugador sale del minijuego (los premios ya están en this.premios)
+  update(dt) {
+    this.t += dt;
+    if (this.fase === "intro") {
+      if (this.t > 1.2 || pulsa()) { this.fase = "juego"; this.t = 0; }
+      return false;
+    }
+    if (this.fase === "resultado") return pulsa();
+    if (this.tipo === "tragaperras") this.updateTragaperras(dt);
+    else if (this.tipo === "cofres") this.updateCofres(dt);
+    else this.updateRecoge(dt);
+    return false;
+  }
+
+  /* ----- Tragaperras: cada pulsación para un carrete; tres iguales dan el premio gordo ----- */
+  updateTragaperras(dt) {
+    if (this.esperaT > 0) {
+      this.esperaT -= dt;
+      if (this.esperaT <= 0) this.evaluarTragaperras();
+      return;
+    }
+    for (const c of this.carretes) {
+      if (c.parado) continue;
+      c.reloj += dt;
+      while (c.reloj > 0.08) { c.reloj -= 0.08; c.pos = (c.pos + 1) % this.paso.length; }
+    }
+    if (pulsa()) {
+      const c = this.carretes.find((cc) => !cc.parado);
+      if (c) {
+        c.parado = true;
+        c.valor = elegirPonderado({ seta: 3, estrella: 2, flor: 2, pluma: 2, moneda: 3, vida: 1 });
+        c.pos = this.paso.indexOf(c.valor);
+        if (this.carretes.every((cc) => cc.parado)) this.esperaT = 0.7;
+      }
+    }
+  }
+
+  evaluarTragaperras() {
+    const cuenta = {};
+    for (const c of this.carretes) cuenta[c.valor] = (cuenta[c.valor] || 0) + 1;
+    const [tipo, veces] = Object.entries(cuenta).sort((a, b) => b[1] - a[1])[0];
+    const gordo = { vida: 3, seta: 2, estrella: 2, flor: 2, pluma: 2, moneda: 5 };
+    if (veces === 3) { this.premios = [{ tipo, n: gordo[tipo] }]; this.textoFinal = "¡TRES " + NOMBRE_PREMIO[tipo] + "!"; }
+    else if (veces === 2) { this.premios = [{ tipo, n: tipo === "moneda" ? 2 : 1 }]; this.textoFinal = "¡PAREJA!"; }
+    else { this.premios = [{ tipo: "moneda", n: 1 }]; this.textoFinal = "SIN SUERTE"; }
+    this.fase = "resultado";
+  }
+
+  /* ----- Cofres: elige uno; uno tiene el premio y los demás, monedas ----- */
+  updateCofres(dt) {
+    if (this.abierto) {
+      this.esperaT -= dt;
+      if (this.esperaT <= 0) this.abrirResultado();
+      return;
+    }
+    if (consume("left")) this.sel = Math.max(0, this.sel - 1);
+    if (consume("right")) this.sel = Math.min(2, this.sel + 1);
+    if (pulsa()) { this.abierto = true; this.esperaT = 0.9; }
+  }
+
+  // El cofre elegido da su contenido: el premio, o monedas si no es el que tiene el premio
+  abrirResultado() {
+    const c = this.contenido[this.sel];
+    this.premios = [{ tipo: c.tipo, n: c.n }];
+    this.textoFinal = c.tipo === "moneda" ? "Solo monedas en este cofre" : "¡HAS GANADO " + NOMBRE_PREMIO[c.tipo] + "!";
+    this.fase = "resultado";
+  }
+
+  /* ----- Recoge: la cesta recoge objetos que caen durante 20 segundos ----- */
+  updateRecoge(dt) {
+    this.reloj += dt;
+    if (this.avisoT > 0) this.avisoT -= dt;
+    this.tiempoJuego -= dt;
+    const vel = (held.right ? 1 : 0) - (held.left ? 1 : 0);
+    this.cesta = clamp(this.cesta + vel * 150 * dt, 18, W - 18);
+    if (this.reloj > 0.45) {
+      this.reloj = 0;
+      this.caen.push({
+        tipo: elegirPonderado({ moneda: 40, seta: 16, estrella: 8, flor: 12, pluma: 12, vida: 4, bomba: 8 }),
+        x: rnd(12, W - 12), y: 36, v: rnd(55, 95),
+      });
+    }
+    this.caen = this.caen.filter((o) => {
+      o.y += o.v * dt;
+      const cogido = Math.abs(o.x - this.cesta) < 17 && o.y > H - 34 && o.y < H - 12;
+      if (cogido) {
+        if (o.tipo === "bomba") { this.tiempoJuego -= 3; this.aviso = "-3 SEG"; this.avisoT = 0.8; }
+        else this.recogidos[o.tipo] = (this.recogidos[o.tipo] || 0) + 1;
+        return false;
+      }
+      return o.y < H - 6;
+    });
+    if (this.tiempoJuego <= 0) {
+      this.premios = [];
+      for (const tipo in this.recogidos) {
+        const n = this.recogidos[tipo];
+        if (tipo === "moneda") { if (n >= 2) this.premios.push({ tipo, n: Math.floor(n / 2) }); }
+        else this.premios.push({ tipo, n: Math.min(3, n) });
+      }
+      const total = Object.values(this.recogidos).reduce((a, b) => a + b, 0);
+      this.textoFinal = "RECOGISTE " + total + " OBJETOS";
+      this.fase = "resultado";
+    }
+  }
+
+  /* ----- Dibujo ----- */
+  draw() {
+    rect(0, 0, W, H, "#1b1040");
+    rect(0, H - 22, W, 22, "#4a2d6e");
+    if (this.fase === "intro") {
+      txt("CASA DE MINIJUEGOS", W / 2, 60, PAL.y, "center");
+      txt(this.tipo === "tragaperras" ? "TRAGAPERRAS" : this.tipo === "cofres" ? "COFRES" : "RECOGE", W / 2, 84, PAL.w, "center", 2);
+      return;
+    }
+    if (this.tipo === "tragaperras") this.drawTragaperras();
+    else if (this.tipo === "cofres") this.drawCofres();
+    else this.drawRecoge();
+    if (this.fase === "resultado") {
+      rect(0, 40, W, 130, "rgba(0,0,0,0.6)");
+      txt(this.textoFinal, W / 2, 62, PAL.y, "center", 2);
+      this.premios.forEach((p, i) => txt("+" + p.n + " " + NOMBRE_PREMIO[p.tipo], W / 2, 100 + i * 12, PAL.w, "center"));
+      if (!this.premios.length) txt("SIN PREMIO", W / 2, 100, PAL.w, "center");
+      txt("ENTER: volver al mapa", W / 2, H - 14, PAL.w, "center");
+    }
+  }
+
+  drawTragaperras() {
+    txt("TRAGAPERRAS", W / 2, 14, PAL.w, "center");
+    this.carretes.forEach((c, i) => {
+      const x = W / 2 - 60 + i * 42, y = 70;
+      rect(x - 2, y - 2, 36, 36, PAL.k);
+      rect(x, y, 32, 32, PAL.w);
+      const tipo = c.parado ? c.valor : this.paso[c.pos];
+      dibujarSimbolo(tipo, x + 16, y + 16);
+    });
+    txt(this.esperaT > 0 ? "..." : "ENTER: parar carrete " + (this.carretes.filter((c) => c.parado).length + 1), W / 2, 130, PAL.w, "center");
+  }
+
+  drawCofres() {
+    txt("ELIGE UN COFRE", W / 2, 14, PAL.w, "center");
+    [0, 1, 2].forEach((i) => {
+      const x = W / 2 - 66 + i * 58, y = 90;
+      if (this.sel === i) rect(x - 4, y - 4, 48, 40, PAL.y);
+      rect(x, y, 40, 30, "#8a5a2a");
+      rect(x, y + 8, 40, 2, PAL.k);
+      if (this.abierto && i === this.sel) {
+        rect(x, y - 6, 40, 6, "#a8743c");
+        const c = this.contenido[i];
+        dibujarSimbolo(c.tipo, x + 20, y - 14);
+      } else if (this.abierto) {
+        txt("+" + this.contenido[i].n, x + 20, y + 10, PAL.y, "center");
+      } else {
+        rect(x, y - 6, 40, 6, "#a8743c");
+        txt("?", x + 20, y + 10, PAL.y, "center");
+      }
+    });
+    if (this.abierto && this.fase === "juego") txt("¡...!", W / 2, 140, PAL.w, "center");
+    else if (!this.abierto) txt("IZQ/DER: elegir  ENTER: abrir", W / 2, 140, PAL.w, "center");
+  }
+
+  drawRecoge() {
+    txt("TIEMPO " + Math.max(0, Math.ceil(this.tiempoJuego)), 6, 6);
+    txt("RECOGE LO QUE CAE", W - 6, 6, PAL.w, "right");
+    this.caen.forEach((o) => dibujarSimbolo(o.tipo, o.x, o.y));
+    rect(this.cesta - 16, H - 30, 32, 8, PAL.k);
+    rect(this.cesta - 15, H - 29, 30, 6, "#c08040");
+    if (this.avisoT > 0) txt(this.aviso, W / 2, 24, PAL.r, "center", 2);
   }
 }
 
@@ -4338,20 +4930,34 @@ function dirPulsada() {
 }
 
 class Overworld {
-  constructor(game, mIdx) {
+  constructor(game, mIdx, cursor) {
     this.g = game;
     this.mIdx = mIdx;
     this.m = MUNDOS[mIdx];
     this.t = 0;
-    // Empieza en el primer nivel no completado (o en el primero)
-    const nodos = this.m.mapa.nodos;
-    this.cur = nodos.findIndex((n) => !game.completados[mIdx + ":" + n.ref]);
-    if (this.cur < 0) this.cur = 0;
+    const nodos = this.m.mapa;
+    if (cursor !== undefined && nodos[cursor]) this.cur = cursor;
+    else {
+      // Empieza en la primera fase sin completar (o en la primera)
+      this.cur = nodos.findIndex((n) => n.ref !== undefined && !game.completados[mIdx + ":" + n.ref]);
+      if (this.cur < 0) this.cur = 0;
+    }
+  }
+
+  // Un nodo está abierto: una fase si la anterior está hecha; una casa si la fase de su izquierda está hecha
+  abierto(n) {
+    if (n.ref !== undefined) return this.g.nivelDesbloqueado(this.mIdx, n.ref);
+    return this.g.completados[this.mIdx + ":" + (n.bonus - 1)] === true;
+  }
+  // Un nodo está hecho: fase completada o casa ya jugada
+  hecho(n) {
+    if (n.ref !== undefined) return this.g.completados[this.mIdx + ":" + n.ref] === true;
+    return this.g.bonus[this.mIdx + ":" + n.bonus] === true;
   }
 
   // Elige el vecino en la dirección pulsada (el de mejor producto escalar)
   mover(d) {
-    const nodos = this.m.mapa.nodos;
+    const nodos = this.m.mapa;
     const n = nodos[this.cur];
     let mejor = -1, mejorDot = 0;
     for (const v of n.vec) {
@@ -4368,10 +4974,10 @@ class Overworld {
     const d = dirPulsada();
     if (d) this.mover(d);
     if (consume("enter")) {
-      const nodo = this.m.mapa.nodos[this.cur];
-      if (this.g.nivelDesbloqueado(this.mIdx, nodo.ref)) {
-        this.g.empezarNivel(this.mIdx, nodo.ref);
-      }
+      const n = this.m.mapa[this.cur];
+      if (!this.abierto(n)) { /* nodo cerrado: no pasa nada */ }
+      else if (n.ref !== undefined) this.g.empezarNivel(this.mIdx, n.ref);
+      else if (!this.hecho(n)) this.g.empezarMinijuego(this.mIdx, n.bonus);
     }
     if (consume("pause")) {
       this.g.selMundo = this.mIdx;
@@ -4387,29 +4993,29 @@ class Overworld {
     const ox = Math.max(0, Math.floor((W - W_MIN) / 2));
     ctx.save();
     ctx.translate(ox, OY);
-    // Ruta punteada entre nodos (píxeles sueltos, look de mapa SNES)
-    const nodos = this.m.mapa.nodos;
-    for (let i = 0; i < nodos.length; i++) {
-      for (const j of nodos[i].vec) {
-        if (j < i) continue;
-        const a = nodos[i], b = nodos[j];
-        const steps = Math.max(Math.abs(b.x - a.x), Math.abs(b.y - a.y));
-        for (let s = 0; s <= steps; s += 3) {
-          const x = a.x + ((b.x - a.x) * s) / steps;
-          const y = a.y + ((b.y - a.y) * s) / steps;
-          rect(x, y, 2, 2, PAL.w);
-        }
+    // Camino punteado por la ruta del mundo (píxeles sueltos, look de mapa SNES)
+    const nodos = this.m.mapa;
+    const ruta = this.m.ruta;
+    for (let i = 1; i < ruta.length; i++) {
+      const a = ruta[i - 1], b = ruta[i];
+      const pasos = Math.max(Math.abs(b[0] - a[0]), Math.abs(b[1] - a[1]));
+      for (let s = 0; s <= pasos; s += 3) {
+        rect(a[0] + ((b[0] - a[0]) * s) / pasos, a[1] + ((b[1] - a[1]) * s) / pasos, 2, 2, PAL.w);
       }
     }
-    // Nodos: completado (oro), desbloqueado (blanco), bloqueado (gris)
-    nodos.forEach((n, i) => {
-      const hecho = this.g.completados[this.mIdx + ":" + n.ref];
-      const abierto = this.g.nivelDesbloqueado(this.mIdx, n.ref);
+    // Fases numeradas: completada (oro), abierta (blanca), cerrada (gris); el castillo es la 8.ª
+    // Casas de minijuegos: bloque ? si están abiertas, bloque vacío si ya se jugaron
+    nodos.forEach((n) => {
+      const hecho = this.hecho(n), abierto = this.abierto(n);
       const color = hecho ? PAL.y : abierto ? PAL.w : PAL.gr;
-      if (n.castillo) {
+      if (n.ref === undefined) {
+        drawSprite(Bloques.sprite(hecho ? "x" : abierto ? "?" : "X"), n.x - 8, n.y - 8);
+      } else if (n.castillo) {
         drawSprite(getSprite("castillo-" + color, castilloRows(), { c: color, d: PAL.dgr }), n.x - 8, n.y - 8);
+        txt(String(n.ref + 1), n.x, n.y - 16, PAL.w, "center");
       } else {
-        drawSprite(getSprite("nodo-" + color, circuloRows(5, "c"), { c: color }), n.x - 5, n.y - 5);
+        drawSprite(getSprite("nodo-" + color, circuloRows(6, "c"), { c: color }), n.x - 6, n.y - 6);
+        txt(String(n.ref + 1), n.x, n.y - 2, PAL.k, "center");
       }
     });
     // Cursor: el jugador parpadea sobre el nodo actual
@@ -4421,10 +5027,20 @@ class Overworld {
     // Cabecera con el nombre del mundo
     rect(0, 0, W, 14, "rgba(0,0,0,0.5)");
     txt("MUNDO " + this.m.id + " - " + this.m.nombre.toUpperCase(), W / 2, 3, PAL.w, "center");
-    const nivel = this.m.niveles[n.ref];
-    txt(nivel.nombre, W / 2, H - 12, PAL.w, "center");
+    const texto = n.ref !== undefined ? this.m.niveles[n.ref].nombre : this.hecho(n) ? "CASA VACIA" : "CASA DE MINIJUEGOS";
+    txt(texto, W / 2, H - 12, PAL.w, "center");
+    dibujarReserva(W / 2 - 60, H - 42, this.g.reserva);
     txt("ENTER: entrar  ESC: mundos", W / 2, H - 24, PAL.w, "center");
   }
+}
+
+/* Potenciadores guardados (tecla Q): icono y cantidad de cada uno */
+function dibujarReserva(x, y, reserva) {
+  ["seta", "estrella", "flor", "pluma"].forEach((tipo, i) => {
+    const cx = x + i * 36;
+    dibujarSimbolo(tipo, cx + 6, y + 6);
+    txt("X" + reserva[tipo], cx + 14, y + 3, reserva[tipo] ? PAL.w : PAL.gr);
+  });
 }
 
 /* Pantalla de selección de mundo: 8 tarjetas en 4x2 */
@@ -4458,6 +5074,7 @@ function dibujarHUD(game) {
   txt("X" + String(game.vidas).padStart(2, "0"), 22, 17);
   drawSprite(Bloques.sprite("o0"), 4, 25);
   txt("X" + String(game.monedas).padStart(3, "0"), 22, 30, PAL.y);
+  dibujarReserva(4, 42, game.reserva);   // potenciadores guardados (tecla Q)
   // Centro: mundo y nivel
   txt(game.lvl.castillo ? "CASTILLO " + MUNDOS[game.mundoIdx].id : "MUNDO " + MUNDOS[game.mundoIdx].id + "-" + (game.nivelIdx + 1), W / 2, 6, PAL.w, "center");
   // Derecha: puntos y temporizador con icono de reloj
@@ -4501,6 +5118,7 @@ function dibujarJuego(game) {
   }
   if (e === "selMundo") return dibujarSelMundo(game);
   if (e === "overworld") return game.ov.draw();
+  if (e === "minijuego") return game.mini.draw();
   if (e === "final") {
     rect(0, 0, W, H, PAL.k);
     txt("FIN DEL JUEGO", W / 2, 80, PAL.y, "center");
@@ -4546,6 +5164,10 @@ function actualizarJuego(dt) {
     return;
   }
   if (e === "overworld") return game.ov.update(dt);
+  if (e === "minijuego") {
+    if (game.mini.update(dt)) game.terminarMinijuego(game.mini.premios, game.mini.clave);
+    return;
+  }
   if (e === "final") {
     if (consume("enter")) game.estado = "titulo";
     return;
