@@ -105,6 +105,9 @@
 // Resolución interna: se calcula según la pantalla (ver resize). Mínimo de diseño 256x224.
 const W_MIN = 256;
 const H_MIN = 224;
+// Densidad del arte: cada píxel lógico del juego se dibuja con U×U píxeles reales.
+// La lógica y las medidas del juego no cambian; el canvas y el arte ganan detalle.
+const U = 2;
 let W = W_MIN;             // ancho interno actual
 let H = H_MIN;             // alto interno actual
 let OY = 0;                // desplazamiento vertical del área de diseño (cielo arriba, suelo para los botones abajo)
@@ -133,8 +136,8 @@ function resize() {
   // En vertical con botones táctiles se reserva una franja inferior (suelo) para ellos
   const reserva = TOUCH && H > H_MIN ? Math.round(ALTO_BOTONES_PX * H / sh) : 0;
   OY = Math.max(0, H - H_MIN - reserva);
-  canvas.width = W;
-  canvas.height = H;
+  canvas.width = W * U;
+  canvas.height = H * U;
   canvas.style.width = sw + "px";
   canvas.style.height = sh + "px";
   ctx.imageSmoothingEnabled = false; // al cambiar el tamaño el contexto se reinicia
@@ -182,15 +185,27 @@ const PAL = {
    ===================================================================== */
 const spriteCache = new Map();
 
-/* Convierte una silueta de colores planos en un sprite con volumen:
-   - contorno negro de 1 px alrededor (margen P)
+/* Amplía una matriz lógica: cada carácter ocupa U×U píxeles reales */
+function expandir(rows) {
+  const out = [];
+  for (const r of rows) {
+    let f = "";
+    for (const ch of r) f += ch.repeat(U);
+    for (let k = 0; k < U; k++) out.push(f);
+  }
+  return out;
+}
+
+/* Convierte una matriz de píxeles reales en un sprite con volumen:
+   - contorno negro de 1 píxel real alrededor (opcional)
    - bisel: los bordes que miran arriba/izquierda se aclaran y los que miran
-     abajo/derecha se oscurecen, como en el pixel art de consolas de 16 bits
-   Así cualquier matriz gana profundidad sin reescribirla a mano. */
+     abajo/derecha se oscurecen (solo para siluetas de color plano)
+   El sprite guarda sus medidas lógicas: lw, lh (tamaño) y pad (margen). */
+const cacheBisel = new Map();
 function spriteFromRows(rows, pal = PAL, contorno = true, periodico = false, bisel = true) {
   const h = rows.length;
   const w = Math.max(...rows.map((r) => r.length));
-  const P = 1;
+  const P = 1;                       // margen de contorno en píxeles reales
   const c = document.createElement("canvas");
   c.width = w + 2 * P;
   c.height = h + 2 * P;
@@ -202,51 +217,73 @@ function spriteFromRows(rows, pal = PAL, contorno = true, periodico = false, bis
     const ch = rows[y][x];
     return !!ch && ch !== "." && pal[ch] !== undefined;
   };
-  // Contorno: celdas vacías que tocan un píxel del sprite (opcional, no para fondos)
-  if (contorno) {
-    g.fillStyle = PAL.k;
-    for (let y = -1; y <= h; y++) for (let x = -1; x <= w; x++) {
-      if (op(x, y)) continue;
-      if (op(x - 1, y) || op(x + 1, y) || op(x, y - 1) || op(x, y + 1)) g.fillRect(x + P, y + P, 1, 1);
-    }
-  }
-  // Relleno con bisel (las claves k y w no se sombrean)
-  for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
-    if (!op(x, y)) continue;
+  const esContorno = (x, y) => !op(x, y) && (op(x - 1, y) || op(x + 1, y) || op(x, y - 1) || op(x, y + 1));
+  const colorDe = (x, y) => {
     const ch = rows[y][x];
     let col = pal[ch];
     if (bisel && ch !== "k" && ch !== "w") {
       const luz = !op(x, y - 1) || !op(x - 1, y);
       const sombra = !op(x, y + 1) || !op(x + 1, y);
-      if (luz && !sombra) col = mezclar(col, 0.45, "#ffffff");
-      else if (sombra && !luz) col = mezclar(col, 0.4);
+      if (luz !== sombra) {
+        const clave = col + (luz ? "L" : "S");
+        if (!cacheBisel.has(clave)) cacheBisel.set(clave, mezclar(col, luz ? 0.45 : 0.4, luz ? "#ffffff" : "#000000"));
+        col = cacheBisel.get(clave);
+      }
     }
-    g.fillStyle = col;
-    g.fillRect(x + P, y + P, 1, 1);
+    return col;
+  };
+  // Pinta tramos horizontales del mismo color (menos llamadas a fillRect)
+  const tramo = (x0, y0, len, col) => { g.fillStyle = col; g.fillRect(x0, y0, len, 1); };
+  if (contorno) {
+    for (let y = -1; y <= h; y++) {
+      let x = -1;
+      while (x <= w) {
+        if (!esContorno(x, y)) { x++; continue; }
+        let x2 = x + 1;
+        while (x2 <= w && esContorno(x2, y)) x2++;
+        tramo(x + P, y + P, x2 - x, PAL.k);
+        x = x2;
+      }
+    }
   }
-  c.pad = P;
+  for (let y = 0; y < h; y++) {
+    let x = 0;
+    while (x < w) {
+      if (!op(x, y)) { x++; continue; }
+      const col = colorDe(x, y);
+      let x2 = x + 1;
+      while (x2 < w && op(x2, y) && colorDe(x2, y) === col) x2++;
+      tramo(x + P, y + P, x2 - x, col);
+      x = x2;
+    }
+  }
+  c.pad = P / U;   // margen en unidades lógicas
+  c.lw = w / U;    // ancho lógico del dibujo
+  c.lh = h / U;    // alto lógico del dibujo
   return c;
 }
 
-// Devuelve el canvas de un sprite, cacheado por clave
+// Devuelve el canvas de un sprite lógico (matriz de caracteres), cacheado por clave
 function getSprite(key, rows, pal) {
-  if (!spriteCache.has(key)) spriteCache.set(key, spriteFromRows(rows, pal));
+  if (!spriteCache.has(key)) spriteCache.set(key, spriteFromRows(expandir(rows), pal));
   return spriteCache.get(key);
 }
 
-// Dibuja un sprite en coordenadas enteras de canvas (cámara ya restada)
+// Dibuja un sprite en coordenadas lógicas (la cámara ya restada).
+// El contexto tiene transform U, así que el tamaño lógico es sp.width / U.
 function drawSprite(sp, x, y, flipX = false) {
-  // Los sprites llevan margen de contorno: se compensa para que la posición sea la del contenido
-  x = Math.round(x) - (sp.pad || 0);
-  y = Math.round(y) - (sp.pad || 0);
+  const pad = sp.pad || 0;
+  const dw = sp.width / U, dh = sp.height / U;
+  x = Math.round(x) - pad;
+  y = Math.round(y) - pad;
   if (flipX) {
     ctx.save();
-    ctx.translate(x + sp.width, y);
+    ctx.translate(x + dw, y);
     ctx.scale(-1, 1);
-    ctx.drawImage(sp, 0, 0);
+    ctx.drawImage(sp, 0, 0, dw, dh);
     ctx.restore();
   } else {
-    ctx.drawImage(sp, x, y);
+    ctx.drawImage(sp, x, y, dw, dh);
   }
 }
 
@@ -318,57 +355,598 @@ function consume(action) {
 }
 
 /* =====================================================================
-   5b. PERSONAJE POR POSES (se dibuja con un "pintor" de píxeles)
-   Cada pose tiene varios frames. El cuerpo tiene 16 px de ancho y
-   22 px de alto (30 si es grande). Los pies siempre quedan en la misma
-   fila, así no tiembla al cambiar de frame.
-   Claves: r gorra y camisa, b overol, T pelo/zapatos/bigote, S piel,
-           w guantes y emblema, y botones, k ojos y contorno.
+   7c. ARTE CON VOLUMEN Y DETALLE: enemigos, objetos, monedas y bloques
+   Se pinta a resolución real (U píxeles por píxel lógico). Las formas
+   redondas son esferas o cilindros sombreados por la luz (arriba a la
+   izquierda) con cinco tonos por color; los detalles (ojos con brillo,
+   dientes, placas, barbas de pluma) se pintan píxel a píxel.
    ===================================================================== */
-const HEROE_PAL = { r: "#e52521", b: "#2f5fd6", S: "#fcc4a8", T: "#7c4a1e", y: "#ffd23f", k: "#000000", w: "#ffffff" };
+
+// Familias de tonos: cada color tiene 5 letras (h luz fuerte ... D sombra profunda).
+// Las letras de cada familia son distintas, así un mismo sprite puede mezclar colores.
+const RK = {
+  cafe:    { h: "h", l: "l", m: "m", d: "d", D: "D" },
+  crema:   { h: "A", l: "B", m: "C", d: "E", D: "F" },
+  rojo:    { h: "q", l: "r", m: "s", d: "t", D: "u" },
+  verde:   { h: "n", l: "p", m: "x", d: "z", D: "o" },
+  oro:     { h: "Q", l: "R", m: "S", d: "T", D: "U" },
+  blanco:  { h: "V", l: "W", m: "X", d: "Y", D: "Z" },
+  naranja: { h: "1", l: "2", m: "3", d: "4", D: "5" },
+  overol:  { h: "b", l: "c", m: "g", d: "e", D: "f" },
+};
+
+// Colores de cada familia a partir de un color base
+function coloresRK(rk, hex) {
+  return {
+    [rk.h]: mezclar(hex, 0.5, "#ffffff"),
+    [rk.l]: mezclar(hex, 0.25, "#ffffff"),
+    [rk.m]: hex,
+    [rk.d]: mezclar(hex, 0.3),
+    [rk.D]: mezclar(hex, 0.6),
+  };
+}
+
+// Tono según la luz: dot > 0.72 es luz fuerte, dot < -0.4 es sombra profunda
+function tonoDe(rk, luz) {
+  return luz > 0.72 ? rk.h : luz > 0.42 ? rk.l : luz > 0.0 ? rk.m : luz > -0.4 ? rk.d : rk.D;
+}
+
+/* Rejilla donde se pinta el dibujo. Las medidas son LÓGICAS (w, h), pero la
+   rejilla guarda U× más píxeles reales: las formas redondas se muestrean fino
+   y cada píxel lógico ocupa U×U píxeles reales. */
+class Lienzo {
+  constructor(w, h) {
+    this.w = w;
+    this.h = h;
+    this.fw = w * U;
+    this.fh = h * U;
+    this.c = [];
+    for (let y = 0; y < this.fh; y++) this.c.push(new Array(this.fw).fill("."));
+  }
+  // Píxel lógico entero (ocupa U×U píxeles reales)
+  px(x, y, ch) {
+    for (let j = 0; j < U; j++) for (let i = 0; i < U; i++) this.pf(x * U + i, y * U + j, ch);
+  }
+  // Píxel real (para detalles finos)
+  pf(xf, yf, ch) {
+    if (xf >= 0 && yf >= 0 && xf < this.fw && yf < this.fh) this.c[yf][xf] = ch;
+  }
+  // Píxel real indicado en coordenadas lógicas (decimales)
+  pfl(lx, ly, ch) { this.pf(Math.floor(lx * U), Math.floor(ly * U), ch); }
+  caja(x, y, w, h, ch) {
+    // Coordenadas lógicas redondeadas a píxeles reales
+    const x0 = Math.round(x * U), y0 = Math.round(y * U);
+    for (let j = 0; j < Math.max(1, Math.round(h * U)); j++) for (let i = 0; i < Math.round(w * U); i++) this.pf(x0 + i, y0 + j, ch);
+  }
+  // Recorre los píxeles reales hasta "corte" (en lógico) y llama fn(fx, fy, lx, ly)
+  recorrer(corte, fn) {
+    for (let fy = 0; fy < this.fh; fy++) {
+      const ly = (fy + 0.5) / U;
+      if (ly > corte + 0.5) break;
+      for (let fx = 0; fx < this.fw; fx++) fn(fx, fy, (fx + 0.5) / U, ly);
+    }
+  }
+  // Elipse de un solo color (ojos, boca, manchas)
+  elipse(cx, cy, rx, ry, ch, corte = 1e9) {
+    this.recorrer(corte, (fx, fy, lx, ly) => {
+      const nx = (lx - cx) / rx, ny = (ly - cy) / ry;
+      if (nx * nx + ny * ny <= 1) this.c[fy][fx] = ch;
+    });
+  }
+  // Esfera sombreada: la normal de cada píxel decide su tono
+  esfera(cx, cy, rx, ry, rk, corte = 1e9) {
+    this.recorrer(corte, (fx, fy, lx, ly) => {
+      const nx = (lx - cx) / rx, ny = (ly - cy) / ry;
+      const d2 = nx * nx + ny * ny;
+      if (d2 > 1) return;
+      const nz = Math.sqrt(1 - d2);
+      this.c[fy][fx] = tonoDe(rk, -0.45 * nx - 0.6 * ny + 0.66 * nz);
+    });
+  }
+  // Cilindro vertical (tallos, tubos, monedas de canto): sombrea en horizontal
+  cilindro(x0, w, y0, h, rk) {
+    for (let fy = y0 * U; fy < (y0 + h) * U; fy++) for (let fx = x0 * U; fx < (x0 + w) * U; fx++) {
+      const t = ((fx + 0.5) / U - (x0 + w / 2)) / (w / 2);
+      const nz = Math.sqrt(Math.max(0, 1 - t * t));
+      this.pf(fx, fy, tonoDe(rk, -0.45 * t + 0.66 * nz));
+    }
+  }
+  // Recorre los píxeles ya pintados (no vacíos) y aplica fn(fx, fy, ch)
+  mapear(fn) {
+    for (let fy = 0; fy < this.fh; fy++) for (let fx = 0; fx < this.fw; fx++) {
+      const ch = this.c[fy][fx];
+      if (ch !== ".") fn(fx, fy, ch);
+    }
+  }
+  // Borde oscuro: los píxeles pintados que tocan vacío pasan a sombra profunda
+  bordeOscuro(rk) {
+    const pinta = (fx, fy) => fx >= 0 && fy >= 0 && fx < this.fw && fy < this.fh && this.c[fy][fx] !== ".";
+    const marca = [];
+    this.mapear((fx, fy) => {
+      if (!pinta(fx - 1, fy) || !pinta(fx + 1, fy) || !pinta(fx, fy - 1) || !pinta(fx, fy + 1)) marca.push([fx, fy]);
+    });
+    for (const [fx, fy] of marca) this.c[fy][fx] = rk.D;
+  }
+  filas() { return this.c.map((r) => r.join("")); }
+}
+
+// Pinta una matriz de caracteres en un canvas de tamaño exacto (sin margen)
+function filasACanvas(filas, pal) {
+  const c = document.createElement("canvas");
+  c.width = filas[0].length;
+  c.height = filas.length;
+  const g = c.getContext("2d");
+  for (let y = 0; y < filas.length; y++) for (let x = 0; x < filas[y].length; x++) {
+    const col = pal[filas[y][x]];
+    if (!col) continue;
+    g.fillStyle = col;
+    g.fillRect(x, y, 1, 1);
+  }
+  return c;
+}
+
+// Paleta de los enemigos y objetos (todos los tonos juntos)
+const PAL_ENT = Object.assign(
+  { k: "#000000", w: "#ffffff" },
+  coloresRK(RK.cafe, "#9b5a2a"),
+  coloresRK(RK.crema, "#f6dcae"),
+  coloresRK(RK.rojo, "#e0392b"),
+  coloresRK(RK.verde, "#3fbf3f"),
+  coloresRK(RK.oro, "#ffd23f"),
+  coloresRK(RK.blanco, "#f2f2f2"),
+  coloresRK(RK.naranja, "#ff8a1e"),
+);
+
+/* ---------- Enemigos ---------- */
+
+// Goomba: sombrero con textura, cara clara, ojos con brillo, cejas y pies que alternan
+function goombaFilas(frame) {
+  const L = new Lienzo(16, 16);
+  L.esfera(8, 7.5, 7.2, 6.6, RK.cafe, 10.6);
+  L.bordeOscuro(RK.cafe);
+  // Textura del sombrero: pequeñas motas oscuras y un brillo arriba a la izquierda
+  for (const [x, y] of [[4, 3], [11, 4], [7, 2], [12, 8], [3, 8]]) L.pfl(x, y, RK.cafe.d);
+  L.pfl(4.2, 2.6, RK.cafe.h);
+  L.pfl(3.4, 3.4, RK.cafe.h);
+  L.esfera(8, 10.4, 4.7, 2.3, RK.crema, 11.8);
+  L.elipse(5.2, 7.4, 2.2, 2.6, "w");
+  L.elipse(10.8, 7.4, 2.2, 2.6, "w");
+  L.caja(5, 7, 1, 2, "k");
+  L.caja(11, 7, 1, 2, "k");
+  L.pfl(5.1, 7.1, "w");
+  L.pfl(11.1, 7.1, "w");
+  L.px(3, 4, "k"); L.px(4, 5, "k"); L.px(5, 5, "k");
+  L.px(12, 4, "k"); L.px(11, 5, "k"); L.px(10, 5, "k");
+  const pies = frame % 2 === 0 ? [[4.6, 13.4], [11.4, 13.4]] : [[4.6, 12.6], [11.4, 14.2]];
+  for (const [x, y] of pies) {
+    L.esfera(x, y, 2.6, 2.0, RK.cafe);
+    L.pfl(x + 0.4, y + 1.6, RK.cafe.D);   // sombra bajo el pie
+  }
+  return L.filas();
+}
+function goombaAplastado() {
+  const L = new Lienzo(16, 8);
+  L.esfera(8, 4.5, 7.6, 3.4, RK.cafe, 7);
+  L.bordeOscuro(RK.cafe);
+  L.esfera(4.6, 6.5, 2.4, 1.6, RK.cafe);
+  L.esfera(11.4, 6.5, 2.4, 1.6, RK.cafe);
+  return L.filas();
+}
+
+// Placas del caparazón: líneas oscuras en forma de hexágonos sobre el verde
+function placasCaparazon(L) {
+  L.mapear((fx, fy, ch) => {
+    const lx = (fx + 0.5) / U, ly = (fy + 0.5) / U;
+    const fila = Math.floor(ly / 2.4);
+    const off = (fila % 2) * 1.6;
+    const col = Math.floor((lx + off) / 3.2);
+    const cx = col * 3.2 + 1.6 - off, cy = fila * 2.4 + 1.2;
+    if (Math.abs(lx - cx) > 1.45 || Math.abs(ly - cy) > 1.05) L.c[fy][fx] = RK.verde.D;
+    else if (ch === RK.verde.m && Math.abs(lx - cx) < 0.5 && Math.abs(ly - cy) < 0.5) L.c[fy][fx] = RK.verde.l;
+  });
+}
+
+// Tortuga (enemigo "shell"): caparazón con placas, cabeza clara con ojo, pies con garras
+function tortugaFilas(frame) {
+  const L = new Lienzo(16, 18);
+  L.esfera(7.5, 10.5, 6.6, 5.8, RK.verde, 16.4);
+  placasCaparazon(L);
+  L.caja(3, 15, 9, 1, RK.crema.m);
+  L.esfera(13.3, 5.7, 3.0, 3.0, RK.crema, 9);
+  L.elipse(14.1, 5.1, 0.9, 1.0, "w");
+  L.caja(14, 5, 1, 1, "k");
+  L.pfl(14.1, 4.9, "w");
+  L.caja(13, 7, 2, 1, RK.crema.D);      // boca
+  const pies = frame % 2 === 0 ? [[4.4, 16.6], [10.6, 16.6]] : [[4.4, 15.8], [11.2, 16.8]];
+  for (const [x, y] of pies) {
+    L.esfera(x, y, 2.2, 1.7, RK.crema);
+    L.pfl(x - 1.6, y + 1.3, "w");       // garras
+    L.pfl(x + 1.6, y + 1.3, "w");
+  }
+  return L.filas();
+}
+
+// Caparazón suelto: media esfera verde con placas y borde claro
+function caparazonFilas() {
+  const L = new Lienzo(14, 10);
+  L.esfera(6.5, 8.5, 6.4, 7.6, RK.verde, 9);
+  placasCaparazon(L);
+  L.caja(1, 9, 12, 1, RK.crema.m);
+  L.pfl(3.4, 2.6, RK.verde.h);          // brillo
+  return L.filas();
+}
+
+// Goomba alado: alas con barbas que aletean en dos frames
+function voladorFilas(frame) {
+  const L = new Lienzo(16, 14);
+  const ya = frame % 2 === 0 ? 4.2 : 7.6;
+  for (const x of [3.5, 12.5]) {
+    L.esfera(x, ya, 3.2, 2.2, RK.blanco, 13);
+    // Barbas de pluma: líneas oscuras en diagonal
+    L.recorrer(13, (fx, fy) => {
+      if (L.c[fy][fx] !== "." && (fx + fy) % (3 * U) === 0) L.c[fy][fx] = RK.blanco.D;
+    });
+  }
+  L.esfera(8, 9.2, 4.6, 4.2, RK.cafe, 13);
+  L.esfera(8, 10.6, 3.0, 1.6, RK.crema, 13);
+  L.elipse(6.2, 8.2, 1.3, 1.5, "w");
+  L.elipse(9.8, 8.2, 1.3, 1.5, "w");
+  L.caja(6, 8, 1, 1, "k");
+  L.caja(10, 8, 1, 1, "k");
+  L.pfl(6.1, 7.9, "w");
+  L.esfera(5.6, 13.2, 1.8, 1.2, RK.cafe);
+  L.esfera(10.4, 13.2, 1.8, 1.2, RK.cafe);
+  return L.filas();
+}
+
+// Planta piraña: tallo cilíndrico, hojas con venas, cabeza roja con manchas,
+// labios y dientes; la boca se abre y cierra
+function plantaFilas(frame) {
+  const L = new Lienzo(16, 22);
+  L.cilindro(6, 4, 13, 9, RK.verde);
+  for (const [x, y] of [[3.2, 14.6], [12.8, 15.4]]) {
+    L.esfera(x, y, 2.8, 1.8, RK.verde);
+    L.recorrer(22, (fx, fy, lx, ly) => {
+      if (L.c[fy][fx] !== "." && Math.abs(ly - y) < 0.12) L.c[fy][fx] = RK.verde.D;
+    });
+  }
+  L.esfera(8, 7.4, 5.6, 5.6, RK.rojo, 13);
+  L.bordeOscuro(RK.rojo);
+  L.elipse(5.2, 4.8, 1.2, 1.2, "w");
+  L.elipse(10.6, 4.4, 1.2, 1.2, "w");
+  L.pfl(5.4, 4.6, RK.blanco.D);
+  if (frame % 2 === 0) {
+    L.elipse(8, 10.5, 3.4, 2.4, "k");
+    for (const x of [6, 8, 10]) L.pfl(x, 8.6, "w");       // dientes superiores
+    for (const x of [6.8, 9.2]) L.pfl(x, 12.2, "w");      // dientes inferiores
+  } else {
+    L.caja(5, 10, 6, 1, "k");
+    for (const x of [6, 8.5, 10.5]) L.pfl(x, 10.4, "w");
+  }
+  return L.filas();
+}
+
+/* ---------- Jefe ---------- */
+
+// Gran Goomba del castillo: 28x30, cara clara con mejillas, cejas caídas, ojos y dientes
+function jefeFilas() {
+  const L = new Lienzo(28, 30);
+  L.esfera(14, 13, 12.5, 11.2, RK.cafe, 23);
+  L.bordeOscuro(RK.cafe);
+  L.esfera(14, 19.2, 8.8, 4.4, RK.crema, 24);
+  L.esfera(5.4, 15.6, 2.2, 3.5, RK.crema, 22);     // mejillas
+  L.esfera(22.6, 15.6, 2.2, 3.5, RK.crema, 22);
+  L.caja(5, 8, 8, 2, "k");
+  L.caja(15, 8, 8, 2, "k");
+  L.caja(7, 10, 2, 1, "k");                        // cejas caídas hacia el centro
+  L.caja(19, 10, 2, 1, "k");
+  L.elipse(9.6, 13.6, 3.2, 3.6, "w");
+  L.elipse(18.4, 13.6, 3.2, 3.6, "w");
+  L.caja(10, 14, 2, 3, "k");
+  L.caja(17, 14, 2, 3, "k");
+  L.pfl(10.2, 14.2, "w");
+  L.pfl(17.2, 14.2, "w");
+  L.elipse(14, 22.6, 5.2, 2.4, "k");
+  for (const x of [11, 14, 17]) L.pfl(x, 21, "w");
+  L.esfera(7.2, 27, 4.6, 3.0, RK.cafe);
+  L.esfera(20.8, 27, 4.6, 3.0, RK.cafe);
+  return L.filas();
+}
+
+/* ---------- Monedas y objetos ---------- */
+
+// Moneda girando en 3 anchos: canto con relieve, círculo grabado y brillo
+function monedaFilas(f) {
+  if (f === 0) {
+    const L = new Lienzo(10, 10);
+    L.esfera(5, 5, 4.6, 4.6, RK.oro, 9.9);
+    L.recorrer(9.9, (fx, fy, lx, ly) => {
+      const d = Math.hypot(lx - 5, ly - 5);
+      if (L.c[fy][fx] === ".") return;
+      if (d > 4.1 && d < 4.6) L.c[fy][fx] = RK.oro.D;     // canto
+      if (d > 2.9 && d < 3.2) L.c[fy][fx] = RK.oro.d;     // círculo grabado
+    });
+    L.pfl(2.6, 2.4, "w");
+    L.pfl(3.2, 2.0, "w");
+    return L.filas();
+  }
+  if (f === 1) {
+    const L = new Lienzo(6, 10);
+    L.cilindro(0, 6, 0, 10, RK.oro);
+    L.pfl(1.2, 2.1, "w");
+    return L.filas();
+  }
+  const L = new Lienzo(3, 10);
+  L.cilindro(0, 3, 0, 10, RK.oro);
+  return L.filas();
+}
+
+// Hongo: sombrero rojo con manchas en relieve, tallo crema con ojos
+function setaFilas() {
+  const L = new Lienzo(16, 16);
+  L.esfera(8, 6.8, 7.2, 6.4, RK.rojo, 9.4);
+  L.bordeOscuro(RK.rojo);
+  for (const [x, y, r] of [[5, 4.4, 1.7], [11, 4.2, 1.6], [8, 1.8, 1.0]]) L.esfera(x, y, r, r, RK.blanco);
+  L.esfera(8, 12.2, 3.6, 3.2, RK.crema, 15);
+  L.bordeOscuro(RK.crema);
+  L.elipse(6.2, 12, 0.8, 0.9, "k");
+  L.elipse(9.8, 12, 0.8, 0.9, "k");
+  L.pfl(6.1, 11.7, "w");
+  return L.filas();
+}
+
+// Flor de fuego: pétalos con volumen, centro dorado, tallo y hojas con vena
+function florFilas() {
+  const L = new Lienzo(16, 16);
+  for (let a = 0; a < 5; a++) {
+    const ang = -Math.PI / 2 + (a * 2 * Math.PI) / 5;
+    L.esfera(8 + Math.cos(ang) * 4.2, 6 + Math.sin(ang) * 4.2, 2.6, 2.6, RK.naranja, 12);
+  }
+  L.esfera(8, 6, 2.8, 2.8, RK.oro, 9);
+  L.cilindro(7, 2, 11, 5, RK.verde);
+  for (const [x, y] of [[4.5, 13], [11.5, 12.6]]) {
+    L.esfera(x, y, 2.6, 1.6, RK.verde);
+    L.recorrer(16, (fx, fy, lx, ly) => {
+      if (L.c[fy][fx] !== "." && Math.abs(ly - y) < 0.12) L.c[fy][fx] = RK.verde.D;
+    });
+  }
+  return L.filas();
+}
+
+// Pluma: hoja blanca inclinada con nervio central y barbas
+function plumaFilas() {
+  const L = new Lienzo(12, 14);
+  const a = (-35 * Math.PI) / 180, ca = Math.cos(a), sa = Math.sin(a);
+  L.recorrer(14, (fx, fy, lx, ly) => {
+    const dx = lx - 6, dy = ly - 7;
+    const u = dx * ca + dy * sa;      // eje largo
+    const v = -dx * sa + dy * ca;     // eje corto
+    if ((u / 3.6) ** 2 + (v / 6.2) ** 2 > 1) return;
+    let ch = v < -1.8 ? RK.blanco.h : v < 1.2 ? RK.blanco.m : RK.blanco.d;
+    if (Math.abs(v) < 0.25) ch = RK.blanco.D;                                       // nervio
+    else if (Math.floor(u * 4) % 3 === 0) ch = RK.blanco.l;                         // barbas
+    L.c[fy][fx] = ch;
+  });
+  return L.filas();
+}
+
+// Estrella de cinco puntas en oro, con contorno y brillo
+function estrellaFilas() {
+  const L = new Lienzo(14, 14);
+  const pts = [];
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 ? 2.8 : 6.6;
+    const ang = -Math.PI / 2 + (i * Math.PI) / 5;
+    pts.push([7 + r * Math.cos(ang), 7.2 + r * Math.sin(ang)]);
+  }
+  L.recorrer(14, (fx, fy, px, py) => {
+    let dentro = false;
+    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
+      const [xi, yi] = pts[i], [xj, yj] = pts[j];
+      if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) dentro = !dentro;
+    }
+    if (dentro) L.c[fy][fx] = py < 6 ? RK.oro.h : py < 9 ? RK.oro.l : RK.oro.m;
+  });
+  L.bordeOscuro(RK.oro);
+  L.pfl(3.2, 4.4, "w");
+  return L.filas();
+}
+
+/* ---------- Caché y acceso ---------- */
+const spritesArte = new Map();
+function arte(key, filas, pal = PAL_ENT) {
+  if (!spritesArte.has(key)) spritesArte.set(key, spriteFromRows(filas, pal, true, false, false));
+  return spritesArte.get(key);
+}
+
+// Enemigo según su tipo y frame de animación
+function enemigoSprite(t, frame, muerto) {
+  const f = frame % 2;
+  if (t === "walker") return muerto ? arte("gomba-ap", goombaAplastado()) : arte("gomba" + f, goombaFilas(f));
+  if (t === "shell") return arte("tortuga" + f, tortugaFilas(f));
+  if (t === "caparazon") return arte("caparazon", caparazonFilas());
+  if (t === "flyer") return arte("volador" + f, voladorFilas(f));
+  return arte("planta" + f, plantaFilas(f));
+}
+function jefeSprite() { return arte("jefe", jefeFilas()); }
+function monedaSprite(f) { return arte("moneda" + f, monedaFilas(f)); }
+function objetoSprite(tipo) {
+  if (tipo === "hongo") return arte("hongo", setaFilas());
+  if (tipo === "flor") return arte("flor", florFilas());
+  if (tipo === "pluma") return arte("pluma", plumaFilas());
+  return arte("estrella", estrellaFilas());
+}
+
+/* ---------- Bloques con volumen (16x16 lógicos, sin contorno) ---------- */
+// Paleta de un tema: cada tipo de bloque usa sus propias familias de tonos
+function paletaTile(p) {
+  return Object.assign(
+    { k: "#000000", w: "#ffffff" },
+    coloresRK(RK.cafe, p.G),
+    coloresRK(RK.verde, p.g),
+    coloresRK(RK.crema, p.O),
+    coloresRK(RK.oro, p.Y),
+    coloresRK(RK.blanco, p.U),
+    coloresRK(RK.naranja, p.U),
+  );
+}
+
+// flags: primer carácter = hay hierba arriba, segundo = hay vacío debajo
+function crearTile(tipo, p, flags) {
+  const arriba = flags[0] === "1", abajo = flags[1] === "1";
+  const L = new Lienzo(16, 16);
+  if (tipo === "G") {
+    // Tierra: piedrecillas con brillo, grietas finas y hierba con puntas en la superficie
+    L.caja(0, 0, 16, 16, RK.cafe.m);
+    for (let y = 2; y < 16; y += 3) for (let x = (y * 5) % 7; x < 15; x += 7) {
+      L.px(x, y, RK.cafe.d);
+      L.px(x + 1, y, RK.cafe.h);
+    }
+    for (const [x, y] of [[3, 6], [4, 7], [5, 7], [11, 11], [12, 12]]) L.px(x, y, RK.cafe.d);
+    if (arriba) {
+      L.caja(0, 0, 16, 1, RK.verde.h);
+      L.caja(0, 1, 16, 1, RK.verde.l);
+      L.caja(0, 2, 16, 1, RK.verde.m);
+      for (let x = 0; x < 16; x++) {
+        if (x % 4 === 1) L.px(x, 3, RK.verde.d);
+        if (x % 4 === 3) L.pf(x * U, 3 * U + 1, RK.verde.D);   // puntas de hierba
+      }
+    }
+    if (abajo) {
+      L.caja(0, 14, 16, 1, RK.cafe.d);
+      L.caja(0, 15, 16, 1, RK.cafe.D);
+    }
+  } else if (tipo === "S") {
+    // Piedra: marco en relieve, juntas en cruz y grietas
+    const N = RK.naranja;
+    L.caja(0, 0, 16, 16, N.m);
+    L.caja(0, 0, 16, 1, N.h);
+    L.caja(0, 0, 1, 16, N.l);
+    L.caja(0, 15, 16, 1, N.D);
+    L.caja(15, 0, 1, 16, N.d);
+    L.caja(1, 7, 14, 1, N.D);
+    L.caja(7, 1, 1, 14, N.D);
+    L.caja(1, 8, 14, 1, N.d);
+    for (const [x, y] of [[3, 3], [4, 4], [11, 10], [12, 11]]) L.px(x, y, N.d);   // grieta
+  } else if (tipo === "B") {
+    // Arenisca: dos hiladas de ladrillos en relieve, con motas claras y oscuras
+    const C = RK.crema;
+    for (let c = 0; c < 2; c++) {
+      const y0 = c * 8, off = c * 4;
+      for (let bx = -off; bx < 16; bx += 8) for (let y = y0; y < y0 + 8; y++) for (let x = bx; x < bx + 8; x++) {
+        if (x < 0 || x > 15) continue;
+        let ch = C.m;
+        if (y === y0) ch = C.h;
+        else if (y === y0 + 7) ch = C.D;
+        else if (x === bx) ch = C.l;
+        else if (x === bx + 7) ch = C.D;
+        else if (x === bx + 6) ch = C.d;
+        L.px(x, y, ch);
+      }
+      for (const [x, y] of [[2, y0 + 3], [9, y0 + 5], [12, y0 + 2]]) L.px(x, y, C.h);
+    }
+  } else if (tipo === "Q" || tipo === "U") {
+    // Bloque ? (dorado) o bloque usado (metal): marco biselado, brillo y remaches
+    const K = tipo === "Q" ? RK.oro : RK.blanco;
+    L.caja(0, 0, 16, 16, K.m);
+    L.caja(0, 0, 16, 1, K.h);
+    L.caja(0, 0, 1, 16, K.h);
+    L.caja(0, 15, 16, 1, K.D);
+    L.caja(15, 0, 1, 16, K.D);
+    L.caja(1, 1, 14, 1, K.l);
+    L.caja(1, 1, 1, 14, K.l);
+    L.caja(1, 14, 14, 1, K.d);
+    L.caja(14, 1, 1, 14, K.d);
+    L.pf(3 * U, 2 * U, "w");                       // brillo de la esquina
+    for (const [x, y] of [[3, 3], [12, 3], [3, 12], [12, 12]]) {
+      L.px(x, y, K.D);
+      L.px(x - 1, y - 1, "w");
+    }
+    if (tipo === "Q") {
+      // Interrogación en negro, con el glifo de la fuente bitmap escalado x2
+      const g = GLIFOS["?"];
+      for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++) {
+        if (g[r][c] !== "1") continue;
+        L.caja(5 + c * 2, 3 + r * 2, 2, 2, "k");
+      }
+    }
+  }
+  return filasACanvas(L.filas(), paletaTile(p));
+}
+
+/* =====================================================================
+   5c. PERSONAJE CON VOLUMEN Y DETALLE (dibujado a resolución real)
+   Cada pose tiene varios frames. El cuerpo mide 16 px de ancho y 22 de
+   alto (30 si es grande). Los pies siempre quedan en la misma fila.
+   Cabeza, torso, brazos y piernas son esferas y cilindros sombreados.
+   ===================================================================== */
+const HERO_PAL = Object.assign(
+  { k: "#000000", w: "#ffffff" },
+  coloresRK(RK.cafe, "#7c4a1e"),
+  coloresRK(RK.crema, "#fcc4a8"),
+  coloresRK(RK.rojo, "#e52521"),
+  coloresRK(RK.overol, "#2f5fd6"),
+  coloresRK(RK.blanco, "#f2f2f2"),
+  coloresRK(RK.oro, "#ffd23f"),
+);
 const PIE_STAND = [[4, 20], [9, 20]];   // [x izquierda, fila superior del zapato]
 
-// Pinta el personaje en una rejilla de 16 columnas según las opciones de la pose
-function heroeMatriz(o) {
+// Pinta el personaje según las opciones de la pose (medidas lógicas)
+function heroeLienzo(o) {
   const alto = o.alto || 22;
   const extra = alto - 22;                 // filas extra del grande
-  const g = Array.from({ length: alto }, () => new Array(16).fill("."));
-  const pt = (x, y, ch) => { if (x >= 0 && x < 16 && y >= 0 && y < alto) g[y][x] = ch; };
-  const caja = (x, y, w, h, ch) => { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) pt(x + i, y + j, ch); };
+  const L = new Lienzo(16, alto);
   const c = o.cuerpo || 0;                 // desplazamiento vertical de cabeza, torso y brazos
-  const dxC = o.cabeza || 0;               // inclinación horizontal de la cabeza
+  const dx = o.cabeza || 0;                // inclinación horizontal de la cabeza
   const ancho = o.ancho || 8;
   const tx = 8 - ancho / 2;                // columna izquierda del torso
-  const camisa = o.camisa || "r";
+  const camisa = o.camisa === "fuego" ? RK.blanco : RK.rojo;
 
-  // 1) Piernas y zapatos (primero: quedan debajo del torso)
+  // 1) Piernas: cilindros de overol y zapatos redondeados con brillo
   for (const [x, pie] of o.pierna || PIE_STAND) {
-    const arriba = 13 + extra, zapato = pie + extra;
-    caja(x, arriba, 3, zapato - arriba, "b");
-    caja(x - 1, zapato, 4, 2, "T");
+    const arriba = 13 + extra, zap = pie + extra;
+    L.cilindro(x, 3, arriba, zap - arriba, RK.overol);
+    L.esfera(x + 1.5, zap + 1.0, 2.5, 1.3, RK.cafe);
+    L.pfl(x + 0.6, zap + 0.6, RK.cafe.h);
   }
-  // 2) Torso con overol, botones
-  caja(tx, 7 + c, ancho, 6 + extra, camisa);
-  caja(tx, 11 + c + extra, ancho, 2, "b");
-  pt(tx + 1, 8 + c, "y");
-  pt(tx + ancho - 2, 8 + c, "y");
-  // 3) Brazos: mangas de 3 filas y guantes blancos
+  // 2) Torso: camisa con volumen, cintura del overol y botones brillantes
+  L.cilindro(tx, ancho, 7 + c, 4 + extra, camisa);
+  L.cilindro(tx, ancho, 11 + c + extra, 2, RK.overol);
+  L.esfera(tx + 1.6, 8.8 + c, 0.8, 0.8, RK.oro);
+  L.esfera(tx + ancho - 1.6, 8.8 + c, 0.8, 0.8, RK.oro);
+  // 3) Brazos: mangas cilíndricas y guantes blancos redondeados
   const [bl, br] = o.brazos || [0, 0];
-  caja(tx - 2, 8 + c + bl, 2, 3, camisa);
-  caja(tx - 2, 11 + c + bl, 2, 1, "w");
-  caja(tx + ancho, 8 + c + br, 2, 3, camisa);
-  caja(tx + ancho, 11 + c + br, 2, 1, "w");
-  // 4) Cabeza: gorra con visera y emblema, cara, pelo y bigote
-  caja(4 + dxC, c, 8, 2, "r");
-  caja(3 + dxC, 2 + c, 10, 1, "r");
-  pt(7 + dxC, 1 + c, "w");
-  caja(4 + dxC, 3 + c, 8, 4, "S");
-  pt(3 + dxC, 3 + c, "T"); pt(3 + dxC, 4 + c, "T");
-  pt(12 + dxC, 3 + c, "T"); pt(12 + dxC, 4 + c, "T");
-  pt(6 + dxC, 4 + c, "k"); pt(9 + dxC, 4 + c, "k");
-  caja(6 + dxC, 6 + c, 4, 1, "T");
-  if (o.ojos === "x") { pt(6 + dxC, 4 + c, "T"); pt(9 + dxC, 4 + c, "T"); pt(7 + dxC, 6 + c, "k"); pt(8 + dxC, 6 + c, "k"); }
-  return g.map((r) => r.join(""));
+  L.cilindro(tx - 2, 2, 8 + c + bl, 3, camisa);
+  L.esfera(tx - 1, 11.6 + c + bl, 1.3, 1.2, RK.blanco);
+  L.cilindro(tx + ancho, 2, 8 + c + br, 3, camisa);
+  L.esfera(tx + ancho + 1, 11.6 + c + br, 1.3, 1.2, RK.blanco);
+  // 4) Gorra: cúpula, visera con sombra y emblema blanco
+  L.esfera(8 + dx, 3.2 + c, 4.7, 3.2, RK.rojo, 4 + c);
+  L.esfera(8.4 + dx, 4.7 + c, 5.6, 1.0, RK.rojo, 5.8 + c);
+  L.esfera(8 + dx, 1.9 + c, 1.1, 1.1, RK.blanco);
+  // 5) Cara: orejas, patillas, ojos con brillo, nariz, bigote y boca
+  L.esfera(8 + dx, 6.4 + c, 4.0, 3.4, RK.crema, 9.8 + c);
+  L.esfera(4.0 + dx, 6.3 + c, 0.9, 1.1, RK.crema);
+  L.esfera(12.0 + dx, 6.3 + c, 0.9, 1.1, RK.crema);
+  L.caja(3 + dx, 5 + c, 1, 2, RK.cafe.h);
+  L.caja(12 + dx, 5 + c, 1, 2, RK.cafe.d);
+  if (o.ojos === "x") {
+    // Ojos cruzados (daño y muerte)
+    for (const x of [6.5, 10.5]) {
+      for (const [sx, sy] of [[-0.5, -0.5], [0.5, 0.5], [0.5, -0.5], [-0.5, 0.5]]) L.pfl(x + dx + sx, 5.6 + c + sy, "k");
+    }
+  } else {
+    L.elipse(6.1 + dx, 5.6 + c, 1.0, 1.4, "w");
+    L.elipse(10.0 + dx, 5.6 + c, 1.0, 1.4, "w");
+    L.caja(6 + dx, 5 + c, 1, 2, "k");
+    L.caja(10 + dx, 5 + c, 1, 2, "k");
+    L.pfl(6.2 + dx, 5.2 + c, "w");
+    L.pfl(10.2 + dx, 5.2 + c, "w");
+  }
+  L.esfera(8.7 + dx, 7.3 + c, 0.9, 0.9, RK.crema);
+  L.esfera(8 + dx, 8.5 + c, 2.3, 0.9, RK.cafe, 9.6 + c);
+  L.caja(7 + dx, 10 + c, 2, 1, RK.cafe.D);
+  return L.filas();
 }
 
 // Poses y sus frames. "frame" se elige en Player según la velocidad o el tiempo.
@@ -410,8 +988,8 @@ function heroeSprite(pose, frame, big, fire) {
   const i = mod(frame, lista.length);
   const key = pose + "-" + i + "-" + (big ? 1 : 0) + (fire ? 1 : 0);
   if (!heroeCache.has(key)) {
-    const o = Object.assign({ alto: big ? 30 : 22, camisa: fire ? "w" : "r" }, lista[i]);
-    heroeCache.set(key, spriteFromRows(heroeMatriz(o), HEROE_PAL));
+    const o = Object.assign({ alto: big ? 30 : 22, camisa: fire ? "fuego" : "rojo" }, lista[i]);
+    heroeCache.set(key, spriteFromRows(heroeLienzo(o), HERO_PAL, true, false, false));
   }
   return heroeCache.get(key);
 }
@@ -1228,422 +1806,6 @@ function dibujarParticulas(cam) {
   }
 }
 
-/* =====================================================================
-   7b. ARTE CON VOLUMEN: enemigos, objetos, monedas y bloques
-   Las formas redondas se pintan como esferas o cilindros: cada píxel
-   toma uno de cinco tonos según la luz (arriba a la izquierda). Así
-   cada forma tiene volumen real, no solo un bisel en el borde.
-   Los bloques tienen cara superior, cara frontal, sombra y juntas.
-   ===================================================================== */
-
-// Familias de tonos: cada color tiene 5 letras (h luz fuerte ... D sombra profunda).
-// Las letras de cada familia son distintas, así un mismo sprite puede mezclar colores.
-const RK = {
-  cafe:    { h: "h", l: "l", m: "m", d: "d", D: "D" },
-  crema:   { h: "A", l: "B", m: "C", d: "E", D: "F" },
-  rojo:    { h: "q", l: "r", m: "s", d: "t", D: "u" },
-  verde:   { h: "n", l: "p", m: "x", d: "z", D: "o" },
-  oro:     { h: "Q", l: "R", m: "S", d: "T", D: "U" },
-  blanco:  { h: "V", l: "W", m: "X", d: "Y", D: "Z" },
-  naranja: { h: "1", l: "2", m: "3", d: "4", D: "5" },
-};
-
-// Colores de cada familia a partir de un color base
-function coloresRK(rk, hex) {
-  return {
-    [rk.h]: mezclar(hex, 0.5, "#ffffff"),
-    [rk.l]: mezclar(hex, 0.25, "#ffffff"),
-    [rk.m]: hex,
-    [rk.d]: mezclar(hex, 0.3),
-    [rk.D]: mezclar(hex, 0.6),
-  };
-}
-
-// Tono según la luz: dot > 0.72 es luz fuerte, dot < -0.4 es sombra profunda
-function tonoDe(rk, luz) {
-  return luz > 0.72 ? rk.h : luz > 0.42 ? rk.l : luz > 0.0 ? rk.m : luz > -0.4 ? rk.d : rk.D;
-}
-
-/* Rejilla de caracteres donde se pinta el dibujo */
-class Lienzo {
-  constructor(w, h) {
-    this.w = w;
-    this.h = h;
-    this.c = [];
-    for (let y = 0; y < h; y++) this.c.push(new Array(w).fill("."));
-  }
-  px(x, y, ch) {
-    if (x >= 0 && y >= 0 && x < this.w && y < this.h) this.c[y][x] = ch;
-  }
-  caja(x, y, w, h, ch) {
-    for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) this.px(x + i, y + j, ch);
-  }
-  // Elipse de un solo color (ojos, boca, manchas)
-  elipse(cx, cy, rx, ry, ch, corte = 1e9) {
-    for (let y = 0; y < this.h && y <= corte; y++) for (let x = 0; x < this.w; x++) {
-      const nx = (x + 0.5 - cx) / rx, ny = (y + 0.5 - cy) / ry;
-      if (nx * nx + ny * ny <= 1) this.px(x, y, ch);
-    }
-  }
-  // Esfera sombreada: la normal de cada píxel decide su tono
-  esfera(cx, cy, rx, ry, rk, corte = 1e9) {
-    for (let y = 0; y < this.h && y <= corte; y++) for (let x = 0; x < this.w; x++) {
-      const nx = (x + 0.5 - cx) / rx, ny = (y + 0.5 - cy) / ry;
-      const d2 = nx * nx + ny * ny;
-      if (d2 > 1) continue;
-      const nz = Math.sqrt(1 - d2);
-      const luz = -0.45 * nx - 0.6 * ny + 0.66 * nz;   // luz desde arriba-izquierda
-      this.px(x, y, tonoDe(rk, luz));
-    }
-  }
-  // Cilindro vertical (tallos, tubos, monedas de canto): sombrea en horizontal
-  cilindro(x0, w, y0, h, rk) {
-    for (let y = y0; y < y0 + h; y++) for (let x = x0; x < x0 + w; x++) {
-      const t = (x + 0.5 - (x0 + w / 2)) / (w / 2);
-      const nz = Math.sqrt(Math.max(0, 1 - t * t));
-      this.px(x, y, tonoDe(rk, -0.45 * t + 0.66 * nz));
-    }
-  }
-  filas() { return this.c.map((r) => r.join("")); }
-}
-
-// Pinta una matriz de caracteres en un canvas de tamaño exacto (sin margen)
-function filasACanvas(filas, pal) {
-  const c = document.createElement("canvas");
-  c.width = filas[0].length;
-  c.height = filas.length;
-  const g = c.getContext("2d");
-  for (let y = 0; y < filas.length; y++) for (let x = 0; x < filas[y].length; x++) {
-    const col = pal[filas[y][x]];
-    if (!col) continue;
-    g.fillStyle = col;
-    g.fillRect(x, y, 1, 1);
-  }
-  return c;
-}
-
-// Paleta de los enemigos y objetos (todos los tonos juntos)
-const PAL_ENT = Object.assign(
-  { k: "#000000", w: "#ffffff" },
-  coloresRK(RK.cafe, "#9b5a2a"),
-  coloresRK(RK.crema, "#f6dcae"),
-  coloresRK(RK.rojo, "#e0392b"),
-  coloresRK(RK.verde, "#3fbf3f"),
-  coloresRK(RK.oro, "#ffd23f"),
-  coloresRK(RK.blanco, "#f2f2f2"),
-  coloresRK(RK.naranja, "#ff8a1e"),
-);
-
-/* ---------- Enemigos ---------- */
-
-// Goomba: sombrero redondo, cara clara, ojos con pupila, cejas y pies que alternan
-function goombaFilas(frame) {
-  const L = new Lienzo(16, 16);
-  L.esfera(8, 7.5, 7.2, 6.6, RK.cafe, 10.6);
-  L.esfera(8, 10.2, 4.8, 2.4, RK.crema, 11.6);
-  L.elipse(5.2, 7.2, 2.1, 2.5, "w");
-  L.elipse(10.8, 7.2, 2.1, 2.5, "w");
-  L.caja(5, 7, 1, 2, "k");
-  L.caja(11, 7, 1, 2, "k");
-  L.px(3, 4, "k"); L.px(4, 5, "k");
-  L.px(12, 4, "k"); L.px(11, 5, "k");
-  const pies = frame % 2 === 0 ? [[4.6, 13.4], [11.4, 13.4]] : [[4.6, 12.6], [11.4, 14.2]];
-  for (const [x, y] of pies) L.esfera(x, y, 2.6, 2.0, RK.cafe);
-  return L.filas();
-}
-function goombaAplastado() {
-  const L = new Lienzo(16, 8);
-  L.esfera(8, 4.5, 7.6, 3.4, RK.cafe, 7);
-  L.esfera(4.6, 6.5, 2.4, 1.6, RK.cafe);
-  L.esfera(11.4, 6.5, 2.4, 1.6, RK.cafe);
-  return L.filas();
-}
-
-// Hexágonos del caparazón: puntos claros sobre el verde medio
-function patronCaparazon(L) {
-  for (let y = 0; y < L.h; y++) for (let x = 0; x < L.w; x++) {
-    if (L.c[y][x] === RK.verde.m && (x + 2 * y) % 5 === 0) L.c[y][x] = RK.verde.l;
-  }
-}
-
-// Tortuga (enemigo "shell"): caparazón verde con patrón, cabeza clara, pies que alternan
-function tortugaFilas(frame) {
-  const L = new Lienzo(16, 18);
-  L.esfera(7.5, 10.5, 6.6, 5.8, RK.verde, 16.4);
-  patronCaparazon(L);
-  L.caja(3, 15, 9, 1, RK.crema.m);
-  L.esfera(13.2, 5.6, 3.0, 3.0, RK.crema, 9);
-  L.px(14, 5, "k");
-  L.elipse(14.2, 4.6, 0.8, 0.9, "w");
-  const pies = frame % 2 === 0 ? [[4.4, 16.6], [10.6, 16.6]] : [[4.4, 15.8], [11.2, 16.8]];
-  for (const [x, y] of pies) L.esfera(x, y, 2.2, 1.7, RK.crema);
-  return L.filas();
-}
-
-// Caparazón suelto: media esfera verde con borde claro
-function caparazonFilas() {
-  const L = new Lienzo(14, 10);
-  L.esfera(6.5, 8.5, 6.4, 7.6, RK.verde, 9);
-  patronCaparazon(L);
-  L.caja(1, 9, 12, 1, RK.crema.m);
-  return L.filas();
-}
-
-// Goomba alado: alas blancas que aletean en dos frames
-function voladorFilas(frame) {
-  const L = new Lienzo(16, 14);
-  const ya = frame % 2 === 0 ? 4.2 : 7.6;
-  L.esfera(3.5, ya, 3.2, 2.2, RK.blanco, 13);
-  L.esfera(12.5, ya, 3.2, 2.2, RK.blanco, 13);
-  L.esfera(8, 9.2, 4.6, 4.2, RK.cafe, 13);
-  L.esfera(8, 10.6, 3.0, 1.6, RK.crema, 13);
-  L.elipse(6.2, 8.2, 1.3, 1.5, "w");
-  L.elipse(9.8, 8.2, 1.3, 1.5, "w");
-  L.px(6, 8, "k"); L.px(10, 8, "k");
-  L.esfera(5.6, 13.2, 1.8, 1.2, RK.cafe);
-  L.esfera(10.4, 13.2, 1.8, 1.2, RK.cafe);
-  return L.filas();
-}
-
-// Planta piraña: tallo cilíndrico, cabeza roja con manchas y boca que se abre y cierra
-function plantaFilas(frame) {
-  const L = new Lienzo(16, 22);
-  L.cilindro(6, 4, 13, 9, RK.verde);
-  L.esfera(3.2, 14.6, 2.8, 1.8, RK.verde);
-  L.esfera(12.8, 15.4, 2.8, 1.8, RK.verde);
-  L.esfera(8, 7.4, 5.6, 5.6, RK.rojo, 13);
-  L.elipse(5.2, 4.8, 1.2, 1.2, "w");
-  L.elipse(10.6, 4.4, 1.2, 1.2, "w");
-  if (frame % 2 === 0) {
-    L.elipse(8, 10.5, 3.4, 2.4, "k");
-    L.px(6, 9, "w"); L.px(8, 9, "w"); L.px(10, 9, "w");
-  } else {
-    L.caja(5, 10, 6, 1, "k");
-  }
-  return L.filas();
-}
-
-/* ---------- Jefe ---------- */
-
-// Gran Goomba del castillo: 28x30, cara clara, ojos enfadados y boca con dientes
-function jefeFilas() {
-  const L = new Lienzo(28, 30);
-  L.esfera(14, 13, 12.5, 11.2, RK.cafe, 23);
-  L.esfera(14, 19.2, 8.8, 4.4, RK.crema, 24);
-  L.caja(5, 8, 8, 2, "k");
-  L.caja(15, 8, 8, 2, "k");
-  L.elipse(9.6, 13.6, 3.2, 3.6, "w");
-  L.elipse(18.4, 13.6, 3.2, 3.6, "w");
-  L.caja(10, 14, 2, 3, "k");
-  L.caja(17, 14, 2, 3, "k");
-  L.elipse(14, 22.6, 5.2, 2.4, "k");
-  L.px(11, 21, "w"); L.px(14, 21, "w"); L.px(17, 21, "w");
-  L.esfera(7.2, 27, 4.6, 3.0, RK.cafe);
-  L.esfera(20.8, 27, 4.6, 3.0, RK.cafe);
-  return L.filas();
-}
-
-/* ---------- Monedas y objetos ---------- */
-
-// Moneda girando en 3 anchos (16 de ancho en el frame completo)
-function monedaFilas(f) {
-  if (f === 0) {
-    const L = new Lienzo(10, 10);
-    L.esfera(5, 5, 4.6, 4.6, RK.oro, 9.9);
-    L.caja(2, 2, 2, 1, "w");
-    return L.filas();
-  }
-  if (f === 1) {
-    const L = new Lienzo(6, 10);
-    L.cilindro(0, 6, 0, 10, RK.oro);
-    L.px(1, 2, "w");
-    return L.filas();
-  }
-  const L = new Lienzo(3, 10);
-  L.cilindro(0, 3, 0, 10, RK.oro);
-  return L.filas();
-}
-
-// Hongo: sombrero rojo con manchas blancas y tallo crema con ojos
-function setaFilas() {
-  const L = new Lienzo(16, 16);
-  L.esfera(8, 6.8, 7.2, 6.4, RK.rojo, 9.4);
-  L.elipse(5, 4.4, 1.7, 1.7, "w");
-  L.elipse(11, 4.2, 1.6, 1.6, "w");
-  L.elipse(8, 1.8, 1.0, 1.0, "w");
-  L.esfera(8, 12.2, 3.6, 3.2, RK.crema, 15);
-  L.px(6, 12, "k"); L.px(9, 12, "k");
-  return L.filas();
-}
-
-// Flor de fuego: pétalos naranjas, centro dorado, tallo verde
-function florFilas() {
-  const L = new Lienzo(16, 16);
-  for (let a = 0; a < 5; a++) {
-    const ang = -Math.PI / 2 + (a * 2 * Math.PI) / 5;
-    L.esfera(8 + Math.cos(ang) * 4.2, 6 + Math.sin(ang) * 4.2, 2.6, 2.6, RK.naranja, 12);
-  }
-  L.esfera(8, 6, 2.8, 2.8, RK.oro, 9);
-  L.cilindro(7, 2, 11, 5, RK.verde);
-  L.esfera(4.5, 13, 2.6, 1.6, RK.verde);
-  L.esfera(11.5, 12.6, 2.6, 1.6, RK.verde);
-  return L.filas();
-}
-
-// Pluma: hoja blanca inclinada con su nervio
-function plumaFilas() {
-  const L = new Lienzo(12, 14);
-  const a = (-35 * Math.PI) / 180, ca = Math.cos(a), sa = Math.sin(a);
-  for (let y = 0; y < 14; y++) for (let x = 0; x < 12; x++) {
-    const dx = x + 0.5 - 6, dy = y + 0.5 - 7;
-    const u = dx * ca + dy * sa;      // eje largo
-    const v = -dx * sa + dy * ca;     // eje corto
-    if ((u / 3.6) ** 2 + (v / 6.2) ** 2 > 1) continue;
-    if (Math.abs(v) < 0.6) L.px(x, y, RK.blanco.D);
-    else L.px(x, y, v < -1.8 ? RK.blanco.h : v < 1.2 ? RK.blanco.m : RK.blanco.d);
-  }
-  return L.filas();
-}
-
-// Estrella de cinco puntas en oro
-function estrellaFilas() {
-  const L = new Lienzo(14, 14);
-  const pts = [];
-  for (let i = 0; i < 10; i++) {
-    const r = i % 2 ? 2.8 : 6.6;
-    const ang = -Math.PI / 2 + (i * Math.PI) / 5;
-    pts.push([7 + r * Math.cos(ang), 7.2 + r * Math.sin(ang)]);
-  }
-  for (let y = 0; y < 14; y++) for (let x = 0; x < 14; x++) {
-    const px = x + 0.5, py = y + 0.5;
-    let dentro = false;
-    for (let i = 0, j = pts.length - 1; i < pts.length; j = i++) {
-      const [xi, yi] = pts[i], [xj, yj] = pts[j];
-      if ((yi > py) !== (yj > py) && px < ((xj - xi) * (py - yi)) / (yj - yi) + xi) dentro = !dentro;
-    }
-    if (!dentro) continue;
-    L.px(x, y, py < 6 ? RK.oro.h : py < 9 ? RK.oro.l : RK.oro.m);
-  }
-  L.px(2, 2, "w");
-  return L.filas();
-}
-
-/* ---------- Caché y acceso ---------- */
-const spritesArte = new Map();
-function arte(key, filas, pal = PAL_ENT) {
-  if (!spritesArte.has(key)) spritesArte.set(key, spriteFromRows(filas, pal, true, false, false));
-  return spritesArte.get(key);
-}
-
-// Enemigo según su tipo y frame de animación
-function enemigoSprite(t, frame, muerto) {
-  const f = frame % 2;
-  if (t === "walker") return muerto ? arte("gomba-ap", goombaAplastado()) : arte("gomba" + f, goombaFilas(f));
-  if (t === "shell") return arte("tortuga" + f, tortugaFilas(f));
-  if (t === "caparazon") return arte("caparazon", caparazonFilas());
-  if (t === "flyer") return arte("volador" + f, voladorFilas(f));
-  return arte("planta" + f, plantaFilas(f));
-}
-function jefeSprite() { return arte("jefe", jefeFilas()); }
-function monedaSprite(f) { return arte("moneda" + f, monedaFilas(f)); }
-function objetoSprite(tipo) {
-  if (tipo === "hongo") return arte("hongo", setaFilas());
-  if (tipo === "flor") return arte("flor", florFilas());
-  if (tipo === "pluma") return arte("pluma", plumaFilas());
-  return arte("estrella", estrellaFilas());
-}
-
-/* ---------- Bloques con volumen (16x16 exactos, sin contorno) ---------- */
-// Paleta de un tema: cada tipo de bloque usa sus propias familias de tonos
-function paletaTile(p) {
-  return Object.assign(
-    { k: "#000000", w: "#ffffff" },
-    coloresRK(RK.cafe, p.G),
-    coloresRK(RK.verde, p.g),
-    coloresRK(RK.crema, p.O),
-    coloresRK(RK.oro, p.Y),
-    coloresRK(RK.blanco, p.U),
-    coloresRK(RK.naranja, p.U),
-  );
-}
-
-// flags: "A" = hay hierba arriba (superficie), "B" = hay vacío debajo
-function crearTile(tipo, p, flags) {
-  const arriba = flags[0] === "1", abajo = flags[1] === "1";
-  const L = new Lienzo(16, 16);
-  if (tipo === "G") {
-    // Tierra: cara frontal con piedrecillas, hierba en la superficie y sombra en la base
-    L.caja(0, 0, 16, 16, RK.cafe.m);
-    for (let y = 2; y < 16; y += 3) for (let x = (y * 5) % 7; x < 15; x += 7) {
-      L.px(x, y, RK.cafe.d);
-      L.px(x + 1, y, RK.cafe.h);
-    }
-    // Sin bordes laterales: el suelo es continuo y las franjas verticales se verían como ladrillos
-    if (arriba) {
-      L.caja(0, 0, 16, 1, RK.verde.h);
-      L.caja(0, 1, 16, 1, RK.verde.l);
-      L.caja(0, 2, 16, 1, RK.verde.m);
-      for (let x = 0; x < 16; x++) if (x % 4 === 1) L.px(x, 3, RK.verde.d);
-    }
-    if (abajo) {
-      L.caja(0, 14, 16, 1, RK.cafe.d);
-      L.caja(0, 15, 16, 1, RK.cafe.D);
-    }
-  } else if (tipo === "S") {
-    // Piedra: marco en relieve y juntas en cruz
-    const N = RK.naranja;
-    L.caja(0, 0, 16, 16, N.m);
-    L.caja(0, 0, 16, 1, N.h);
-    L.caja(0, 0, 1, 16, N.l);
-    L.caja(0, 15, 16, 1, N.D);
-    L.caja(15, 0, 1, 16, N.d);
-    L.caja(1, 7, 14, 1, N.D);
-    L.caja(7, 1, 1, 14, N.D);
-    L.caja(1, 8, 14, 1, N.d);
-  } else if (tipo === "B") {
-    // Arenisca: dos hiladas de ladrillos en relieve, juntas oscuras entre piezas
-    const C = RK.crema;
-    for (let c = 0; c < 2; c++) {
-      const y0 = c * 8, off = c * 4;
-      for (let bx = -off; bx < 16; bx += 8) for (let y = y0; y < y0 + 8; y++) for (let x = bx; x < bx + 8; x++) {
-        if (x < 0 || x > 15) continue;
-        let ch = C.m;
-        if (y === y0) ch = C.h;
-        else if (y === y0 + 7) ch = C.D;
-        else if (x === bx) ch = C.l;
-        else if (x === bx + 7) ch = C.D;
-        else if (x === bx + 6) ch = C.d;
-        L.px(x, y, ch);
-      }
-    }
-  } else if (tipo === "Q" || tipo === "U") {
-    // Bloque ? (dorado) o bloque usado (metal): marco biselado y remaches
-    const K = tipo === "Q" ? RK.oro : RK.blanco;
-    L.caja(0, 0, 16, 16, K.m);
-    L.caja(0, 0, 16, 1, K.h);
-    L.caja(0, 0, 1, 16, K.h);
-    L.caja(0, 15, 16, 1, K.D);
-    L.caja(15, 0, 1, 16, K.D);
-    L.caja(1, 1, 14, 1, K.l);
-    L.caja(1, 1, 1, 14, K.l);
-    L.caja(1, 14, 14, 1, K.d);
-    L.caja(14, 1, 1, 14, K.d);
-    for (const [x, y] of [[3, 3], [12, 3], [3, 12], [12, 12]]) {
-      L.px(x, y, K.D);
-      L.px(x - 1, y - 1, "w");
-    }
-    if (tipo === "Q") {
-      // Interrogación en negro, con el glifo de la fuente bitmap escalado x2
-      const g = GLIFOS["?"];
-      for (let r = 0; r < 5; r++) for (let c = 0; c < 3; c++) {
-        if (g[r][c] !== "1") continue;
-        L.caja(5 + c * 2, 3 + r * 2, 2, 2, "k");
-      }
-    }
-  }
-  return filasACanvas(L.filas(), paletaTile(p));
-}
-
 /* Mezcla un color hex con negro o blanco en proporción t (sombreado) */
 function mezclar(hex, t, hacia = "#000000") {
   const a = parseInt(hex.slice(1), 16), b = parseInt(hacia.slice(1), 16);
@@ -1688,7 +1850,7 @@ function texColinas(key, ancho, color, fnAlt, contorno = false) {
       const top = Math.round(fnAlt(x));
       for (let y = 0; y < alto; y++) rows[y] += y >= top ? "c" : ".";
     }
-    const sp = spriteFromRows(rows, { c: color }, contorno, true);
+    const sp = spriteFromRows(expandir(rows), { c: color }, contorno, true);
     sp.tw = ancho;
     return sp;
   });
@@ -1711,7 +1873,7 @@ function bandasCielo(pal, alto) {
 // Sol con borde de luz y contorno
 function dibujarSol(pal, x, y) {
   const color = pal.sol || "#ffe36b";
-  const sp = textura("sol-" + color, () => spriteFromRows(circuloRows(11, "c"), { c: color }));
+  const sp = textura("sol-" + color, () => spriteFromRows(expandir(circuloRows(11, "c")), { c: color }));
   drawSprite(sp, x, y);
 }
 
@@ -1731,7 +1893,7 @@ function texNube() {
       }
       rows.push(f);
     }
-    return spriteFromRows(rows, { c: "#ffffff" });
+    return spriteFromRows(expandir(rows), { c: "#ffffff" });
   });
 }
 function dibujarNubes(cam, alto) {
@@ -1754,7 +1916,7 @@ function texArbusto(color) {
       }
       rows.push(f);
     }
-    const sp = spriteFromRows(rows, { a: color });
+    const sp = spriteFromRows(expandir(rows), { a: color });
     sp.tw = 96;
     return sp;
   });
@@ -1776,7 +1938,7 @@ function texPiramide(alto, base, pal) {
       }
       rows.push(f);
     }
-    return spriteFromRows(rows, { l: pal.piedraClara, d: pal.piedraOscura, m: pal.piedraJunta }, true);
+    return spriteFromRows(expandir(rows), { l: pal.piedraClara, d: pal.piedraOscura, m: pal.piedraJunta }, true);
   });
 }
 
@@ -2032,11 +2194,11 @@ class Level {
     const FRAMES_MONEDA = [0, 1, 2, 1];
     for (const c of this.coins) {
       const sp = monedaSprite(FRAMES_MONEDA[Math.floor(c.anim) % 4]);
-      drawSprite(sp, c.x + (c.w - (sp.width - 2)) / 2 - cam.x, c.y + (c.h - (sp.height - 2)) / 2 - cam.y);
+      drawSprite(sp, c.x + (c.w - sp.lw) / 2 - cam.x, c.y + (c.h - sp.lh) / 2 - cam.y);
     }
     for (const it of this.items) {
       const sp = objetoSprite(it.tipo);
-      drawSprite(sp, it.x + it.w / 2 - (sp.width - 2) / 2 - cam.x, it.y + it.h - (sp.height - 2) - cam.y);
+      drawSprite(sp, it.x + it.w / 2 - sp.lw / 2 - cam.x, it.y + it.h - sp.lh - cam.y);
     }
     for (const e of this.enemies) this.dibujarEnemigo(e, cam);
     this.dibujarJugador(game, cam);
@@ -2085,8 +2247,8 @@ class Level {
     const muerto = !e.alive && (e.t === "walker" || e.t === "shell");
     const sp = enemigoSprite(e.t, Math.floor(e.anim * 6), muerto);
     // Centrado en X y apoyado en el borde inferior del hitbox
-    const x = e.x + e.w / 2 - (sp.width - 2) / 2 - cam.x;
-    const y = e.y + e.h - (sp.height - 2) - cam.y;
+    const x = e.x + e.w / 2 - sp.lw / 2 - cam.x;
+    const y = e.y + e.h - sp.lh - cam.y;
     if (x < -24 || x > W + 4) return;
     drawSprite(sp, x, y);
   }
@@ -2095,8 +2257,8 @@ class Level {
     // El jefe parpadea mientras es invulnerable
     if (b.inmuneT > 0 && Math.floor(b.inmuneT * 12) % 2 === 0) return;
     const sp = jefeSprite();
-    const x = b.x + b.w / 2 - (sp.width - 2) / 2 - cam.x;
-    const y = b.y + b.h - (sp.height - 2) - cam.y;
+    const x = b.x + b.w / 2 - sp.lw / 2 - cam.x;
+    const y = b.y + b.h - sp.lh - cam.y;
     drawSprite(sp, x, y);
     // Barra de vida: tres cuadritos sobre la cabeza
     const bx = Math.round(x), by = Math.round(y) - 6;
@@ -2114,7 +2276,7 @@ class Level {
     ctx.save();
     ctx.translate(px, py);
     ctx.scale((p.facing < 0 ? -1 : 1) * (aplasta ? 1.15 : 1), aplasta ? 0.85 : 1);
-    ctx.drawImage(sp, -Math.floor(sp.width / 2), -(alto + 1));
+    ctx.drawImage(sp, -sp.lw / 2 - sp.pad, -sp.lh - sp.pad, sp.width / U, sp.height / U);
     ctx.restore();
     // Estrella: destello de colores sobre la cabeza
     if (p.star > 0) {
@@ -2685,7 +2847,7 @@ function bucle(t) {
   ultimo = t;
   try {
     actualizarJuego(dt);
-    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.setTransform(U, 0, 0, U, 0, 0);   // dibujo en coordenadas lógicas
     dibujarJuego(game);
   } catch (err) {
     console.error(err);
