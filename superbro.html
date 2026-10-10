@@ -2,7 +2,7 @@
 <html lang="es">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>SuperBro</title>
 <style>
   /* Paleta de la interfaz: tonos fijos tipo SNES, sin degradados */
@@ -26,8 +26,11 @@
     align-items: center;
     justify-content: center;
   }
-  /* El canvas interno es 256x224; se escala de forma entera y con píxeles duros */
+  /* El canvas ocupa todo el área visible; su resolución interna la calcula el script */
   canvas {
+    position: fixed;
+    left: 0;
+    top: 0;
     image-rendering: pixelated;
     image-rendering: crisp-edges;
     display: block;
@@ -38,7 +41,7 @@
     display: none;
     position: fixed;
     left: 0; right: 0; bottom: 0;
-    height: 30%;
+    height: 150px;
     pointer-events: none;
     touch-action: none;
     user-select: none;
@@ -99,8 +102,14 @@
 /* =====================================================================
    1. CONSTANTES Y UTILIDADES BASE
    ===================================================================== */
-const W = 256;             // resolución interna (ancho)
-const H = 224;             // resolución interna (alto)
+// Resolución interna: se calcula según la pantalla (ver resize). Mínimo de diseño 256x224.
+const W_MIN = 256;
+const H_MIN = 224;
+let W = W_MIN;             // ancho interno actual
+let H = H_MIN;             // alto interno actual
+let OY = 0;                // desplazamiento vertical del área de diseño (cielo arriba, suelo para los botones abajo)
+const TOUCH = matchMedia("(pointer: coarse)").matches;
+const ALTO_BOTONES_PX = 150; // alto reservado a los botones táctiles, en píxeles del dispositivo
 const TILE = 16;           // tamaño de tile en píxeles
 const GRAVITY = 900;       // px/s²
 const MAX_FALL = 360;      // velocidad máxima de caída
@@ -110,15 +119,28 @@ const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled = false;
 
-// Escala máxima que cabe en la ventana. Entera si hay espacio (píxeles duros);
-// en móviles se usa fraccionaria para no quedar diminuto.
+/* Llena toda la pantalla con la MENOR resolución interna posible:
+   - el alto de diseño es 224 px (mínimo) y el ancho crece en horizontal
+   - en vertical el ancho de diseño es 256 px (mínimo) y el alto crece
+   Así no hay bandas negras y cada píxel del juego sigue siendo cuadrado. */
 function resize() {
-  const ajuste = Math.min(innerWidth / W, innerHeight / H);
-  const s = ajuste >= 2 ? Math.floor(ajuste) : Math.max(0.5, ajuste);
-  canvas.style.width = (W * s) + "px";
-  canvas.style.height = (H * s) + "px";
+  const vv = window.visualViewport;
+  const sw = Math.max(1, Math.round(vv ? vv.width : innerWidth));
+  const sh = Math.max(1, Math.round(vv ? vv.height : innerHeight));
+  const a = sw / sh;
+  if (a >= W_MIN / H_MIN) { H = H_MIN; W = Math.round(H_MIN * a); }
+  else { W = W_MIN; H = Math.round(W_MIN / a); }
+  // En vertical con botones táctiles se reserva una franja inferior (suelo) para ellos
+  const reserva = TOUCH && H > H_MIN ? Math.round(ALTO_BOTONES_PX * H / sh) : 0;
+  OY = Math.max(0, H - H_MIN - reserva);
+  canvas.width = W;
+  canvas.height = H;
+  canvas.style.width = sw + "px";
+  canvas.style.height = sh + "px";
+  ctx.imageSmoothingEnabled = false; // al cambiar el tamaño el contexto se reinicia
 }
 addEventListener("resize", resize);
+if (window.visualViewport) window.visualViewport.addEventListener("resize", resize);
 resize();
 
 const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -414,45 +436,103 @@ const SPR = {
 };
 
 /* =====================================================================
-   5b. PERSONAJE CON SOMBREADO (estilo SNES: 14x18, 3 tonos + contorno)
-   Claves: k contorno, R/r rojo oscuro/claro, S piel, B azul oscuro,
-           b azul, y botones amarillos. Las piernas se cambian por frame.
+   5b. PERSONAJE POR POSES (se dibuja con un "pintor" de píxeles)
+   Cada pose tiene varios frames. El cuerpo tiene 16 px de ancho y
+   22 px de alto (30 si es grande). Los pies siempre quedan en la misma
+   fila, así no tiembla al cambiar de frame.
+   Claves: r gorra y camisa, b overol, T pelo/zapatos/bigote, S piel,
+           w guantes y emblema, y botones, k ojos y contorno.
    ===================================================================== */
-const HERO_TOP = [
-  "....kkkkkk....",
-  "...kRRRRRRk...",
-  "..kRrrrrrrRk..",
-  "..kRrrrrrrRk..",
-  "..kSSSSSSSSk..",
-  "..kSkSSSSkSk..",
-  "..kSSSSSSSSk..",
-  "...kSSSSSSk...",
-  "..kbbbbbbbbk..",
-  "..kbbybbybbk..",
-  ".kbbbbbbbbbbk.",
-  ".kSbbbbbbbbSk.",
-  "..kbbbbbbbbk..",
-  "..kbbbbbbbbk..",
-];
-const LEGS_IDLE = ["..kBBk..kBBk..", "..kBBk..kBBk..", ".kkkk....kkkk.", ".kkkk....kkkk."];
-const LEGS_RUN1 = ["..kBBk.kBBk...", ".kBBk...kBBk..", ".kkkk.....kkkk", ".kkk.....kkkk."];
-const LEGS_RUN2 = ["...kBBk.kBBk..", "..kBBk...kBBk.", ".kkkk.....kkk.", ".kkk.....kkkk."];
-const LEGS_JUMP = [".kBBk....kBBk.", ".kBBk....kBBk.", "kkkk......kkkk", "kkkk......kkkk"];
-const VACIO = "..............";
+const HEROE_PAL = { r: "#e52521", b: "#2f5fd6", S: "#fcc4a8", T: "#7c4a1e", y: "#ffd23f", k: "#000000", w: "#ffffff" };
+const PIE_STAND = [[4, 20], [9, 20]];   // [x izquierda, fila superior del zapato]
 
-const hero = (legs) => HERO_TOP.concat(legs);
-Object.assign(SPR, {
-  playerIdle: hero(LEGS_IDLE),
-  playerRun1: hero(LEGS_RUN1),
-  playerRun2: hero(LEGS_RUN2),
-  playerJump: hero(LEGS_JUMP),
-  playerHurt: hero(LEGS_IDLE).map((r) => r.replace(/r/g, "w")),
-  // Agachado: cuerpo bajo y ancho
-  playerDuck: [VACIO, VACIO, VACIO, VACIO].concat(HERO_TOP.slice(4), ["..kkkkkkkkkk.."]),
-  // Grande: el torso tiene dos filas más
-  bigIdle: HERO_TOP.slice(0, 12)
-    .concat(["..kbbbbbbbbk..", "..kbbbbbbbbk.."], HERO_TOP.slice(12), LEGS_IDLE),
-});
+// Pinta el personaje en una rejilla de 16 columnas según las opciones de la pose
+function heroeMatriz(o) {
+  const alto = o.alto || 22;
+  const extra = alto - 22;                 // filas extra del grande
+  const g = Array.from({ length: alto }, () => new Array(16).fill("."));
+  const pt = (x, y, ch) => { if (x >= 0 && x < 16 && y >= 0 && y < alto) g[y][x] = ch; };
+  const caja = (x, y, w, h, ch) => { for (let j = 0; j < h; j++) for (let i = 0; i < w; i++) pt(x + i, y + j, ch); };
+  const c = o.cuerpo || 0;                 // desplazamiento vertical de cabeza, torso y brazos
+  const dxC = o.cabeza || 0;               // inclinación horizontal de la cabeza
+  const ancho = o.ancho || 8;
+  const tx = 8 - ancho / 2;                // columna izquierda del torso
+  const camisa = o.camisa || "r";
+
+  // 1) Piernas y zapatos (primero: quedan debajo del torso)
+  for (const [x, pie] of o.pierna || PIE_STAND) {
+    const arriba = 13 + extra, zapato = pie + extra;
+    caja(x, arriba, 3, zapato - arriba, "b");
+    caja(x - 1, zapato, 4, 2, "T");
+  }
+  // 2) Torso con overol, botones
+  caja(tx, 7 + c, ancho, 6 + extra, camisa);
+  caja(tx, 11 + c + extra, ancho, 2, "b");
+  pt(tx + 1, 8 + c, "y");
+  pt(tx + ancho - 2, 8 + c, "y");
+  // 3) Brazos: mangas de 3 filas y guantes blancos
+  const [bl, br] = o.brazos || [0, 0];
+  caja(tx - 2, 8 + c + bl, 2, 3, camisa);
+  caja(tx - 2, 11 + c + bl, 2, 1, "w");
+  caja(tx + ancho, 8 + c + br, 2, 3, camisa);
+  caja(tx + ancho, 11 + c + br, 2, 1, "w");
+  // 4) Cabeza: gorra con visera y emblema, cara, pelo y bigote
+  caja(4 + dxC, c, 8, 2, "r");
+  caja(3 + dxC, 2 + c, 10, 1, "r");
+  pt(7 + dxC, 1 + c, "w");
+  caja(4 + dxC, 3 + c, 8, 4, "S");
+  pt(3 + dxC, 3 + c, "T"); pt(3 + dxC, 4 + c, "T");
+  pt(12 + dxC, 3 + c, "T"); pt(12 + dxC, 4 + c, "T");
+  pt(6 + dxC, 4 + c, "k"); pt(9 + dxC, 4 + c, "k");
+  caja(6 + dxC, 6 + c, 4, 1, "T");
+  if (o.ojos === "x") { pt(6 + dxC, 4 + c, "T"); pt(9 + dxC, 4 + c, "T"); pt(7 + dxC, 6 + c, "k"); pt(8 + dxC, 6 + c, "k"); }
+  return g.map((r) => r.join(""));
+}
+
+// Poses y sus frames. "frame" se elige en Player según la velocidad o el tiempo.
+const POSES_HEROE = {
+  quieto: [
+    { pierna: PIE_STAND, brazos: [0, 0] },
+    { pierna: PIE_STAND, brazos: [1, 1], cuerpo: 1 },           // respiración
+  ],
+  andar: [
+    { pierna: [[3, 20], [10, 19]], brazos: [-1, 1] },
+    { pierna: [[5, 20], [8, 20]], brazos: [0, 0] },
+    { pierna: [[10, 19], [3, 20]], brazos: [1, -1] },
+    { pierna: [[8, 20], [5, 20]], brazos: [0, 0] },
+  ],
+  correr: [
+    { pierna: [[2, 17], [10, 20]], brazos: [-2, 2], cabeza: 1 },
+    { pierna: [[5, 20], [9, 20]], brazos: [0, 0], cabeza: 1, cuerpo: 1 },
+    { pierna: [[10, 17], [3, 20]], brazos: [2, -2], cabeza: 1 },
+    { pierna: [[7, 20], [6, 20]], brazos: [0, 0], cabeza: 1, cuerpo: 1 },
+  ],
+  salto: [{ pierna: [[3, 18], [10, 17]], brazos: [-5, -5] }],
+  caida: [{ pierna: [[2, 19], [11, 19]], brazos: [-3, -3] }],
+  frenado: [{ pierna: [[1, 20], [12, 20]], brazos: [-1, -1], cabeza: -1 }],
+  agachado: [{ pierna: PIE_STAND, brazos: [3, 3], cuerpo: 4 }],
+  giro: [
+    { pierna: PIE_STAND, ancho: 8 },
+    { pierna: PIE_STAND, ancho: 6 },
+    { pierna: PIE_STAND, ancho: 4 },
+    { pierna: PIE_STAND, ancho: 6 },
+  ],
+  dano: [{ pierna: PIE_STAND, brazos: [-1, -1], cuerpo: 1, ojos: "x" }],
+  muerto: [{ pierna: [[4, 21], [9, 21]], brazos: [-5, -5], ojos: "x" }],
+};
+
+const heroeCache = new Map();
+// Devuelve el sprite de una pose/frame (cacheado). big = grande, fire = con flor de fuego
+function heroeSprite(pose, frame, big, fire) {
+  const lista = POSES_HEROE[pose] || POSES_HEROE.quieto;
+  const i = mod(frame, lista.length);
+  const key = pose + "-" + i + "-" + (big ? 1 : 0) + (fire ? 1 : 0);
+  if (!heroeCache.has(key)) {
+    const o = Object.assign({ alto: big ? 30 : 22, camisa: fire ? "w" : "r" }, lista[i]);
+    heroeCache.set(key, spriteFromRows(heroeMatriz(o), HEROE_PAL));
+  }
+  return heroeCache.get(key);
+}
 
 /* =====================================================================
    6. DATOS DE MUNDOS Y NIVELES  (separados de la lógica)
@@ -864,7 +944,13 @@ class Player {
   constructor(x, y) {
     this.x = x; this.y = y;
     this.vx = 0; this.vy = 0;
-    this.w = 10; this.h = 14;
+    this.w = 12; this.h = 16;   // hitbox pequeño (el sprite es de 16x22)
+    this.pose = "quieto";       // pose visual actual (ver heroeSprite)
+    this.frame = 0;
+    this.zancada = 0;           // distancia recorrida en el suelo: marca el ciclo de piernas
+    this.frenadoT = 0;          // tiempo de derrape al cambiar de dirección a toda velocidad
+    this.aterrizajeT = 0;       // tiempo de aplastamiento al aterrizar
+    this.spinAnim = 0;          // reloj del giro
     this.facing = 1;
     this.onGround = false;
     this.coyoteT = 0;        // tiempo desde que dejó el suelo
@@ -888,7 +974,7 @@ class Player {
     if (b === this.big) return;
     const bottom = this.y + this.h;
     this.big = b;
-    this.h = b ? 20 : 14;
+    this.h = b ? 26 : 16;
     this.y = bottom - this.h; // crece hacia arriba, nunca se mete en el suelo
   }
 
@@ -911,6 +997,13 @@ class Player {
 
     const izq = held.left, der = held.right;
     const corre = held.run > 0;
+    // Derrape: cambiar de dirección en el suelo a buena velocidad
+    const dirH = (der ? 1 : 0) - (izq ? 1 : 0);
+    if (this.onGround && dirH !== 0 && Math.sign(this.vx) === -dirH && Math.abs(this.vx) > 90 && this.frenadoT <= 0) {
+      this.frenadoT = 0.22;
+      emitir(this.x + this.w / 2, this.y + this.h, 4, ["#e8e8f0", "#c8c8d8"], { up: 30, spread: 60, life: 0.3, size: 2 });
+    }
+    if (this.frenadoT > 0) this.frenadoT -= dt;
     this.duck = held.down && this.onGround && this.big;
 
     // --- Movimiento horizontal ---
@@ -927,6 +1020,8 @@ class Player {
       if (Math.abs(this.vx) <= f) this.vx = 0;
       else this.vx -= Math.sign(this.vx) * f;
     }
+    // Durante el derrape se frena más fuerte
+    if (this.frenadoT > 0 && this.onGround) this.vx -= Math.sign(this.vx) * PHYS.friction * 1.6 * dt;
     if (this.duck) this.vx = 0;
 
     // --- Salto: buffer (recordar pulsación) y coyote time (saltar tras caer) ---
@@ -968,19 +1063,48 @@ class Player {
     if (!held.jump && this.vy < -120) this.vy = -120; // corta el salto al soltar
 
     // --- Colisiones ---
+    const vyAntes = this.vy, enAireAntes = !this.onGround;
     const r = moverEntidad(lvl, this, dt);
     if (r.pared) this.vx = 0;
     if (r.techo) {
       game.golpearDesdeAbajo(this);
     }
     this.onGround = r.suelo;
+    // Aterrizaje fuerte: aplastamiento y polvo
+    if (r.suelo && enAireAntes && vyAntes > 150) {
+      this.aterrizajeT = 0.12;
+      emitir(this.x + this.w / 2, this.y + this.h, 6, ["#e8e8f0", "#c8c8d8"], { up: 40, spread: 70, life: 0.35, size: 2 });
+    }
+    if (this.aterrizajeT > 0) this.aterrizajeT -= dt;
     if (r.suelo) this.jumping = false;
 
     // Caer fuera del nivel
     if (this.y > lvl.rows * TILE + 40) this.dead = true;
 
+    this.calcularPose(dt);
+
     // Límite izquierdo del nivel
     if (this.x < 0) { this.x = 0; this.vx = 0; }
+  }
+
+  // Elige la pose visual y el frame según el estado (usa heroeSprite)
+  calcularPose(dt) {
+    if (this.spinT > 0) this.spinAnim += dt;
+    if (this.dead) this.pose = "muerto";
+    else if (this.hurtT > 0) this.pose = "dano";
+    else if (this.spinT > 0) this.pose = "giro";
+    else if (this.duck) this.pose = "agachado";
+    else if (!this.onGround) this.pose = this.vy < 0 ? "salto" : "caida";
+    else if (this.frenadoT > 0) this.pose = "frenado";
+    else if (Math.abs(this.vx) > 120 && held.run) this.pose = "correr";
+    else if (Math.abs(this.vx) > 25) this.pose = "andar";
+    else this.pose = "quieto";
+    if (this.onGround && (this.pose === "andar" || this.pose === "correr")) this.zancada += Math.abs(this.vx) * dt;
+    const f = this.pose === "andar" ? this.zancada / 13
+      : this.pose === "correr" ? this.zancada / 17
+      : this.pose === "giro" ? this.spinAnim * 18
+      : this.pose === "quieto" ? this.animT * 1.6 : 0;
+    this.frame = Math.floor(f);
   }
 }
 
@@ -1259,7 +1383,7 @@ function circuloRows(r, ch) {
 // Colina periódica: fnAlt(x) da la altura de la cima en cada columna
 function texColinas(key, ancho, color, fnAlt, contorno = false) {
   return textura(key, () => {
-    const alto = H;
+    const alto = H_MIN; // las capas son de diseño: no dependen del tamaño de pantalla
     const rows = [];
     for (let y = 0; y < alto; y++) rows.push("");
     for (let x = 0; x < ancho; x++) {
@@ -1279,9 +1403,10 @@ function capaPeriodica(sp, camX, factor, y) {
 }
 
 // Cielo en bandas: del color del cielo a un tono más claro hacia el horizonte
-function bandasCielo(pal) {
+function bandasCielo(pal, alto) {
+  const banda = Math.ceil(alto / 8);
   for (let i = 0; i < 8; i++) {
-    rect(0, i * 22, W, 22, mezclar(pal.cielo, i * 0.06, "#ffffff"));
+    rect(0, i * banda, W, banda, mezclar(pal.cielo, i * 0.06, "#ffffff"));
   }
 }
 
@@ -1311,11 +1436,11 @@ function texNube() {
     return spriteFromRows(rows, { c: "#ffffff" });
   });
 }
-function dibujarNubes(cam) {
+function dibujarNubes(cam, alto) {
   const nube = texNube();
   for (let i = 0; i < 5; i++) {
     const x = mod(i * 97 - cam.x * 0.12, W + 90) - 45;
-    drawSprite(nube, x, 24 + (i % 3) * 20);
+    drawSprite(nube, x, Math.round(alto * 0.12) + (i % 3) * 22);
   }
 }
 
@@ -1359,9 +1484,6 @@ function texPiramide(alto, base, pal) {
 
 // Escenario de pradera / genérico: cielo, sol, nubes, colinas y arbustos
 function escenaColinas(cam, pal) {
-  bandasCielo(pal);
-  dibujarSol(pal, 196, 30);
-  dibujarNubes(cam);
   const lejos = texColinas("lejos-" + pal.lejos, 512, pal.lejos,
     (x) => 96 + Math.sin((x / 512) * Math.PI * 4) * 14 + Math.sin((x / 512) * Math.PI * 10) * 6);
   capaPeriodica(lejos, cam.x, 0.18, 0);
@@ -1374,9 +1496,6 @@ function escenaColinas(cam, pal) {
 
 // Escenario de desierto: pirámides, dunas y sol fuerte
 function escenaDesierto(cam, pal) {
-  bandasCielo(pal);
-  dibujarSol(pal, 200, 22);
-  dibujarNubes(cam);
   const pir = texPiramide(74, 96, pal);
   const off = mod(cam.x * 0.3, 360);
   for (let k = -1; k < 4; k++) drawSprite(pir, k * 170 - off, 176 - 74);
@@ -1385,9 +1504,28 @@ function escenaDesierto(cam, pal) {
   capaPeriodica(dunas, cam.x, 0.45, 0);
 }
 
+// Suelo de tiles bajo el área de diseño (solo si la pantalla es más alta)
+function pintarExtension(pal, tema) {
+  for (let y = OY + H_MIN; y < H; y += TILE) {
+    const sp = tileSprite("G", pal, tema + "G-00");
+    for (let x = 0; x < W; x += TILE) drawSprite(sp, x, y);
+  }
+}
+
 function dibujarFondo(cam, pal, tema) {
+  // Cielo de toda la pantalla: bandas hasta el horizonte (suelo de diseño + desplazamiento)
+  const horizonte = OY + 176;
+  rect(0, 0, W, H, pal.cielo);
+  bandasCielo(pal, horizonte);
+  dibujarSol(pal, W - 60, 24 + OY * 0.3);
+  dibujarNubes(cam, horizonte);
+  // Montañas, colinas, pirámides y arbustos van anclados al suelo de diseño
+  ctx.save();
+  ctx.translate(0, OY);
   if (tema === "desierto") escenaDesierto(cam, pal);
   else escenaColinas(cam, pal);
+  ctx.restore();
+  if (H > OY + H_MIN) pintarExtension(pal, tema);
 }
 
 /* =====================================================================
@@ -1532,7 +1670,6 @@ class Level {
     this.tiempo = data.tiempo;
     this.pal = mundo.paleta;
     this.temaKey = mundo.tema;   // separa la caché de sprites por tema
-    this.tilePal = this.construirPaleta(mundo.paleta);
     this.player = new Player(data.start.x, data.start.y);
     this.enemies = [];
     this.coins = [];
@@ -1545,13 +1682,6 @@ class Level {
     this.meta = false;         // true cuando el jugador toca el poste
     this.metaT = 0;
     this.tiempoRest = this.tiempo;
-  }
-
-  // Paleta de tiles = colores del tema + colores fijos de la paleta base
-  construirPaleta(p) {
-    return Object.assign({}, PAL, {
-      G: p.G, g: p.g, O: p.O, Y: p.Y, U: p.U, W: "#fff3c0", d: PAL.dg,
-    });
   }
 
   spawn(e) {
@@ -1638,6 +1768,9 @@ class Level {
   dibujar(game) {
     const cam = this.cam;
     dibujarFondo(cam, this.pal, this.temaKey);
+    // El área de diseño se desplaza según la pantalla (OY); el HUD se dibuja aparte, arriba
+    ctx.save();
+    ctx.translate(0, OY);
     // Tiles visibles
     const c0 = Math.max(0, Math.floor(cam.x / TILE));
     const c1 = Math.min(this.cols - 1, Math.floor((cam.x + W) / TILE) + 1);
@@ -1663,6 +1796,7 @@ class Level {
     for (const e of this.enemies) this.dibujarEnemigo(e, cam);
     this.dibujarJugador(game, cam);
     dibujarParticulas(cam);
+    ctx.restore();
   }
 
   // Tiles: cada tipo tiene su propio sprite con los colores del tema
@@ -1672,7 +1806,8 @@ class Level {
     // Tiles biselados generados por código, con los colores del tema
     // Hierba arriba y borde oscuro abajo solo en la superficie real (flags en la clave de caché)
     const arriba = !SOLIDOS[tileAt(this, c, r - 1)] ? "1" : "0";
-    const abajo = !SOLIDOS[tileAt(this, c, r + 1)] ? "1" : "0";
+    // Borde oscuro inferior solo si hay vacío debajo (no en la unión con el suelo extendido)
+    const abajo = r + 1 < this.rows && !SOLIDOS[tileAt(this, c, r + 1)] ? "1" : "0";
     drawSprite(tileSprite(t, this.pal, this.temaKey + t + "-" + arriba + abajo), x, y);
   }
 
@@ -1736,25 +1871,20 @@ class Level {
   dibujarJugador(game, cam) {
     const p = this.player;
     if (p.hurtT > 0 && Math.floor(p.hurtT * 14) % 2 === 0) return; // parpadeo de daño
-    let nombre;
-    if (p.duck) nombre = "playerDuck";
-    else if (!p.onGround) nombre = "playerJump";
-    else if (Math.abs(p.vx) > 20) nombre = Math.floor(p.animT * 12) % 2 ? "playerRun1" : "playerRun2";
-    else nombre = "playerIdle";
-    if (p.big && (nombre === "playerIdle" || nombre === "playerRun1" || nombre === "playerRun2" || nombre === "playerJump")) nombre = "bigIdle";
-    if (p.dead) nombre = "playerHurt";
-    if (p.spinT > 0) nombre = "playerJump";
-    const rows = SPR[nombre];
-    const pal = p.fire ? Object.assign({}, PAL, { b: PAL.w, r: PAL.o }) : PAL;
-    const sp = getSprite(nombre + (p.fire ? "-fire" : ""), rows, pal);
-    // Dibuja alineado a los pies del hitbox
-    const sx = Math.round(p.x + p.w / 2 - sp.width / 2 - cam.x);
-    const sy = Math.round(p.y + p.h - sp.height - cam.y);
-    drawSprite(sp, sx, sy, p.facing < 0);
-    // Estrella: destello de colores
+    const alto = p.big ? 30 : 22;
+    const sp = heroeSprite(p.pose, p.frame, p.big, p.fire);
+    // Pivote en los pies (centro del hitbox): ahí se aplican el giro y el aplastamiento
+    const px = Math.round(p.x + p.w / 2 - cam.x), py = Math.round(p.y + p.h - cam.y);
+    const aplasta = p.aterrizajeT > 0;
+    ctx.save();
+    ctx.translate(px, py);
+    ctx.scale((p.facing < 0 ? -1 : 1) * (aplasta ? 1.15 : 1), aplasta ? 0.85 : 1);
+    ctx.drawImage(sp, -Math.floor(sp.width / 2), -(alto + 1));
+    ctx.restore();
+    // Estrella: destello de colores sobre la cabeza
     if (p.star > 0) {
       const c = [PAL.r, PAL.y, PAL.lb, PAL.g][Math.floor(p.animT * 16) % 4];
-      rect(sx + Math.floor(sp.width / 2) - 1, sy - 2, 2, 2, c);
+      rect(px - 1, py - alto - 4, 2, 2, c);
     }
   }
 }
@@ -1945,6 +2075,10 @@ class Game {
     if (this.estado === "muerte") return; // evita descontar dos vidas en el mismo frame
     const p = this.lvl.player;
     p.dead = true;
+    p.pose = "muerto";
+    p.frame = 0;
+    p.vx = 0;
+    p.vy = -320;   // rebote de muerte (sin colisiones)
     this.estado = "muerte";
     this.timerEstado = 2.4;
     this.sfx("muerte");
@@ -1969,6 +2103,12 @@ class Game {
       return;
     }
     this.timerEstado -= dt;
+    if (this.estado === "muerte" && this.lvl) {
+      const pl = this.lvl.player;
+      pl.vy += GRAVITY * dt;
+      pl.y += pl.vy * dt;
+      pl.animT += dt;
+    }
     if (this.estado === "muerte" && this.timerEstado <= 0) {
       if (this.vidas <= 0) {
         this.estado = "gameover";
@@ -2126,6 +2266,10 @@ class Overworld {
     const p = this.m.paleta;
     // Mismo escenario que en los niveles, con la cámara fija
     dibujarFondo({ x: 0 }, p, this.m.tema);
+    // El mapa está diseñado para 256 px: se centra si la pantalla es más ancha
+    const ox = Math.max(0, Math.floor((W - W_MIN) / 2));
+    ctx.save();
+    ctx.translate(ox, OY);
     // Ruta punteada entre nodos (píxeles sueltos, look de mapa SNES)
     const nodos = this.m.mapa.nodos;
     for (let i = 0; i < nodos.length; i++) {
@@ -2154,8 +2298,9 @@ class Overworld {
     // Cursor: el jugador parpadea sobre el nodo actual
     const n = nodos[this.cur];
     if (Math.floor(this.t * 4) % 2 === 0) {
-      drawSprite(getSprite("playerIdle", SPR.playerIdle, PAL), n.x - 5, n.y - 22);
+      drawSprite(heroeSprite("quieto", 0, false, false), n.x - 8, n.y - 28);
     }
+    ctx.restore();
     // Cabecera con el nombre del mundo
     rect(0, 0, W, 14, "rgba(0,0,0,0.5)");
     txt("MUNDO " + this.m.id + " - " + this.m.nombre.toUpperCase(), W / 2, 3, PAL.w, "center");
@@ -2171,7 +2316,7 @@ function dibujarSelMundo(game) {
   txt("SELECCION DE MUNDO", W / 2, 10, PAL.y, "center");
   MUNDOS.forEach((m, i) => {
     const col = i % 4, fila = Math.floor(i / 4);
-    const x = 10 + col * 61, y = 40 + fila * 80;
+    const x = Math.max(0, Math.floor((W - W_MIN) / 2)) + 10 + col * 61, y = 40 + fila * 80;
     const abierto = game.mundoDesbloqueado(i);
     rect(x, y, 54, 64, PAL.k);
     rect(x + 2, y + 2, 50, 60, abierto ? m.paleta.cielo : PAL.dgr);
@@ -2225,11 +2370,15 @@ function dibujarJuego(game) {
     txt("SUPERBRO", W / 2 + 2, 42, PAL.k, "center", 3);
     txt("SUPERBRO", W / 2, 40, PAL.y, "center", 3);
     txt("PLATAFORMAS 2D", W / 2, 72, PAL.w, "center");
-    drawSprite(getSprite("playerIdle", SPR.playerIdle, PAL), W / 2 - 7, 158);
+    // Personaje, mensajes y panel se anclan al suelo del escenario (OY)
+    ctx.save();
+    ctx.translate(0, OY);
+    drawSprite(heroeSprite("quieto", 0, false, false), W / 2 - 8, 154);
     const parpadeo = Math.floor(performance.now() / 500) % 2 === 0;
     rect(0, 186, W, 38, "rgba(0,0,0,0.45)");
     if (parpadeo) txt("PULSA ENTER", W / 2, 192, PAL.w, "center");
     txt("BACKSPACE: BORRAR PROGRESO", W / 2, 206, PAL.w, "center");
+    ctx.restore();
     return;
   }
   if (e === "selMundo") return dibujarSelMundo(game);
