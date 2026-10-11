@@ -7572,6 +7572,23 @@ function txt(s, x, y, color = PAL.w, align = "left", escala = 1) {
   }
 }
 
+// Desplazamientos del contorno negro del HUD: las 8 casillas alrededor de cada letra
+const CONTORNO_HUD = [[-1, -1], [0, -1], [1, -1], [-1, 0], [1, 0], [-1, 1], [0, 1], [1, 1]];
+
+// Texto del HUD con contorno negro, para leerlo sobre nubes, sol y cielo claro
+function txtHud(s, x, y, color = PAL.w, align = "left", escala = 1) {
+  const texto = s.toUpperCase().replace(/¡/g, "!");
+  const ancho = texto.length * 4 * escala - escala;
+  let cx = Math.round(x);
+  if (align === "center") cx -= Math.floor(ancho / 2);
+  else if (align === "right") cx -= ancho;
+  for (const ch of texto) {
+    for (const [ox, oy] of CONTORNO_HUD) dibujarGlifo(ch, cx + ox * escala, Math.round(y) + oy * escala, PAL.k, ctx, escala);
+    dibujarGlifo(ch, cx, Math.round(y), color, ctx, escala);
+    cx += 4 * escala;
+  }
+}
+
 // Dirección pulsada (consume flancos): devuelve {x,y} o null
 function dirPulsada() {
   if (consume("left")) return { x: -1, y: 0 };
@@ -7694,7 +7711,7 @@ function dibujarReserva(x, y, reserva) {
   ["seta", "estrella", "flor", "pluma"].forEach((tipo, i) => {
     const cx = x + i * 36;
     dibujarSimbolo(tipo, cx + 6, y + 6);
-    txt("X" + reserva[tipo], cx + 14, y + 3, reserva[tipo] ? PAL.w : PAL.gr);
+    txtHud("X" + reserva[tipo], cx + 14, y + 3, reserva[tipo] ? PAL.w : PAL.gr);
   });
 }
 
@@ -7764,30 +7781,36 @@ function dibujarSelMundo(game) {
 /* =====================================================================
    17. HUD Y PANTALLAS
    ===================================================================== */
-/* HUD sin barra: iconos y textos con sombra sobre el escenario (estilo NSMB) */
+/* HUD sin barra: textos con contorno negro y una franja superior que se desvanece (estilo NSMB) */
 function dibujarHUD(game) {
   const lvl = game.lvl;
   const p = lvl.player;
   const poder = p.fire ? "FUEGO" : p.cape ? "CAPA" : p.big ? "GRANDE" : "PEQUENO";
+  // Franja superior translúcida que se desvanece: da contraste al marcador sin tapar el escenario
+  const franja = ctx.createLinearGradient(0, 0, 0, 32);
+  franja.addColorStop(0, "rgba(0,0,0,0.35)");
+  franja.addColorStop(1, "rgba(0,0,0,0)");
+  ctx.fillStyle = franja;
+  ctx.fillRect(0, 0, W, 32);
   // Izquierda: jugador, vidas y monedas con icono
-  txt("MARIO " + poder, 6, 6);
-  txt("X" + String(game.vidas).padStart(2, "0"), 22, 17);
+  txtHud("MARIO " + poder, 6, 6);
+  txtHud("X" + String(game.vidas).padStart(2, "0"), 22, 17);
   drawSprite(Bloques.sprite("o0"), 4, 25);
-  txt("X" + String(game.monedas).padStart(3, "0"), 22, 30, PAL.y);
+  txtHud("X" + String(game.monedas).padStart(3, "0"), 22, 30, PAL.y);
   dibujarReserva(4, 42, game.reserva);   // potenciadores guardados (tecla Q)
   // Centro: mundo y nivel
-  txt(game.lvl.castillo ? "CASTILLO " + MUNDOS[game.mundoIdx].id : "MUNDO " + MUNDOS[game.mundoIdx].id + "-" + (game.nivelIdx + 1), W / 2, 6, PAL.w, "center");
+  txtHud(game.lvl.castillo ? "CASTILLO " + MUNDOS[game.mundoIdx].id : "MUNDO " + MUNDOS[game.mundoIdx].id + "-" + (game.nivelIdx + 1), W / 2, 6, PAL.w, "center");
   // Derecha: puntos y temporizador con icono de reloj
-  txt(String(game.score).padStart(8, "0"), W - 6, 6, PAL.w, "right");
+  txtHud(String(game.score).padStart(8, "0"), W - 6, 6, PAL.w, "right");
   drawSprite(getSprite("reloj", circuloRows(3, "c"), { c: PAL.w }), W - 42, 18);
-  txt(String(Math.ceil(lvl.tiempoRest)).padStart(3, "0"), W - 6, 17, PAL.w, "right");
+  txtHud(String(Math.ceil(lvl.tiempoRest)).padStart(3, "0"), W - 6, 17, PAL.w, "right");
 }
 
 function dibujarNivelYHUD(game) {
   game.lvl.dibujar(game);
   dibujarHUD(game);
-  if (game.lvl.avisoT > 0) txt("DERROTA AL JEFE", W / 2, 22, PAL.y, "center", 2);
-  if (game.lvl.bossRef && game.lvl.introJefeT > 0) txt(game.lvl.bossRef.nombre, W / 2, 60, PAL.r, "center", 2);
+  if (game.lvl.avisoT > 0) txtHud("DERROTA AL JEFE", W / 2, 22, PAL.y, "center", 2);
+  if (game.lvl.bossRef && game.lvl.introJefeT > 0) txtHud(game.lvl.bossRef.nombre, W / 2, 60, PAL.r, "center", 2);
 }
 
 function velo(texto, sub) {
