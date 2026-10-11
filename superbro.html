@@ -4811,6 +4811,9 @@ function crearEnemigo(e) {
   return Enemigos.create(tipo, e.x + TILE / 2, e.y + TILE / 2);
 }
 
+// Bola de fuego de la flor de fuego: tamaño, velocidad, rebote en el suelo, duración y máximo en pantalla
+const BOLA = { w: 6, h: 6, vx: 190, rebote: -150, vida: 2.2, max: 2 };
+
 class Level {
   constructor(def, mundo) {
     const data = construirNivel(def, mundo.tema);
@@ -4838,6 +4841,7 @@ class Level {
     this.items = [];
     this.qItems = new Map();   // "col,fila" -> objeto del bloque ?
     this.bossRef = null;
+    this.bolas = [];           // bolas de fuego del jugador (flor de fuego)
     this.jefeTipo = mundo.jefeTipo || "koopa";   // jefe de este mundo (jefes.js)
     this.arenaX0 = data.arenaX0 || 0;            // el jefe no sale por la izquierda de su arena
     this.introJefeT = data.boss ? 3 : 0;         // tiempo que se muestra el nombre del jefe
@@ -4933,6 +4937,7 @@ class Level {
     }
     this.enemigos = this.enemigos.filter((w) => !w.e.remove);
     if (this.bossRef) this.bossRef.update(dt, this, game, p);
+    this.actualizarBolas(dt, game);
     for (const c of this.coins) c.update(dt);
     this.coins = this.coins.filter((c) => c.alive);
     for (const it of this.items) it.update(dt, this);
@@ -4993,6 +4998,7 @@ class Level {
     for (const w of this.enemigos) Enemigos.draw(ctx, w.e);
     ctx.restore();
     if (this.bossRef) this.dibujarJefe(this.bossRef, cam);
+    this.dibujarBolas(cam);
     this.dibujarJugador(game, cam);
     dibujarParticulas(cam);
     ctx.restore();
@@ -5033,9 +5039,62 @@ class Level {
     return aire(c, r - 1) + aire(c - 1, r) + aire(c + 1, r) + aire(c, r + 1);
   }
 
+  // Poste de la meta: en las columnas 2 a 4 del tile, igual que el poste de la bandera de bloques.js
   dibujarPoste(x, y) {
-    rect(x + 6, y, 2, 16, PAL.w);
-    rect(x + 7, y, 1, 16, PAL.gr);
+    rect(x + 2, y, 2, 16, PAL.w);
+    rect(x + 3, y, 1, 16, PAL.gr);
+  }
+
+  // Bolas de fuego (flor de fuego): avanzan, rebotan en el suelo y se apagan al chocar con un muro,
+  // al tocar un enemigo o un jefe, o al cabo de un rato
+  actualizarBolas(dt, game) {
+    for (const b of this.bolas) {
+      b.t += dt;
+      if (b.t > BOLA.vida) { b.dead = true; continue; }
+      if (this.solidoEn(b.x + Math.sign(b.vx) * (b.w / 2 + 1), b.y)) { b.dead = true; continue; }
+      b.x += b.vx * dt;
+      // Vertical: al tocar el suelo rebota; tras varios rebotes se apaga
+      b.vy += GRAVITY * dt;
+      const pie = b.y + b.h / 2 + b.vy * dt;
+      if (b.vy > 0 && this.solidoEn(b.x, pie)) {
+        b.y = Math.floor(pie / TILE) * TILE - b.h / 2;
+        b.vy = BOLA.rebote;
+        if (++b.rebotes > 4) { b.dead = true; continue; }
+      } else {
+        b.y += b.vy * dt;
+      }
+      if (b.y > this.rows * TILE + 40) { b.dead = true; continue; }
+      const caja = { x: b.x - b.w / 2, y: b.y - b.h / 2, w: b.w, h: b.h };
+      // Enemigos: caen igual que con la estrella
+      for (const w of this.enemigos) {
+        const e = w.e;
+        if (w.llevado || e.dead || e.remove) continue;
+        const eb = Enemigos.box(e);
+        if (eb && aabb(caja, eb)) {
+          e.dead = true; e.deadT = 0; e.vx = 0; e.vy = 0;
+          game.puntos(200);
+          game.efectoEnemigo(eb.x + eb.w / 2, eb.y + eb.h / 2);
+          b.dead = true;
+          break;
+        }
+      }
+      // Jefe: cada bola cuenta como un pisotón (con la misma protección entre golpes)
+      if (!b.dead && this.bossRef && this.bossRef.alive && aabb(caja, this.bossRef.caja())) {
+        this.bossRef.pisado(this.player, game);
+        b.dead = true;
+      }
+    }
+    this.bolas = this.bolas.filter((b) => !b.dead);
+  }
+
+  // Bola de fuego: disco naranja con centro amarillo que parpadea al girar
+  dibujarBolas(cam) {
+    for (const b of this.bolas) {
+      const x = Math.round(b.x - cam.x - b.w / 2), y = Math.round(b.y - cam.y - b.h / 2);
+      rect(x + 1, y, 4, 6, PAL.o);
+      rect(x, y + 1, 6, 4, PAL.o);
+      rect(x + 2, y + 2, 2, 2, Math.floor(b.t * 16) % 2 ? PAL.y : PAL.w);
+    }
   }
 
   // Jefe dibujado por jefes.js (con sus proyectiles y su barra de vida), en coordenadas del mundo
@@ -5090,6 +5149,7 @@ class Game {
     this.completados = {};    // "mundo:fase" -> true
     this.bonus = {};          // "mundo:fase" -> casa de minijuegos ya jugada
     this.reserva = { seta: 0, estrella: 0, flor: 0, pluma: 0 };   // potenciadores guardados (tecla Q)
+    this.pruebaTodo = false;  // modo prueba: todos los mundos y fases abiertos (ITEM en la selección de mundo)
     this.mini = null;         // minijuego en curso
     this.cargarProgreso();
   }
@@ -5125,11 +5185,12 @@ class Game {
 
   // Una fase está desbloqueada si es la primera del mundo (y el mundo está abierto) o la anterior está completada
   nivelDesbloqueado(mIdx, ref) {
+    if (this.pruebaTodo) return true;
     if (ref === 0) return this.mundoDesbloqueado(mIdx);
     return this.completados[mIdx + ":" + (ref - 1)] === true;
   }
   mundoDesbloqueado(mIdx) {
-    if (mIdx === 0) return true;
+    if (this.pruebaTodo || mIdx === 0) return true;
     // Cada mundo se desbloquea al completar el castillo del anterior
     const prev = MUNDOS[mIdx - 1];
     const castillo = prev.niveles.length - 1;
@@ -5151,19 +5212,23 @@ class Game {
     }
   }
 
-  // Recoge un caparazón parado con X; con X de nuevo lo lanza hacia donde mira
+  // Recoge un caparazón parado con X; con X de nuevo lo lanza hacia donde mira.
+  // Devuelve true si la X se usó con un caparazón (así no dispara la flor de fuego)
   manejarCaparazon(lvl, p) {
     if (p.carrying) {
       const w = p.carrying;
       w.llevado = false;
       p.carrying = null;
+      // Sale justo delante del jugador, sin solaparse con su cuerpo (si no, el caparazón nos daña al salir)
+      const caja = Enemigos.box(w.e);
+      w.e.x = p.x + p.w / 2 + p.facing * (p.w / 2 + (caja ? caja.w / 2 : 8) + 2);
       w.e.state = "kicked";
       w.e.dir = p.facing;
       w.e.vx = p.facing * 320;
       w.e.harmful = true;
       w.e.timer = 6;
       this.sfx("patear");
-      return;
+      return true;
     }
     for (const w of lvl.enemigos) {
       const e = w.e;
@@ -5173,9 +5238,21 @@ class Game {
         w.llevado = true;
         p.carrying = w;
         this.sfx("moneda");
-        return;
+        return true;
       }
     }
+    return false;
+  }
+
+  // Con la flor de fuego, X lanza una bola de fuego hacia donde mira (como mucho BOLA.max a la vez)
+  lanzarBola(lvl, p) {
+    if (lvl.bolas.length >= BOLA.max) return;
+    const dir = p.facing;
+    lvl.bolas.push({
+      x: p.x + p.w / 2 + dir * (p.w / 2 + 2), y: p.y + p.h * 0.6,
+      vx: dir * BOLA.vx, vy: 0, w: BOLA.w, h: BOLA.h, t: 0, rebotes: 0, dead: false,
+    });
+    this.sfx("patear");
   }
 
   // Colisiones del jugador con objetos, monedas, enemigos, jefe y meta
@@ -5189,7 +5266,8 @@ class Game {
       e.x = p.x + p.w / 2 + p.facing * (p.w / 2 + 10);
       e.y = p.y + p.h - e.h / 2;
     }
-    if (consume("run")) this.manejarCaparazon(lvl, p);
+    // X: con un caparazón cerca lo recoge o lo patea; si no, la flor de fuego lanza una bola
+    if (consume("run") && !this.manejarCaparazon(lvl, p) && p.fire) this.lanzarBola(lvl, p);
     if (consume("item")) this.usarReserva(p);
 
     // Objetos de bloque ?
@@ -5755,6 +5833,7 @@ class Overworld {
 
   // Un nodo está abierto: una fase si la anterior está hecha; una casa si la fase de su izquierda está hecha
   abierto(n) {
+    if (this.g.pruebaTodo) return true;
     if (n.ref !== undefined) return this.g.nivelDesbloqueado(this.mIdx, n.ref);
     return this.g.completados[this.mIdx + ":" + (n.bonus - 1)] === true;
   }
@@ -5836,6 +5915,7 @@ class Overworld {
     // Cabecera con el nombre del mundo
     rect(0, 0, W, 14, "rgba(0,0,0,0.5)");
     txt("MUNDO " + this.m.id + " - " + this.m.nombre.toUpperCase(), W / 2, 3, PAL.w, "center");
+    if (this.g.pruebaTodo) txt("PRUEBA", W - 4, 3, PAL.y, "right");
     const texto = n.ref !== undefined ? this.m.niveles[n.ref].nombre : this.hecho(n) ? "CASA VACIA" : "CASA DE MINIJUEGOS";
     txt(texto, W / 2, H - 12, PAL.w, "center");
     dibujarReserva(W / 2 - 60, H - 42, this.g.reserva);
@@ -5868,6 +5948,7 @@ function dibujarSelMundo(game) {
     if (i === game.selMundo) rect(x - 2, y - 2, 58, 68, PAL.y);
   });
   txt("ENTER: jugar   ESC: menu", W / 2, H - 14, PAL.w, "center");
+  txt("ITEM (Q): MODO PRUEBA " + (game.pruebaTodo ? "ACTIVO" : "APAGADO"), W / 2, H - 26, game.pruebaTodo ? PAL.y : PAL.w, "center");
 }
 
 /* =====================================================================
@@ -5954,6 +6035,8 @@ KEYMAP.Backspace = "reset";  // para borrar el progreso desde el título
 function actualizarJuego(dt) {
   const e = game.estado;
   actualizarParticulas(dt);
+  // ITEM pulsado fuera del nivel o de la selección de mundo no se guarda para después
+  if (e !== "nivel" && e !== "selMundo") consume("item");
 
   if (e === "titulo") {
     if (consume("enter")) { game.selMundo = game.mundoIdx; game.estado = "selMundo"; }
@@ -5966,6 +6049,7 @@ function actualizarJuego(dt) {
       const nuevo = game.selMundo + d.x + d.y * 4;
       if (nuevo >= 0 && nuevo < MUNDOS.length) game.selMundo = nuevo;
     }
+    if (consume("item")) game.pruebaTodo = !game.pruebaTodo;   // ITEM (Q): modo prueba
     if (consume("enter") && game.mundoDesbloqueado(game.selMundo)) {
       game.mundoIdx = game.selMundo;
       game.volverAlMapa();
