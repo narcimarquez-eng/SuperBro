@@ -2216,6 +2216,859 @@ function consume(action) {
     TIPOS: Object.keys(DEFS)
   };
 })(typeof window !== 'undefined' ? window : globalThis);
+/*
+  jefes.js: ocho jefes finales, cada uno con su propia silueta, dibujados en Canvas.
+
+  Uso:
+    const j = Jefes.create('magma', x, y, { dir: -1 });   // x: centro; y: pies (sobre el suelo)
+    Jefes.update(j, dt, mundo);     // mundo: solid(x, y), tile (16), ancho, jugador { x, y }
+    Jefes.dibujar(g, j, tiempo, { barra: false });       // barra de vida opcional
+    Jefes.toca(j, caja);            // 'cuerpo' | 'proyectil' | null  (caja: { x, y, w, h })
+    Jefes.golpear(j);               // 'herido' | 'muerto' | 'ignorado'  (al pisar la cabeza)
+    Jefes.caja(j);                  // caja del cuerpo, para detectar pisotones
+    Jefes.TIPOS                     // koopa, magma, helado, arena, golem, selva, abisal, oscuro
+    Jefes.DEF                       // datos de cada jefe (nombre, colores, cielo, suelo...)
+*/
+(function (global) {
+  'use strict';
+
+  const OUT = '#2a1a10';
+  const GRAV = 620;
+
+  // Ocho jefes. c: colores principales (claro, medio, oscuro); acento: brillo o marca;
+  // melena: pelo, llamas, púas o tentáculos; ojos; sombra: pies y detalles oscuros.
+  const DEF = [
+    { id: 'koopa', nombre: 'Rey Koopa', forma: 'tortuga', hp: 3, vel: 22, w: 30, h: 40, flota: false,
+      ataques: ['carga', 'aliento', 'salto'], aliento: 'fuego', corona: false,
+      cielo: ['#ffe2b0', '#ffb070'], suelo: '#c8803a',
+      c: ['#c6ff8a', '#4fbf3a', '#1f6e2a'], piel: ['#ffe9a0', '#f2b050', '#b87030'], vientre: ['#fff4b0', '#f5c85a'],
+      pinchos: '#ffd23f', melena: '#e0431f', ojos: '#ff5a2a', acento: '#ffd23f', sombra: '#7a4a1e' },
+    { id: 'magma', nombre: 'Rey Magma', forma: 'gigante', hp: 3, vel: 16, w: 36, h: 46, flota: false,
+      ataques: ['aliento', 'bolas', 'pisoton'], aliento: 'fuego', corona: false,
+      cielo: ['#3a0a0a', '#a02a0a'], suelo: '#5a1a0a',
+      c: ['#8a5a4a', '#5a3228', '#2a1410'], acento: '#ffb020', melena: '#ff7a1a', ojos: '#ffe066', sombra: '#1a0a06' },
+    { id: 'helado', nombre: 'Rey Helado', forma: 'cristal', hp: 4, vel: 18, w: 24, h: 56, flota: false,
+      ataques: ['aliento', 'carga', 'pisoton'], aliento: 'hielo', corona: false,
+      cielo: ['#dff6ff', '#7fc8ea'], suelo: '#bfe6f8',
+      c: ['#f4fdff', '#9fdcf5', '#3a7fb8'], acento: '#ffffff', melena: '#dff6ff', ojos: '#2a6a9a', sombra: '#2a6a9a' },
+    { id: 'arena', nombre: 'Faraón de arena', forma: 'momia', hp: 4, vel: 24, w: 22, h: 50, flota: false,
+      ataques: ['arena', 'carga', 'salto', 'aliento'], aliento: 'arena', corona: true,
+      cielo: ['#ffe6a0', '#e8b050'], suelo: '#d9a050',
+      c: ['#fff6d8', '#e8c890', '#a88048'], acento: '#e8b050', melena: '#3a6aa8', ojos: '#2a1a10', sombra: '#a88048' },
+    { id: 'golem', nombre: 'Golem Koopa', forma: 'bloque', hp: 5, vel: 12, w: 42, h: 42, flota: false,
+      ataques: ['pisoton', 'piedras', 'pisoton', 'carga'], aliento: 'piedra', corona: false,
+      cielo: ['#4a4f5e', '#262a36'], suelo: '#3a3f4e',
+      c: ['#c8ccd6', '#8a93a4', '#4a5262'], acento: '#7ff0ff', melena: '#5a6272', ojos: '#7ff0ff', sombra: '#3a4252' },
+    { id: 'selva', nombre: 'Rey Selvático', forma: 'planta', hp: 4, vel: 24, w: 26, h: 52, flota: false,
+      ataques: ['semillas', 'salto', 'carga', 'semillas'], aliento: 'semilla', corona: false,
+      cielo: ['#c8f0a0', '#5aa050'], suelo: '#4a7a30',
+      c: ['#c8ff9a', '#3fa84a', '#1d5a2a'], acento: '#ffd23f', melena: '#7a4a1e', ojos: '#ffe066', sombra: '#1d5a2a' },
+    { id: 'abisal', nombre: 'Rey Abisal', forma: 'medusa', hp: 4, vel: 20, w: 36, h: 44, flota: true,
+      ataques: ['burbujas', 'carga', 'bolas', 'burbujas'], aliento: 'burbuja', corona: false,
+      cielo: ['#0a3a4a', '#0f6a78'], suelo: '#0f4a58',
+      c: ['#e8fffa', '#7fe0d0', '#1a7a80'], acento: '#bff9ff', melena: '#4fe0d0', ojos: '#2a6a9a', sombra: '#136066' },
+    { id: 'oscuro', nombre: 'Rey Oscuro', forma: 'dragon', hp: 6, vel: 28, w: 40, h: 44, flota: true,
+      ataques: ['aliento', 'carga', 'bolas', 'piedras', 'aliento'], aliento: 'oscura', corona: false,
+      cielo: ['#120a22', '#3a1a4a'], suelo: '#2a1a3a',
+      c: ['#6a5a8a', '#2a2040', '#0f0a18'], acento: '#ff4fd8', melena: '#ff2a6a', ojos: '#ff4fd8', sombra: '#0f0a18' }
+  ];
+
+  /* ---------- Utilidades de dibujo ---------- */
+
+  function rr(g, x, y, w, h, r) {
+    g.beginPath();
+    g.moveTo(x + r, y);
+    g.lineTo(x + w - r, y);
+    g.quadraticCurveTo(x + w, y, x + w, y + r);
+    g.lineTo(x + w, y + h - r);
+    g.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
+    g.lineTo(x + r, y + h);
+    g.quadraticCurveTo(x, y + h, x, y + h - r);
+    g.lineTo(x, y + r);
+    g.quadraticCurveTo(x, y, x + r, y);
+    g.closePath();
+  }
+
+  function grad(g, x0, y0, x1, y1, cols) {
+    const d = g.createLinearGradient(x0, y0, x1, y1);
+    cols.forEach(function (c, i) { d.addColorStop(i / (cols.length - 1), c); });
+    return d;
+  }
+
+  function radial(g, x, y, r0, r1, cols) {
+    const d = g.createRadialGradient(x, y, r0, x, y, r1);
+    cols.forEach(function (c, i) { d.addColorStop(i / (cols.length - 1), c); });
+    return d;
+  }
+
+  function trazar(g, ancho) {
+    g.strokeStyle = OUT;
+    g.lineWidth = ancho || 0.8;
+    g.lineJoin = 'round';
+    g.stroke();
+  }
+
+  function poligono(g, pts, color, ancho) {
+    g.fillStyle = color;
+    g.beginPath();
+    pts.forEach(function (p, i) { if (i === 0) g.moveTo(p[0], p[1]); else g.lineTo(p[0], p[1]); });
+    g.closePath();
+    g.fill();
+    trazar(g, ancho || 0.6);
+  }
+
+  // Elipse rellena con contorno; ang gira la elipse
+  function elipse(g, x, y, rx, ry, color, ang, ancho) {
+    g.fillStyle = color;
+    g.beginPath(); g.ellipse(x, y, rx, ry, ang || 0, 0, Math.PI * 2); g.fill();
+    trazar(g, ancho || 0.7);
+  }
+
+  function linea(g, pts, color, ancho) {
+    g.strokeStyle = color; g.lineWidth = ancho; g.lineCap = 'round'; g.lineJoin = 'round';
+    g.beginPath();
+    pts.forEach(function (p, i) { if (i === 0) g.moveTo(p[0], p[1]); else g.lineTo(p[0], p[1]); });
+    g.stroke();
+  }
+
+  /* ---------- Siluetas: cada jefe tiene su propio cuerpo. Pies en (0, 0), mira hacia +x ---------- */
+
+  // Rey Koopa: tortuga con caparazón de pinchos
+  function cuerpoKoopa(g, d, o) {
+    const c = d.c, ps = d.piel;
+    g.lineCap = 'round';
+    g.strokeStyle = OUT; g.lineWidth = 6.4;
+    g.beginPath(); g.moveTo(-10, -12); g.quadraticCurveTo(-27, -15, -24, -28); g.stroke();
+    g.strokeStyle = ps[1]; g.lineWidth = 3.4;
+    g.beginPath(); g.moveTo(-10, -12); g.quadraticCurveTo(-27, -15, -24, -28); g.stroke();
+    elipse(g, -24, -29, 3.2, 3.2, d.melena);
+
+    [[-8, o.paso], [8, -o.paso]].forEach(function (p) {
+      const x = p[0], alza = Math.max(0, p[1]) * 2;
+      g.fillStyle = grad(g, 0, -12, 0, -2, ps);
+      rr(g, x - 5, -12 - alza, 10, 10, 3.5); g.fill(); trazar(g);
+      elipse(g, x + 1, -3 - alza, 6.5, 3, d.sombra);
+    });
+
+    g.fillStyle = grad(g, 0, -34, 0, -8, c);
+    g.beginPath(); g.ellipse(-3, -21, 16, 13, 0, 0, Math.PI * 2); g.fill(); trazar(g, 0.9);
+    for (let i = 0; i < 5; i++) {
+      const a = Math.PI * (0.2 + i * 0.15);
+      const bx = -3 + Math.cos(a) * 14, by = -21 - Math.sin(a) * 12;
+      const s = i === 2 ? 7.5 : 5.5;
+      poligono(g, [[bx - 2.6, by + 1.8], [bx + 0.2, by - s], [bx + 2.6, by + 1.8]], d.pinchos, 0.7);
+    }
+    elipse(g, 4, -11, 11.5, 10.5, grad(g, 0, -22, 0, 0, d.vientre));
+
+    g.save();
+    g.translate(10, -16); g.rotate(o.brazo);
+    g.fillStyle = grad(g, -2, 0, 2, 0, ps);
+    rr(g, -2.2, -1, 4.4, 8, 2.2); g.fill(); trazar(g);
+    g.fillStyle = '#fff8e0';
+    [-1.4, 0, 1.4].forEach(function (x) {
+      g.beginPath(); g.moveTo(x - 0.5, 7); g.lineTo(x, 9.4); g.lineTo(x + 0.5, 7); g.closePath(); g.fill();
+    });
+    g.restore();
+
+    elipse(g, 10, -31, 11, 10.5, d.melena);
+    poligono(g, [[8, -37], [6, -45], [12, -38.5]], '#fff6dc');
+    poligono(g, [[14, -38.5], [16, -46], [19, -37.5]], '#f0e4c0');
+    elipse(g, 14, -30, 8.6, 8, radial(g, 12, -33, 1, 9, ps));
+    g.fillStyle = grad(g, 18, 0, 22, 0, ps);
+    rr(g, 17, -30.5, 6, 6.5, 2.5); g.fill(); trazar(g);
+    if (o.abierta) {
+      g.fillStyle = '#3a0a0a';
+      rr(g, 13.5, -26.5, 9, 5, 2.4); g.fill(); trazar(g);
+      g.fillStyle = '#ffffff';
+      [15.5, 18.5, 21.2].forEach(function (x) {
+        g.beginPath(); g.moveTo(x - 1, -26.5); g.lineTo(x + 1, -26.5); g.lineTo(x, -24.2); g.closePath(); g.fill();
+      });
+    } else {
+      linea(g, [[14, -24.5], [18, -22.5], [22, -24.8]], OUT, 1.1);
+    }
+    elipse(g, 17, -33.5, 2.7, 2.3, '#ffffff', 0, 0.6);
+    elipse(g, 17.8, -33.2, 1.4, 1.4, d.ojos, 0, 0.1);
+    elipse(g, 18, -33.2, 0.7, 0.7, OUT, 0, 0.1);
+    linea(g, [[13.5, -37.5], [20.5, -35.2]], OUT, 1.2);
+  }
+
+  // Rey Magma: gigante de roca con grietas de lava y cresta de llamas
+  function cuerpoMagma(g, d, o) {
+    const c = d.c, lava = d.acento;
+    [[-9, o.paso], [9, -o.paso]].forEach(function (p) {
+      const x = p[0], alza = Math.max(0, p[1]) * 2;
+      g.fillStyle = grad(g, 0, -17, 0, 0, c);
+      rr(g, x - 6, -17 - alza, 12, 16, 3); g.fill(); trazar(g);
+      g.fillStyle = d.sombra;
+      rr(g, x - 7, -5 - alza, 14, 5, 2); g.fill(); trazar(g);
+    });
+    // torso de bloques de roca
+    g.fillStyle = grad(g, 0, -44, 0, -14, c);
+    rr(g, -17, -44, 34, 31, 6); g.fill(); trazar(g, 0.9);
+    g.strokeStyle = d.sombra; g.lineWidth = 0.8;
+    [-36, -28, -20].forEach(function (y) { g.beginPath(); g.moveTo(-17, y); g.lineTo(17, y); g.stroke(); });
+    [[-5, -44, -36], [6, -44, -36], [-12, -36, -28], [1, -36, -28], [12, -36, -28], [-5, -28, -20], [6, -28, -20], [-12, -20, -13], [1, -20, -13], [12, -20, -13]]
+      .forEach(function (v) { g.beginPath(); g.moveTo(v[0], v[1]); g.lineTo(v[0], v[2]); g.stroke(); });
+    // grietas con lava que brilla
+    linea(g, [[-14, -40], [-9, -33], [-12, -26], [-6, -20]], lava, 1.4);
+    linea(g, [[4, -42], [7, -35], [2, -29], [9, -23], [6, -15]], lava, 1.4);
+    linea(g, [[14, -30], [10, -25]], lava, 1.2);
+    // hombros
+    elipse(g, -17, -42, 7, 6, c[1]);
+    elipse(g, 17, -42, 7, 6, c[1]);
+    // brazo izquierdo colgando
+    g.fillStyle = grad(g, -25, 0, -16, 0, c);
+    rr(g, -25, -38, 9, 26, 4); g.fill(); trazar(g);
+    elipse(g, -20.5, -9, 7, 6.5, c[1]);
+    // brazo derecho, puede alzarse
+    g.save();
+    g.translate(20, -38); g.rotate(o.brazo);
+    g.fillStyle = grad(g, -5, 0, 4, 0, c);
+    rr(g, -4.5, -1, 9, 26, 4); g.fill(); trazar(g);
+    elipse(g, 0, 27, 6.5, 6, c[1]);
+    g.restore();
+    // cresta de llamas
+    poligono(g, [[-7, -54], [-3, -71], [1, -56]], d.melena, 0.7);
+    poligono(g, [[0, -56], [5, -76], [9, -56]], d.melena, 0.7);
+    poligono(g, [[8, -56], [14, -69], [15, -53]], d.melena, 0.7);
+    poligono(g, [[3, -58], [5, -66], [7, -58]], lava, 0.4);
+    // cabeza pequeña, hundida entre los hombros
+    elipse(g, 4, -50, 10, 8, grad(g, 0, -58, 0, -42, c));
+    elipse(g, 0, -51, 2.4, 2, d.ojos, 0, 0.6); elipse(g, 8, -51, 2.4, 2, d.ojos, 0, 0.6);
+    elipse(g, -0.2, -51, 0.9, 1.2, OUT, 0, 0.1); elipse(g, 8.2, -51, 0.9, 1.2, OUT, 0, 0.1);
+    linea(g, [[-2, -55], [3, -52.5]], OUT, 1.1); linea(g, [[7, -52.5], [11, -55]], OUT, 1.1);
+    if (o.abierta) {
+      g.fillStyle = lava; rr(g, 1, -46, 8, 4, 2); g.fill(); trazar(g, 0.6);
+    } else {
+      linea(g, [[1, -45], [5, -44], [9, -45]], lava, 1);
+    }
+  }
+
+  // Rey Helado: figura alta de cristal, con capa de pelo y púas de hielo
+  function cuerpoHelado(g, d, o) {
+    const c = d.c;
+    // capa de pelo detrás
+    g.fillStyle = grad(g, -20, -40, -4, -4, ['#ffffff', d.melena, '#9fdcf5']);
+    g.beginPath(); g.moveTo(-4, -40); g.quadraticCurveTo(-24, -30, -20, -10);
+    g.lineTo(-14, -4); g.quadraticCurveTo(-8, -14, -2, -6); g.closePath(); g.fill(); trazar(g);
+    // piernas de cristal
+    [[-5, o.paso], [5, -o.paso]].forEach(function (p) {
+      const x = p[0], alza = Math.max(0, p[1]) * 1.8;
+      g.fillStyle = grad(g, x - 4, -20, x + 4, -2, c);
+      rr(g, x - 3.5, -22 - alza, 7, 20, 2.5); g.fill(); trazar(g);
+      rr(g, x - 5, -3 - alza, 10, 3, 1.5); g.fill(); trazar(g);
+    });
+    // torso en forma de rombo con facetas
+    poligono(g, [[0, -46], [10, -34], [8, -18], [0, -13], [-8, -18], [-10, -34]], grad(g, -10, -46, 10, -13, c), 0.9);
+    linea(g, [[0, -46], [0, -13]], 'rgba(255,255,255,0.6)', 0.7);
+    linea(g, [[-10, -34], [10, -34]], 'rgba(255,255,255,0.6)', 0.7);
+    // púas de los hombros
+    poligono(g, [[-10, -36], [-18, -44], [-8, -30]], c[0], 0.7);
+    poligono(g, [[10, -36], [18, -44], [8, -30]], c[0], 0.7);
+    // brazo izquierdo: carámbano colgando
+    g.save(); g.translate(-9, -36); g.rotate(-0.25);
+    poligono(g, [[-2.5, 0], [2.5, 0], [0, 22]], c[0], 0.7);
+    g.restore();
+    // brazo derecho: carámbano que puede alzarse
+    g.save(); g.translate(9, -36); g.rotate(o.brazo);
+    poligono(g, [[-2.5, 0], [2.5, 0], [0, 20]], c[0], 0.7);
+    g.restore();
+    // cabeza de cristal con corona de carámbanos
+    [-6, -3, 0, 3, 6].forEach(function (x, i) {
+      const alto = i === 2 ? 11 : 7;
+      poligono(g, [[x - 2, -60], [x, -60 - alto], [x + 2, -60]], '#ffffff', 0.5);
+    });
+    poligono(g, [[0, -66], [8, -56], [6, -46], [-6, -46], [-8, -56]], grad(g, -8, -66, 8, -46, c), 0.9);
+    linea(g, [[0, -66], [0, -46]], 'rgba(255,255,255,0.7)', 0.6);
+    // ojos rasgados y boca
+    poligono(g, [[-5, -57], [-1, -55], [-5, -54]], d.ojos, 0.3);
+    poligono(g, [[1, -55], [5, -57], [5, -54]], d.ojos, 0.3);
+    if (o.abierta) elipse(g, 0, -49, 2, 1.6, OUT, 0, 0.1);
+    else linea(g, [[-2, -49], [2, -49]], OUT, 0.9);
+  }
+
+  // Faraón de arena: momia con vendas, nemes y cetro
+  function cuerpoArena(g, d, o) {
+    const c = d.c;
+    // vendas que ondean detrás
+    [[-7, -40, -24 + Math.sin(o.anim * 3) * 2, -20, -27, -6], [-7, -28, -22 + Math.sin(o.anim * 3 + 1) * 2, -14, -20, 2]]
+      .forEach(function (v) {
+        g.lineCap = 'round';
+        g.strokeStyle = OUT; g.lineWidth = 5.5;
+        g.beginPath(); g.moveTo(v[0], v[1]); g.quadraticCurveTo(v[2], v[3], v[4], v[5]); g.stroke();
+        g.strokeStyle = c[0]; g.lineWidth = 3.2;
+        g.beginPath(); g.moveTo(v[0], v[1]); g.quadraticCurveTo(v[2], v[3], v[4], v[5]); g.stroke();
+      });
+    // piernas envueltas
+    [[-7, o.paso], [1, -o.paso]].forEach(function (p) {
+      const x = p[0], alza = Math.max(0, p[1]) * 2;
+      g.fillStyle = grad(g, 0, -14, 0, 0, c);
+      rr(g, x, -14 - alza, 6, 14, 2); g.fill(); trazar(g);
+      linea(g, [[x, -12 - alza], [x + 6, -12 - alza], [x, -8 - alza], [x + 6, -8 - alza]], c[2], 0.5);
+      elipse(g, x + 3, -1 - alza, 4.5, 2, d.sombra);
+    });
+    // cuerpo estrecho con vendas horizontales
+    g.fillStyle = grad(g, -10, 0, 10, 0, c);
+    rr(g, -10, -44, 20, 32, 4); g.fill(); trazar(g, 0.9);
+    g.strokeStyle = c[2]; g.lineWidth = 0.7; g.globalAlpha = 0.6;
+    for (let y = -42; y < -12; y += 4) { g.beginPath(); g.moveTo(-10, y); g.lineTo(10, y); g.stroke(); }
+    g.globalAlpha = 1;
+    // brazos cruzados sobre el pecho
+    g.fillStyle = c[1];
+    rr(g, -9, -34, 18, 6, 3); g.fill(); trazar(g, 0.7);
+    elipse(g, -6, -31, 2, 2, c[0], 0, 0.5); elipse(g, 6, -31, 2, 2, c[0], 0, 0.5);
+    // cetro con ankh que puede alzarse
+    g.save();
+    g.translate(12, -30); g.rotate(o.brazo * 0.5);
+    linea(g, [[0, 0], [1.5, 24]], d.acento, 1.4);
+    g.strokeStyle = d.acento; g.lineWidth = 1.2;
+    g.beginPath(); g.ellipse(0, -3, 2.2, 3, 0, 0, Math.PI * 2); g.stroke();
+    g.restore();
+    // nemes: paños a los lados y franjas doradas
+    poligono(g, [[-9, -56], [-8, -71], [8, -71], [9, -56], [11, -40], [-11, -40]], c[1], 0.8);
+    [-5, 0, 5].forEach(function (x) { linea(g, [[x, -70], [x, -42]], d.acento, 0.9); });
+    // cara con kohl
+    g.fillStyle = c[0];
+    rr(g, -6, -58, 12, 15, 4); g.fill(); trazar(g, 0.7);
+    poligono(g, [[-4.5, -52], [-2, -53.2], [0.5, -52], [-2, -51]], OUT, 0.1);
+    poligono(g, [[1.5, -52], [3.5, -53.2], [5.5, -52], [3.5, -51]], OUT, 0.1);
+    if (o.abierta) elipse(g, 0, -47, 1.8, 1.4, OUT, 0, 0.1);
+    else linea(g, [[-1.5, -46], [1.5, -46]], OUT, 0.8);
+    if (d.corona) {
+      poligono(g, [[-1.4, -63], [0, -68], [1.4, -63]], d.acento, 0.5);
+      elipse(g, 0, -61.5, 1.8, 1.5, d.acento, 0, 0.5);
+    }
+  }
+
+  // Golem Koopa: bloque de piedra redondo, con cristales y puños
+  function cuerpoGolem(g, d, o) {
+    const c = d.c;
+    [[-12, o.paso], [12, -o.paso]].forEach(function (p) {
+      const x = p[0], alza = Math.max(0, p[1]) * 2.2;
+      elipse(g, x, -5 - alza, 7, 6, c[1]);
+    });
+    // cuerpo: roca redonda con surcos
+    g.fillStyle = radial(g, -6, -34, 2, 26, c);
+    g.beginPath(); g.ellipse(0, -24, 23, 21, 0, 0, Math.PI * 2); g.fill(); trazar(g, 1);
+    linea(g, [[-14, -28], [-6, -36]], c[2], 1);
+    linea(g, [[4, -42], [10, -30]], c[2], 1);
+    linea(g, [[-18, -14], [-8, -8]], c[2], 1);
+    linea(g, [[6, -12], [16, -20]], c[2], 1);
+    // cristales que sobresalen
+    [[-14, -36, 3.2, 9], [-2, -44, 3.6, 11], [12, -40, 3, 9]].forEach(function (k) {
+      poligono(g, [[k[0], k[1] - k[3]], [k[0] + k[2], k[1]], [k[0], k[1] + 3], [k[0] - k[2], k[1]]], d.acento, 0.7);
+      g.fillStyle = 'rgba(255,255,255,0.7)';
+      g.beginPath(); g.arc(k[0] - k[2] * 0.3, k[1] - k[3] * 0.4, 0.8, 0, Math.PI * 2); g.fill();
+    });
+    // cara en el frente, con ojos brillantes
+    elipse(g, 12, -24, 8, 7, c[0]);
+    elipse(g, 14, -27, 2, 1.8, d.ojos, 0, 0.5);
+    linea(g, [[9, -31], [15, -29]], OUT, 1.1);
+    if (o.abierta) elipse(g, 15, -19, 2.4, 1.6, OUT, 0, 0.1);
+    else linea(g, [[10, -18], [16, -18]], OUT, 1);
+    // puño izquierdo
+    elipse(g, -22, -16, 6.5, 6.5, c[1]);
+    linea(g, [[-25, -18], [-22, -14]], c[2], 0.6);
+    // brazo derecho, puede alzarse
+    g.save();
+    g.translate(20, -22); g.rotate(o.brazo);
+    g.fillStyle = c[1]; rr(g, -3, 0, 6, 10, 3); g.fill(); trazar(g);
+    elipse(g, 0, 12, 6.5, 6.5, c[0]);
+    g.restore();
+  }
+
+  // Rey Selvático: planta carnívora con tallo, hojas y mandíbulas
+  function cuerpoSelva(g, d, o) {
+    const c = d.c;
+    // raíces que hacen de patas
+    [[-8, o.paso], [8, -o.paso]].forEach(function (p) {
+      const x = p[0], alza = Math.max(0, p[1]) * 2;
+      linea(g, [[x * 0.3, -6], [x, -2], [x + (x < 0 ? -6 : 6), -alza]], OUT, 4.2);
+      linea(g, [[x * 0.3, -6], [x, -2], [x + (x < 0 ? -6 : 6), -alza]], c[2], 2.2);
+    });
+    // tallo con segmentos
+    g.lineCap = 'round';
+    g.strokeStyle = OUT; g.lineWidth = 11;
+    g.beginPath(); g.moveTo(0, -6); g.quadraticCurveTo(-4, -26, 0, -40); g.stroke();
+    g.strokeStyle = c[1]; g.lineWidth = 8;
+    g.beginPath(); g.moveTo(0, -6); g.quadraticCurveTo(-4, -26, 0, -40); g.stroke();
+    [-12, -20, -28, -36].forEach(function (y) { linea(g, [[-3, y], [3, y + 0.5]], c[2], 0.7); });
+    // hojas
+    elipse(g, -10, -18, 7, 3, c[0], -0.5);
+    elipse(g, 9, -14, 7, 3, c[1], 0.5);
+    // bulbo de la cabeza, con manchas
+    elipse(g, 0, -42, 13, 10, grad(g, -13, -52, 13, -32, c));
+    elipse(g, -5, -46, 1.6, 1.6, d.acento, 0, 0.3);
+    elipse(g, 5, -38, 1.2, 1.2, d.acento, 0, 0.3);
+    // mandíbulas: se abren al atacar
+    const abre = o.abierta ? 1 : 0;
+    g.fillStyle = '#5a0a1a';
+    g.beginPath(); g.ellipse(0, -40, 12, 6, 0, 0, Math.PI * 2); g.fill();
+    // dientes
+    g.fillStyle = '#ffffff';
+    [-9, -5, -1, 3, 7, 11].forEach(function (x) {
+      g.beginPath(); g.moveTo(x - 1, -40 - abre * 2); g.lineTo(x + 1, -40 - abre * 2); g.lineTo(x, -37 - abre * 2); g.closePath(); g.fill();
+    });
+    // mandíbula inferior
+    g.fillStyle = c[1];
+    g.beginPath(); g.ellipse(0, -39 + abre * 4, 12, 5, 0, 0, Math.PI); g.fill(); trazar(g);
+    // mandíbula superior
+    g.fillStyle = c[0];
+    g.beginPath(); g.ellipse(0, -43 - abre * 4, 13, 7, 0, Math.PI, 0); g.fill(); trazar(g);
+    // ojo enfadado en el lateral
+    elipse(g, 7, -46 - abre * 4, 2.2, 2.4, '#ffffff', 0, 0.5);
+    elipse(g, 7.6, -46 - abre * 4, 1.1, 1.1, d.ojos, 0, 0.1);
+    linea(g, [[4, -50 - abre * 4], [9, -48 - abre * 4]], OUT, 0.9);
+  }
+
+  // Rey Abisal: medusa que flota, con tentáculos ondulantes y un farol
+  function cuerpoAbisal(g, d, o) {
+    const c = d.c, t = o.anim;
+    // tentáculos ondulantes
+    for (let i = 0; i < 6; i++) {
+      const x = -12 + i * 4.8;
+      g.lineCap = 'round';
+      g.strokeStyle = OUT; g.lineWidth = 3.4;
+      g.beginPath(); g.moveTo(x, -32);
+      g.bezierCurveTo(x + Math.sin(t * 3 + i) * 4, -24, x - Math.sin(t * 3 + i + 1) * 4, -14, x + Math.sin(t * 2.5 + i * 0.7) * 3, -1);
+      g.stroke();
+      g.strokeStyle = d.melena; g.lineWidth = 1.7;
+      g.beginPath(); g.moveTo(x, -32);
+      g.bezierCurveTo(x + Math.sin(t * 3 + i) * 4, -24, x - Math.sin(t * 3 + i + 1) * 4, -14, x + Math.sin(t * 2.5 + i * 0.7) * 3, -1);
+      g.stroke();
+    }
+    // aletas laterales
+    poligono(g, [[-16, -30], [-25, -38], [-19, -22]], d.acento, 0.6);
+    poligono(g, [[16, -30], [25, -38], [19, -22]], d.acento, 0.6);
+    // campana translúcida
+    g.fillStyle = grad(g, 0, -49, 0, -34, c);
+    g.beginPath(); g.ellipse(0, -34, 17, 15, 0, Math.PI, 0); g.fill(); trazar(g, 0.9);
+    g.strokeStyle = 'rgba(255,255,255,0.45)'; g.lineWidth = 0.7;
+    g.beginPath(); g.ellipse(0, -34, 11, 9, 0, Math.PI * 1.1, Math.PI * 1.9); g.stroke();
+    // borde ondulado de la campana
+    for (let i = 0; i < 6; i++) {
+      const x = -13 + i * 5.2;
+      g.fillStyle = c[1];
+      g.beginPath(); g.arc(x, -34, 2.6, 0, Math.PI); g.fill(); trazar(g, 0.5);
+    }
+    // farol bajo la campana
+    g.fillStyle = radial(g, 0, -26, 0.5, 7, [d.acento, 'rgba(191,249,255,0.5)', 'rgba(191,249,255,0)']);
+    g.beginPath(); g.arc(0, -26, 7, 0, Math.PI * 2); g.fill();
+    elipse(g, 0, -26, 2.6, 2.6, '#ffffff', 0, 0.5);
+    // ojo grande en el frente
+    elipse(g, 7, -36, 4, 3.5, '#ffffff', 0, 0.6);
+    elipse(g, 8, -36, 2, 2, d.ojos, 0, 0.1);
+    linea(g, [[3, -41], [10, -39]], OUT, 1);
+    if (o.abierta) elipse(g, 8, -29, 2, 1.6, OUT, 0, 0.1);
+  }
+
+  // Rey Oscuro: dragón alado; las alas baten
+  function alaOscura(g, d, aleteo, desplaza, color) {
+    g.save();
+    g.translate(desplaza, 0);
+    g.beginPath();
+    g.moveTo(-2, -30);
+    g.lineTo(-40, -56 + aleteo);
+    g.lineTo(-34, -44);
+    g.lineTo(-44, -36 + aleteo * 0.5);
+    g.lineTo(-30, -28);
+    g.lineTo(-36, -18 + aleteo * 0.3);
+    g.lineTo(-18, -22);
+    g.lineTo(-6, -18);
+    g.closePath();
+    g.fillStyle = color; g.fill(); trazar(g, 0.9);
+    g.strokeStyle = d.acento; g.lineWidth = 0.6; g.globalAlpha = 0.7;
+    [[-40, -56 + aleteo], [-44, -36 + aleteo * 0.5], [-36, -18 + aleteo * 0.3]].forEach(function (p) {
+      g.beginPath(); g.moveTo(-2, -30); g.lineTo(p[0], p[1]); g.stroke();
+    });
+    g.globalAlpha = 1;
+    g.restore();
+  }
+
+  function cuerpoOscuro(g, d, o) {
+    const c = d.c, t = o.anim, aleteo = Math.sin(t * 6) * 7;
+    alaOscura(g, d, aleteo, 0, c[2]);
+    // cola con punta de flecha
+    g.lineCap = 'round';
+    g.strokeStyle = OUT; g.lineWidth = 4.6;
+    g.beginPath(); g.moveTo(-10, -18); g.quadraticCurveTo(-28, -8, -40, -16); g.stroke();
+    g.strokeStyle = c[1]; g.lineWidth = 2.2;
+    g.beginPath(); g.moveTo(-10, -18); g.quadraticCurveTo(-28, -8, -40, -16); g.stroke();
+    poligono(g, [[-40, -16], [-46, -20], [-45, -12]], d.melena, 0.6);
+    // patas con garras
+    [[-5, o.paso], [3, -o.paso]].forEach(function (p) {
+      const x = p[0], alza = Math.max(0, p[1]) * 2;
+      g.fillStyle = c[1];
+      rr(g, x, -14 - alza, 5, 12, 2); g.fill(); trazar(g);
+      linea(g, [[x, -2 - alza], [x - 1, 0 - alza]], '#ffffff', 0.8);
+    });
+    // cuerpo estilizado con púas en el lomo
+    [[-7, -34], [-10, -29], [-10, -23]].forEach(function (p) {
+      poligono(g, [[p[0] - 2, p[1] + 3], [p[0] - 3, p[1] - 3], [p[0] + 1, p[1] + 2]], d.melena, 0.5);
+    });
+    g.fillStyle = grad(g, -12, -36, 12, -10, c);
+    g.beginPath(); g.ellipse(0, -22, 12, 13, 0, 0, Math.PI * 2); g.fill(); trazar(g, 0.9);
+    // cuello y cabeza
+    linea(g, [[6, -32], [14, -46]], OUT, 7.4);
+    linea(g, [[6, -32], [14, -46]], c[1], 4.6);
+    g.fillStyle = grad(g, 10, -58, 26, -44, c);
+    g.beginPath(); g.ellipse(18, -50, 8, 7, 0, 0, Math.PI * 2); g.fill(); trazar(g, 0.9);
+    g.fillStyle = grad(g, 22, -55, 31, -48, c);
+    rr(g, 22, -55, 9, 7, 3.5); g.fill(); trazar(g, 0.8);
+    // cuernos hacia atrás
+    poligono(g, [[12, -54], [8, -65], [15, -56]], d.melena, 0.6);
+    poligono(g, [[16, -56], [19, -67], [22, -55]], d.melena, 0.6);
+    // ojo brillante con pupila rasgada
+    elipse(g, 20, -52, 2.4, 1.5, d.ojos, 0, 0.5);
+    linea(g, [[20, -53.5], [20, -50.5]], OUT, 0.8);
+    if (o.abierta) {
+      g.fillStyle = radial(g, 30, -49, 0.5, 6, ['#fff6a0', d.acento, 'rgba(255,79,216,0)']);
+      g.beginPath(); g.arc(30, -49, 6, 0, Math.PI * 2); g.fill();
+      g.fillStyle = '#3a0a1a'; rr(g, 23, -50, 7, 3, 1.5); g.fill(); trazar(g, 0.5);
+    } else {
+      linea(g, [[23, -48], [30, -48.5]], OUT, 0.9);
+    }
+    // ala delantera, sobre el cuerpo
+    alaOscura(g, d, -aleteo, 4, c[1]);
+  }
+
+  const DIBUJA = {
+    koopa: cuerpoKoopa, magma: cuerpoMagma, helado: cuerpoHelado, arena: cuerpoArena,
+    golem: cuerpoGolem, selva: cuerpoSelva, abisal: cuerpoAbisal, oscuro: cuerpoOscuro
+  };
+
+  /* ---------- Proyectiles ---------- */
+
+  const TAMANO = { fuego: [8, 6], bola: [7, 7], hielo: [7, 6], arena: [8, 5], oscura: [7, 7], piedra: [7, 7],
+                   semilla: [6, 6], burbuja: [8, 8], onda: [10, 5] };
+  const VELOCIDAD = { fuego: 170, hielo: 140, arena: 120, oscura: 200, burbuja: 28, semilla: 90 };
+
+  function nuevoProyectil(tipo, x, y, vx, vy) {
+    const t = TAMANO[tipo] || [6, 6];
+    return { tipo: tipo, x: x, y: y, vx: vx, vy: vy, w: t[0], h: t[1], t: 0, rebotes: 0 };
+  }
+
+  function dibujarProyectil(g, p) {
+    g.save();
+    g.translate(Math.round(p.x), Math.round(p.y));
+    switch (p.tipo) {
+      case 'fuego':
+      case 'bola':
+        g.fillStyle = radial(g, -1, -1, 0.5, 5, ['#fff6a0', p.tipo === 'bola' ? '#c2361f' : '#ff8a2a', 'rgba(200,40,0,0)']);
+        g.beginPath(); g.arc(0, 0, 4.2, 0, Math.PI * 2); g.fill();
+        g.fillStyle = 'rgba(255,200,80,0.5)';
+        g.beginPath(); g.ellipse(-5 * Math.sign(p.vx || 1), 0, 3.5, 1.6, 0, 0, Math.PI * 2); g.fill();
+        break;
+      case 'hielo':
+        poligono(g, [[0, -4], [3, 0], [0, 4], [-3, 0]], '#bff3ff', 0.6);
+        break;
+      case 'arena':
+        elipse(g, 0, 0, 4.4, 2.6, '#e8c070', 0, 0.5);
+        break;
+      case 'onda':
+        g.fillStyle = grad(g, 0, -3, 0, 2, ['#f4d27a', '#c8903a']);
+        g.beginPath(); g.ellipse(0, 0, 5, 2.6, 0, Math.PI, 0); g.fill(); trazar(g, 0.5);
+        break;
+      case 'piedra':
+        elipse(g, 0, 0, 3.6, 3.6, radial(g, -1.5, -1.5, 0.5, 4.5, ['#f0f2f6', '#8a93a4', '#4a5262']), 0, 0.6);
+        break;
+      case 'semilla':
+        g.strokeStyle = '#4a9a3a'; g.lineWidth = 0.8;
+        for (let i = 0; i < 6; i++) {
+          const a = i * Math.PI / 3;
+          g.beginPath(); g.moveTo(Math.cos(a) * 2, Math.sin(a) * 2); g.lineTo(Math.cos(a) * 4, Math.sin(a) * 4); g.stroke();
+        }
+        elipse(g, 0, 0, 2.6, 2.6, '#5ab84a', 0, 0.5);
+        break;
+      case 'burbuja':
+        elipse(g, 0, 0, 3.8, 3.8, 'rgba(170,240,255,0.35)', 0, 0.8);
+        g.fillStyle = 'rgba(255,255,255,0.9)';
+        g.beginPath(); g.arc(-1.2, -1.3, 0.9, 0, Math.PI * 2); g.fill();
+        break;
+      case 'oscura':
+        g.fillStyle = radial(g, 0, 0, 0.5, 5, ['#ffd0ff', '#b02aff', 'rgba(60,0,80,0)']);
+        g.beginPath(); g.arc(0, 0, 4.5, 0, Math.PI * 2); g.fill();
+        break;
+    }
+    g.restore();
+  }
+
+  /* ---------- Jefes: comportamiento ---------- */
+
+  function create(tipo, x, y, opt) {
+    const def = DEF.find(function (d) { return d.id === tipo; }) || DEF[0];
+    const yy = def.flota ? y - 12 : y;   // los voladores flotan sobre el suelo
+    return {
+      tipo: def.id, def: def, x: x, y: yy, baseY: yy, w: def.w, h: def.h, vx: 0, vy: 0,
+      dir: opt && opt.dir < 0 ? -1 : 1,
+      hp: def.hp, hpMax: def.hp, estado: 'andar', t: 0, cool: 0, anim: 0,
+      ataqueIdx: 0, enSuelo: true, disparos: 0, muerte: 0, onda: false, proyectiles: []
+    };
+  }
+
+  function volver(j) { j.estado = 'andar'; j.t = 0; j.disparos = 0; j.vx = 0; }
+
+  function lanzarArco(j, jx, tipo) {
+    const sx = j.x + j.dir * 22, sy = j.y - 26;
+    const vx = Math.max(-220, Math.min(220, (jx - sx) / 1.15));
+    return nuevoProyectil(tipo, sx, sy, vx, -300);
+  }
+
+  function disparar(j, jx) {
+    const tipo = j.def.aliento;
+    const sx = j.x + j.dir * 22, sy = j.y - 26;
+    let p;
+    if (tipo === 'semilla') p = nuevoProyectil('semilla', sx, sy, (jx - sx) / 1.4, -220);
+    else if (tipo === 'burbuja') p = nuevoProyectil('burbuja', sx, sy - 4, j.dir * 18, -30);
+    else p = nuevoProyectil(tipo, sx, sy, j.dir * (VELOCIDAD[tipo] || 150), 0);
+    j.proyectiles.push(p);
+  }
+
+  function ondasDesde(j) {
+    j.proyectiles.push(nuevoProyectil('onda', j.x, j.y - 3, 150, 0));
+    j.proyectiles.push(nuevoProyectil('onda', j.x, j.y - 3, -150, 0));
+  }
+
+  function elegir(j, jx) {
+    const lista = j.def.ataques;
+    let a = lista[j.ataqueIdx % lista.length];
+    j.ataqueIdx++;
+    j.disparos = 0; j.t = 0;
+    j.dir = jx < j.x ? -1 : 1;
+    // Los voladores no saltan: cargan en su lugar
+    if (j.def.flota && (a === 'salto' || a === 'pisoton')) a = 'carga';
+    if (a === 'carga') { j.estado = 'carga'; return; }
+    if (a === 'salto' || a === 'pisoton') {
+      j.estado = 'salto';
+      j.onda = a === 'pisoton';
+      j.vy = a === 'pisoton' ? -300 : -360;
+      j.enSuelo = false;
+      return;
+    }
+    j.estado = a;   // aliento, bolas, arena, piedras, semillas, burbujas
+  }
+
+  function alAterrizar(j) {
+    if (j.onda) ondasDesde(j);
+    j.onda = false;
+    volver(j);
+  }
+
+  function avanzaProyectiles(j, dt, mundo) {
+    const T = mundo.tile || 16;
+    const ancho = mundo.ancho || 1e9;
+    j.proyectiles = j.proyectiles.filter(function (p) {
+      p.t += dt;
+      if (p.t > 6) return false;
+      const gravedad = p.tipo === 'bola' || p.tipo === 'piedra' || p.tipo === 'semilla';
+      if (gravedad) p.vy += 520 * dt;
+      if (p.tipo === 'burbuja') {
+        p.x += (p.vx + Math.sin(p.t * 4) * 22) * dt;
+        p.y += p.vy * dt;
+      } else {
+        p.x += p.vx * dt;
+        p.y += p.vy * dt;
+      }
+      if (p.x < -40 || p.x > ancho + 40) return false;
+      if (p.tipo === 'onda') {
+        if (mundo.solid(p.x + Math.sign(p.vx) * 6, p.y)) return false;
+        return p.t < 1.8;
+      }
+      if (gravedad && p.vy > 0 && mundo.solid(p.x, p.y + p.h / 2)) {
+        if (p.tipo === 'semilla' && p.rebotes < 3) {
+          p.rebotes++;
+          p.vy = -Math.abs(p.vy) * 0.6;
+          p.y = Math.floor((p.y + p.h / 2) / T) * T - p.h / 2 - 0.5;
+          return true;
+        }
+        return false;
+      }
+      return true;
+    });
+  }
+
+  function update(j, dt, mundo) {
+    avanzaProyectiles(j, dt, mundo);
+    if (j.estado === 'muerto') { j.muerte += dt; return; }
+    j.t += dt;
+    j.cool = Math.max(0, j.cool - dt);
+    j.anim += dt;
+    const d = j.def;
+    const jug = mundo.jugador;
+    const jx = jug ? jug.x : j.x;
+
+    if (['andar', 'aliento', 'bolas', 'arena', 'piedras', 'semillas', 'burbujas'].indexOf(j.estado) !== -1) {
+      j.dir = jx < j.x ? -1 : 1;
+    }
+
+    // Movimiento horizontal y paredes
+    if (j.vx !== 0) {
+      const frente = j.x + Math.sign(j.vx) * (j.w / 2 + 1);
+      if (mundo.solid(frente, j.y - 6)) {
+        j.vx = 0;
+        if (j.estado === 'carga') volver(j);
+      } else {
+        j.x += j.vx * dt;
+      }
+    }
+
+    if (d.flota) {
+      // Los voladores se mecen arriba y abajo y no tocan el suelo
+      j.y = j.baseY + Math.sin(j.anim * 2) * 3;
+      j.enSuelo = true;
+      j.vy = 0;
+    } else {
+      j.vy = Math.min(j.vy + GRAV * dt, 760);
+      const ny = j.y + j.vy * dt;
+      if (j.vy >= 0 && mundo.solid(j.x, ny)) {
+        const T = mundo.tile || 16;
+        const aterrizo = !j.enSuelo;
+        j.y = Math.floor(ny / T) * T;
+        j.vy = 0;
+        j.enSuelo = true;
+        if (aterrizo && j.estado === 'salto') alAterrizar(j);
+      } else {
+        j.y = ny;
+        j.enSuelo = false;
+      }
+    }
+
+    switch (j.estado) {
+      case 'andar':
+        j.vx = j.enSuelo ? j.dir * d.vel : 0;
+        if (j.t > 1.3 && j.enSuelo) elegir(j, jx);
+        break;
+      case 'carga':
+        j.vx = j.dir * d.vel * 2.6;
+        if (j.t > 1.0) volver(j);
+        break;
+      case 'salto':
+        j.vx = j.dir * d.vel * 0.9;
+        if (j.t > 2.5) volver(j);
+        break;
+      case 'aliento':
+        j.vx = 0;
+        if (j.disparos === 0 && j.t > 0.35) { disparar(j, jx); j.disparos = 1; }
+        if (j.t > 0.9) volver(j);
+        break;
+      case 'bolas': {
+        j.vx = 0;
+        const cuando = [0.3, 0.65, 1.0];
+        if (j.disparos < 3 && j.t > cuando[j.disparos]) {
+          j.proyectiles.push(lanzarArco(j, jx, 'bola')); j.disparos++;
+        }
+        if (j.t > 1.3) volver(j);
+        break;
+      }
+      case 'arena':
+        j.vx = 0;
+        if (j.disparos === 0 && j.t > 0.4) { ondasDesde(j); j.disparos = 1; }
+        if (j.t > 1.0) volver(j);
+        break;
+      case 'piedras':
+        j.vx = 0;
+        if (j.disparos < 3 && j.t > 0.3 + j.disparos * 0.3) {
+          const px = Math.max(10, Math.min((mundo.ancho || 320) - 10, jx + (Math.random() * 2 - 1) * 50));
+          j.proyectiles.push(nuevoProyectil('piedra', px, j.y - 110, 0, 40));
+          j.disparos++;
+        }
+        if (j.t > 1.4) volver(j);
+        break;
+      case 'semillas':
+        j.vx = 0;
+        if (j.disparos < 2 && j.t > 0.3 + j.disparos * 0.35) {
+          j.proyectiles.push(nuevoProyectil('semilla', j.x + j.dir * 22, j.y - 20, (jx - j.x) / 1.4, -220));
+          j.disparos++;
+        }
+        if (j.t > 1.1) volver(j);
+        break;
+      case 'burbujas':
+        j.vx = 0;
+        if (j.disparos < 3 && j.t > 0.25 + j.disparos * 0.3) {
+          disparar(j, jx); j.disparos++;
+        }
+        if (j.t > 1.3) volver(j);
+        break;
+      case 'aturdido':
+        j.vx = 0;
+        if (j.t > 0.6) volver(j);
+        break;
+    }
+  }
+
+  function caja(j) {
+    return { x: j.x - j.w / 2, y: j.y - j.h, w: j.w, h: j.h };
+  }
+
+  function solapa(a, b) {
+    return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+  }
+
+  function toca(j, c) {
+    if (j.estado === 'muerto') return null;
+    if (solapa(c, caja(j))) return 'cuerpo';
+    for (let i = 0; i < j.proyectiles.length; i++) {
+      const p = j.proyectiles[i];
+      if (solapa(c, { x: p.x - p.w / 2, y: p.y - p.h / 2, w: p.w, h: p.h })) return 'proyectil';
+    }
+    return null;
+  }
+
+  // Cada pisotón resta una vida; luego queda aturdido un momento e invulnerable un segundo
+  function golpear(j) {
+    if (j.estado === 'muerto' || j.cool > 0) return 'ignorado';
+    j.hp -= 1;
+    j.cool = 1.0;
+    if (j.hp <= 0) {
+      j.estado = 'muerto'; j.muerte = 0; j.proyectiles = [];
+      return 'muerto';
+    }
+    j.estado = 'aturdido'; j.t = 0; j.vx = 0;
+    return 'herido';
+  }
+
+  // opt.barra: false oculta la barra de vida (para galerías)
+  function dibujar(g, j, tiempo, opt) {
+    j.proyectiles.forEach(function (p) { dibujarProyectil(g, p); });
+    if (j.estado === 'muerto' && j.muerte > 1.6) return;
+
+    const abierta = ['aliento', 'bolas', 'arena', 'piedras', 'semillas', 'burbujas'].indexOf(j.estado) !== -1;
+    const andando = j.estado === 'andar' || j.estado === 'carga';
+    const paso = andando ? Math.sin(j.anim * 9) : 0;
+    const brazo = abierta || j.estado === 'aturdido' ? -1.2 : 0.25 + Math.sin(j.anim * 9) * 0.1;
+    const parpadea = j.cool > 0 && Math.floor(j.cool * 12) % 2 === 0;
+
+    g.save();
+    g.translate(Math.round(j.x), Math.round(j.y));
+    if (j.estado === 'muerto') {
+      g.globalAlpha = Math.max(0, 1 - j.muerte / 1.6);
+      g.scale(1, Math.max(0.25, 1 - j.muerte * 0.5));
+    }
+    g.scale(j.dir < 0 ? -1 : 1, 1);
+    if (!parpadea) DIBUJA[j.tipo](g, j.def, { paso: paso, abierta: abierta, brazo: brazo, anim: j.anim, tiempo: tiempo || 0 });
+    g.restore();
+
+    if (j.estado !== 'muerto' && !(opt && opt.barra === false)) {
+      const x = Math.round(j.x - 15), y = Math.round(j.y - j.h - 18);
+      g.fillStyle = OUT; g.fillRect(x - 1, y - 1, 32, 5);
+      g.fillStyle = '#5a1a1a'; g.fillRect(x, y, 30, 3);
+      g.fillStyle = j.hp / j.hpMax > 0.5 ? '#7ce05a' : '#ff6a3a';
+      g.fillRect(x, y, 30 * (j.hp / j.hpMax), 3);
+    }
+  }
+
+  global.Jefes = {
+    TIPOS: DEF.map(function (d) { return d.id; }),
+    NOMBRES: DEF.reduce(function (o, d) { o[d.id] = d.nombre; return o; }, {}),
+    DEF: DEF,
+    create: create,
+    update: update,
+    dibujar: dibujar,
+    toca: toca,
+    golpear: golpear,
+    caja: caja
+  };
+})(typeof window !== 'undefined' ? window : globalThis);
 
 /* =====================================================================
    7c. ARTE CON VOLUMEN Y DETALLE: enemigos, objetos, monedas y bloques
@@ -2345,32 +3198,6 @@ const PAL_ENT = Object.assign(
   coloresRK(RK.naranja, "#ff8a1e"),
 );
 
-/* ---------- Jefe ---------- */
-
-// Gran Goomba del castillo: 28x30, cara clara con mejillas, cejas caídas, ojos y dientes
-function jefeFilas() {
-  const L = new Lienzo(28, 30);
-  L.esfera(14, 13, 12.5, 11.2, RK.cafe, 23);
-  L.bordeOscuro(RK.cafe);
-  L.esfera(14, 19.2, 8.8, 4.4, RK.crema, 24);
-  L.esfera(5.4, 15.6, 2.2, 3.5, RK.crema, 22);     // mejillas
-  L.esfera(22.6, 15.6, 2.2, 3.5, RK.crema, 22);
-  L.caja(5, 8, 8, 2, "k");
-  L.caja(15, 8, 8, 2, "k");
-  L.caja(7, 10, 2, 1, "k");                        // cejas caídas hacia el centro
-  L.caja(19, 10, 2, 1, "k");
-  L.elipse(9.6, 13.6, 3.2, 3.6, "w");
-  L.elipse(18.4, 13.6, 3.2, 3.6, "w");
-  L.caja(10, 14, 2, 3, "k");
-  L.caja(17, 14, 2, 3, "k");
-  L.pfl(10.2, 14.2, "w");
-  L.pfl(17.2, 14.2, "w");
-  L.elipse(14, 22.6, 5.2, 2.4, "k");
-  for (const x of [11, 14, 17]) L.pfl(x, 21, "w");
-  L.esfera(7.2, 27, 4.6, 3.0, RK.cafe);
-  L.esfera(20.8, 27, 4.6, 3.0, RK.cafe);
-  return L.filas();
-}
 
 /* ---------- Monedas y objetos ---------- */
 
@@ -2452,7 +3279,6 @@ function arte(key, filas, pal = PAL_ENT) {
   return spritesArte.get(key);
 }
 
-function jefeSprite() { return arte("jefe", jefeFilas()); }
 function objetoSprite(tipo) {
   if (tipo === "hongo") return arte("hongo", setaFilas());
   if (tipo === "flor") return arte("flor", florFilas());
@@ -2728,6 +3554,7 @@ const MUNDOS = [
     id: 1,
     nombre: "Pradera",
     tema: "pradera",
+    jefeTipo: "koopa",
     hora: 0.25,
     paleta: {
       cielo: "#4aa8ff", lejos: "#8ee07a", cerca: "#3cb84a", arbusto: "#2a9a3a",
@@ -2743,6 +3570,7 @@ const MUNDOS = [
     id: 2,
     nombre: "Desierto",
     tema: "desierto",
+    jefeTipo: "arena",
     hora: 0.5,
     paleta: {
       cielo: "#4fc3f7", lejos: "#f2c38a", cerca: "#f0b860", arbusto: "#7aa83a",
@@ -2758,6 +3586,7 @@ const MUNDOS = [
     id: 3,
     nombre: "Bosque",
     tema: "bosque",
+    jefeTipo: "selva",
     hora: 0.75,
     paleta: {
       cielo: "#2d6b3a", lejos: "#245a2f", cerca: "#1d4d28", arbusto: "#16381e",
@@ -2772,6 +3601,7 @@ const MUNDOS = [
     id: 4,
     nombre: "Cueva",
     tema: "cueva",
+    jefeTipo: "magma",
     hora: 0.25,
     paleta: {
       cielo: "#2a2438", lejos: "#3b3350", cerca: "#4a4262", arbusto: "#3b3350",
@@ -2786,6 +3616,7 @@ const MUNDOS = [
     id: 5,
     nombre: "Hielo",
     tema: "hielo",
+    jefeTipo: "helado",
     hora: 0.25,
     paleta: {
       cielo: "#a8dcf5", lejos: "#c8e8f8", cerca: "#e6f6ff", arbusto: "#8fc8e0",
@@ -2800,6 +3631,7 @@ const MUNDOS = [
     id: 6,
     nombre: "Agua",
     tema: "agua",
+    jefeTipo: "abisal",
     hora: 0.5,
     paleta: {
       cielo: "#1f5fa8", lejos: "#2a74c0", cerca: "#2f86d0", arbusto: "#2a6fb0",
@@ -2814,6 +3646,7 @@ const MUNDOS = [
     id: 7,
     nombre: "Castillo",
     tema: "castillo",
+    jefeTipo: "golem",
     hora: 0.5,
     paleta: {
       cielo: "#1a1a2e", lejos: "#2a2a44", cerca: "#363656", arbusto: "#2a2a44",
@@ -2828,6 +3661,7 @@ const MUNDOS = [
     id: 8,
     nombre: "Cielo",
     tema: "cielo",
+    jefeTipo: "oscuro",
     hora: 0.25,
     paleta: {
       cielo: "#9ad8ff", lejos: "#ffffff", cerca: "#f0f8ff", arbusto: "#ffffff",
@@ -3158,6 +3992,7 @@ function generarNivel(gen, mecanicas = []) {
     goalX: goalX * TILE,
     theme: gen.theme || null,
     boss: !!gen.jefe,
+    arenaX0: gen.jefe ? B1 * TILE : 0,   // la arena del jefe es el suelo llano desde B1
   };
 }
 
@@ -3182,7 +4017,7 @@ function parsearMapa(strs) {
       ents.push({ t: tipo, x: x * TILE, y: y * TILE });
     }
   }
-  return { cols, rows: ROWS, tiles, ents, plats: [], decor: [], start, goalX, theme: null, boss: false };
+  return { cols, rows: ROWS, tiles, ents, plats: [], decor: [], start, goalX, theme: null, boss: false, arenaX0: 0 };
 }
 
 /* Punto de entrada: usa el mapa escrito a mano si existe, si no genera */
@@ -3483,81 +4318,41 @@ class Player {
    10. ENEMIGOS, JEFE, MONEDAS, OBJETOS Y PARTÍCULAS
    ===================================================================== */
 
-/* Jefe del castillo: 3 golpes en la cabeza. Salta hacia el jugador. */
+/* Jefe del castillo: uno por mundo, con sus ataques (jefes.js). Esta clase lo une al nivel:
+   lo mueve dentro de su arena, le quita una vida con cada pisotón y dice cuándo cae. */
 class Boss {
-  constructor(x, y) {
-    this.t = "boss";
-    this.x = x; this.y = y;
-    this.w = 24; this.h = 28;
-    this.x0 = x; this.y0 = y;   // punto de aparición: si cae fuera del nivel, vuelve aquí
-    this.enSuelo = false;       // estaba apoyado en el suelo al final del frame anterior
-    this.vx = 0; this.vy = 0;
-    this.hp = 3;
-    this.alive = true;
-    this.inmuneT = 0;
-    this.saltoT = 1.2;
-    this.retrocesoT = 0;   // tiempo que retrocede tras un pisotón
-    this.pausaT = 0;       // tiempo que se queda quieto tras retroceder
-    this.dir = -1;
-    this.anim = 0;
-    this.muerteT = 0;
+  constructor(x, y, tipo) {
+    // x: centro del jefe en la arena; los pies quedan sobre el suelo del nivel
+    this.j = Jefes.create(tipo || "koopa", x + TILE, GY * TILE, { dir: -1 });
   }
 
-  // Pisar al jefe: resta vida y rebota; sin vida, muere
+  get alive() { return this.j.estado !== "muerto"; }
+  get hp() { return this.j.hp; }
+  // Nombre para el aviso de la pantalla, sin tildes (la fuente no las tiene)
+  get nombre() { return Jefes.NOMBRES[this.j.tipo].normalize("NFD").replace(/[\u0300-\u036f]/g, "").toUpperCase(); }
+  caja() { return Jefes.caja(this.j); }
+
+  // Pisotón: Jefes.golpear devuelve "herido", "muerto" o "ignorado" (si aún es invulnerable)
   pisado(player, game) {
-    if (this.inmuneT > 0) return "rebota";
-    this.hp--;
-    this.inmuneT = 1.2;
-    // Retrocede y se queda quieto un momento: así el jugador puede volver a pisarlo
-    this.vx = (player.x < this.x ? 1 : -1) * 110;
-    this.retrocesoT = 0.45;
-    this.pausaT = 1.4;
-    game.sfx("pisar");
-    if (this.hp <= 0) {
-      this.alive = false;
-      this.muerteT = 1.2;
+    const r = Jefes.golpear(this.j);
+    if (r === "herido") game.sfx("pisar");
+    if (r === "muerto") {
       game.puntos(1000);
-      game.efectoEnemigo(this.x, this.y);
+      game.efectoEnemigo(this.j.x, this.j.y - this.j.h / 2);
+      game.sfx("meta");
     }
-    return "rebota";
+    return r;
   }
 
   update(dt, lvl, game, player) {
-    this.anim += dt;
-    if (!this.alive) { this.muerteT -= dt; this.y += 60 * dt; return; }
-    if (this.y > lvl.rows * TILE + 40) {   // cayó fuera del nivel: vuelve a su punto de aparición
-      this.x = this.x0; this.y = this.y0; this.vx = 0; this.vy = 0;
-      return;
-    }
-    if (this.inmuneT > 0) this.inmuneT -= dt;
-    // Persigue al jugador: camina y salta a ritmo fijo
-    this.dir = player.x < this.x ? -1 : 1;
-    const cerca = Math.abs(player.x - this.x) < 120;
-    if (this.retrocesoT > 0) {
-      this.retrocesoT -= dt;                  // retrocede tras un pisotón
-    } else if (this.pausaT > 0) {
-      this.pausaT -= dt;                      // se queda quieto un momento
-      this.vx = 0;
-    } else {
-      this.vx = this.dir * (34 + (3 - this.hp) * 10);   // persigue al jugador
-    }
-    this.saltoT -= dt;
-    this.vy += GRAVITY * dt;
-    if (this.saltoT <= 0 && this.vy === 0 && cerca && this.retrocesoT <= 0 && this.pausaT <= 0) {
-      this.vy = -300;
-      this.saltoT = 1.4 - (3 - this.hp) * 0.2;
-    }
-    if (this.vy > MAX_FALL) this.vy = MAX_FALL;
-    // No camina al vacío: si delante no hay suelo, se detiene en el borde del hueco
-    if (this.enSuelo && this.vx !== 0 && !tocaSolido(lvl, this.x + (this.vx > 0 ? this.w + 2 : -2), this.y + this.h + 1, 1, 1)) this.vx = 0;
-    const r = moverEntidad(lvl, this, dt);
-    this.enSuelo = r.suelo;
-    if (r.pared) this.vx = 0;
-    // Límites: no sale del nivel por la izquierda ni la derecha
-    if (this.x < 40) this.x = 40;
-    if (this.x > lvl.goalX - 80) this.x = lvl.goalX - 80;
-    // Para que el jefe no quede pegado al suelo al saltar
-    if (r.suelo) this.vy = 0;
+    // La arena es el suelo llano del castillo: el jefe no sale por la izquierda, donde hay huecos
+    const mundo = {
+      solid: (x, y) => x < lvl.arenaX0 || lvl.solidoEn(x, y),
+      tile: TILE,
+      ancho: lvl.cols * TILE,
+      jugador: { x: player.x + player.w / 2, y: player.y + player.h / 2 },
+    };
+    Jefes.update(this.j, dt, mundo);
   }
 }
 
@@ -4043,6 +4838,9 @@ class Level {
     this.items = [];
     this.qItems = new Map();   // "col,fila" -> objeto del bloque ?
     this.bossRef = null;
+    this.jefeTipo = mundo.jefeTipo || "koopa";   // jefe de este mundo (jefes.js)
+    this.arenaX0 = data.arenaX0 || 0;            // el jefe no sale por la izquierda de su arena
+    this.introJefeT = data.boss ? 3 : 0;         // tiempo que se muestra el nombre del jefe
     for (const e of data.ents) this.spawn(e);
     this.cam = new Camera();
     this.cam.centrar(this.player, this);
@@ -4054,7 +4852,7 @@ class Level {
   spawn(e) {
     if (e.t === "coin") this.coins.push(new Coin(e.x, e.y));
     else if (e.t === "qitem") this.qItems.set(Math.floor(e.x / TILE) + "," + Math.floor(e.y / TILE), e.item);
-    else if (e.t === "boss") this.bossRef = new Boss(e.x, e.y);
+    else if (e.t === "boss") this.bossRef = new Boss(e.x, e.y, this.jefeTipo);
     else this.enemigos.push({ e: crearEnemigo(e), llevado: false });
   }
 
@@ -4115,6 +4913,7 @@ class Level {
       if (this.tiempoRest <= 0) { this.tiempoRest = 0; p.dead = true; }
     }
     if (this.avisoT > 0) this.avisoT -= dt;
+    if (this.introJefeT > 0) this.introJefeT -= dt;
     // Plataformas móviles y que caen: se mueven antes y llevan consigo al jugador que está de pie sobre ellas
     for (const pl of this.plats) pl.update(dt, this);
     if (p.plat) { p.x += p.plat.dx; p.y += p.plat.dy; }
@@ -4239,16 +5038,12 @@ class Level {
     rect(x + 7, y, 1, 16, PAL.gr);
   }
 
+  // Jefe dibujado por jefes.js (con sus proyectiles y su barra de vida), en coordenadas del mundo
   dibujarJefe(b, cam) {
-    // El jefe parpadea mientras es invulnerable
-    if (b.inmuneT > 0 && Math.floor(b.inmuneT * 12) % 2 === 0) return;
-    const sp = jefeSprite();
-    const x = b.x + b.w / 2 - sp.lw / 2 - cam.x;
-    const y = b.y + b.h - sp.lh - cam.y;
-    drawSprite(sp, x, y);
-    // Barra de vida: tres cuadritos sobre la cabeza
-    const bx = Math.round(x), by = Math.round(y) - 6;
-    for (let i = 0; i < 3; i++) rect(bx + 8 + i * 6, by, 4, 3, i < b.hp ? PAL.r : PAL.dgr);
+    ctx.save();
+    ctx.translate(-cam.x, 0);
+    Jefes.dibujar(ctx, b.j, performance.now() / 1000, { barra: true });
+    ctx.restore();
   }
 
   dibujarJugador(game, cam) {
@@ -4470,16 +5265,16 @@ class Game {
       }
     }
 
-    // Jefe: se pisa tres veces; tocarlo de lado hace daño
+    // Jefe: se le pisa la cabeza para quitarle una vida; su cuerpo y sus proyectiles hacen daño
     const jefe = lvl.bossRef;
-    if (jefe && jefe.alive && aabb(hitbox, jefe)) {
-      const cayendoSobre = p.vy > 0 && (p.prevBottom <= jefe.y + 3 || p.y + p.h - jefe.y < 9);
-      if (cayendoSobre) {
+    if (jefe && jefe.alive) {
+      const caja = jefe.caja();
+      if (p.vy > 0 && p.prevBottom <= caja.y + 6 && aabb(hitbox, caja)) {
         jefe.pisado(p, this);
-        p.y = jefe.y - p.h;
+        p.y = caja.y - p.h;
         p.vy = p.spinT > 0 ? -PHYS.jumpV * 0.8 : -PHYS.jumpV * 0.55;
         p.spinT = 0;
-      } else if (p.star <= 0) {
+      } else if (p.star <= 0 && Jefes.toca(jefe.j, hitbox)) {
         this.recibirDano(p);
       }
     }
@@ -5101,6 +5896,7 @@ function dibujarNivelYHUD(game) {
   game.lvl.dibujar(game);
   dibujarHUD(game);
   if (game.lvl.avisoT > 0) txt("DERROTA AL JEFE", W / 2, 22, PAL.y, "center", 2);
+  if (game.lvl.bossRef && game.lvl.introJefeT > 0) txt(game.lvl.bossRef.nombre, W / 2, 60, PAL.r, "center", 2);
 }
 
 function velo(texto, sub) {
