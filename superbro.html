@@ -422,7 +422,10 @@ function consume(action) {
   const EPS = 0.001;
 
   const TERRENOS = '#ANRWI';
-  const SOLIDOS = '#=?xXPQpq' + 'ANRWI';
+  const SOLIDOS = '#=?xXPQpq' + 'ANRWI' + 'M';
+  const MUELLE = 'M';
+  const MUELLE_FUERZA = 470;   // px/s: el salto normal es -330 y el muelle lanza más alto
+  const MUELLE_TIEMPO = 0.14;  // s que el muelle se queda comprimido tras pisarlo
   const UNIDIRECCIONAL = '-';
   const PELIGRO = '^~';
   const ESCALERA = 'L';
@@ -719,6 +722,29 @@ function consume(action) {
     g.beginPath(); g.arc(0, 0, 3.6, 0, Math.PI * 2); g.stroke();
     g.restore();
     if (k > 0.45) brillo(g, 6, 5, 1.2, 1.8, 0.85);
+  }
+
+  // Muelle: una plataforma roja sobre un resorte. Comprimido, la plataforma baja y el resorte se aprieta.
+  function dibujarMuelle(g, comprimido) {
+    const k = comprimido ? 3 : 0;
+    // base
+    g.fillStyle = grad(g, 2, 13, 2, 16, ['#8a8fa0', '#4a4e5e']);
+    rr(g, 2, 13, 12, 3, 1); g.fill(); trazar(g, OUT, 0.8);
+    // resorte en zigzag
+    g.strokeStyle = '#c9ced9'; g.lineWidth = 1.4; g.lineJoin = 'round';
+    g.beginPath();
+    const yAbajo = 13, yArriba = 7 + k;
+    g.moveTo(8, yAbajo);
+    for (let i = 0; i < 4; i++) {
+      const y = yAbajo - (i + 1) * (yAbajo - yArriba) / 4;
+      g.lineTo(i % 2 ? 5 : 11, y);
+    }
+    g.stroke();
+    g.strokeStyle = OUT; g.lineWidth = 0.4; g.stroke();
+    // plataforma roja
+    g.fillStyle = grad(g, 0, 4 + k, 0, 8 + k, ['#ff7a7a', '#d8322e']);
+    rr(g, 1, 4 + k, 14, 4, 1.5); g.fill(); trazar(g, OUT, 0.8);
+    brillo(g, 4, 5.4 + k, 3, 0.5, 0.7);
   }
 
   function dibujarPinchos(g) {
@@ -1040,8 +1066,24 @@ function consume(action) {
   }
 
   // Letras de decoración animada: cada una tiene este número de cuadros
-  const ANIMADO = { 'C': 4, 'l': 4, 'a': 4 };
-  const DIBUJOS_ANIM = { 'C': dibujarCascada, 'l': dibujarLago, 'a': dibujarAntorcha };
+  // Viento: la hierba, las flores, los arbustos y las copas se inclinan despacio. El pie queda fijo.
+  // La cuadrícula de decoración usa 12 cuadros de viento, uno por cada 1/8 s.
+  const CUADROS_VIENTO = 12;
+  function vientoDe(cuadro, amp) { return Math.sin(((cuadro % CUADROS_VIENTO) / CUADROS_VIENTO) * Math.PI * 2) * amp; }
+  function conViento(g, s, fn) {
+    g.save();
+    g.transform(1, 0, s, 1, -16 * s, 0);   // x' = x + s·(y − 16): arriba se mueve, abajo no
+    fn(g);
+    g.restore();
+  }
+  const ANIMADO = { 'C': 4, 'l': 4, 'a': 4, 'h': CUADROS_VIENTO, 'f': CUADROS_VIENTO, 'b': CUADROS_VIENTO, 'T': CUADROS_VIENTO };
+  const DIBUJOS_ANIM = {
+    'C': dibujarCascada, 'l': dibujarLago, 'a': dibujarAntorcha,
+    'h': function (g, c) { conViento(g, vientoDe(c, 0.16), dibujarHierba); },
+    'f': function (g, c) { conViento(g, vientoDe(c, 0.22), dibujarFlor); },
+    'b': function (g, c) { conViento(g, vientoDe(c, 0.10), dibujarArbusto); },
+    'T': function (g, c) { conViento(g, vientoDe(c, 0.07), dibujarArbol); }
+  };
 
   const DECOR = {
     'T': dibujarArbol, 'k': dibujarTronco, 'b': dibujarArbusto, 'f': dibujarFlor, 'K': dibujarCactus,
@@ -1087,9 +1129,9 @@ function consume(action) {
   const ESTRELLAS = [];
   for (let i = 0; i < 46; i++) ESTRELLAS.push({ x: (i * 61 + 17) % 240, y: (i * 29 + 5) % 96, f: 1.2 + (i % 4) * 0.5 });
 
-  // Adaptado: el campo de estrellas se repite cada 240 unidades hasta cubrir la vista (ancho)
-  function estrellas(g, tono, tiempo, ancho) {
-    for (let x0 = 0; x0 < ancho; x0 += 240) {
+  // Adaptado: el campo de estrellas se repite cada 240 unidades hasta cubrir la vista (vistaAncho)
+  function estrellas(g, tono, tiempo, vistaAncho) {
+    for (let x0 = 0; x0 < (vistaAncho || 242); x0 += 240) {
       ESTRELLAS.forEach(function (s, i) {
         const parpadeo = 0.55 + 0.45 * Math.sin((tiempo || 0) * s.f + i);
         g.fillStyle = rgba([255, 255, 240], tono * parpadeo);
@@ -1122,9 +1164,9 @@ function consume(action) {
     g.restore();
   }
 
-  // Colinas: una franja ondulada con dos tonos (arriba claro, abajo oscuro).
-  // Adaptado: la franja llega hasta el ancho de la vista (antes acababa en x = 242)
-  function colina(g, camX, f, baseY, amp, frec, fase, cols, ancho) {
+  // Colinas: una franja ondulada con dos tonos (arriba claro, abajo oscuro)
+  function colina(g, camX, f, baseY, amp, frec, fase, cols, vistaAncho) {
+    const ancho = vistaAncho || 242;
     g.beginPath();
     g.moveTo(-2, 144);
     for (let x = -2; x <= ancho; x += 3) {
@@ -1138,30 +1180,9 @@ function consume(action) {
     g.fill();
   }
 
-  // Montañas: picos triangulares con la nieve arriba (ancho: igual que en colina)
-  function montanas(g, camX, f, baseY, amp, periodo, cols, ancho) {
-    g.beginPath();
-    g.moveTo(-2, 144);
-    for (let x = -2; x <= ancho; x += 2) {
-      const wx = x + camX * f;
-      const t = (((wx / periodo) % 1) + 1) % 1;
-      const pico = Math.max(0, 1 - Math.abs(t - 0.5) * 2.6);
-      const h = amp * pico * (0.85 + 0.15 * Math.sin(wx * 0.05 + 1.3));
-      g.lineTo(x, baseY - h);
-    }
-    g.lineTo(ancho, 144);
-    g.closePath();
-    g.fillStyle = grad(g, 0, baseY - amp, 0, 144, cols.map(function (c) { return rgba(c, 1); }));
-    g.fill();
-    g.save();
-    g.clip();
-    g.fillStyle = 'rgba(255,255,255,0.85)';
-    g.fillRect(0, baseY - amp, ancho, amp * 0.35);
-    g.restore();
-  }
-
   // Ambiente de cueva: roca oscura, estalactitas en dos capas y cristales que brillan
   function cueva(g, camX, tiempo, vistaW, vistaH, arriba) {
+    arriba = arriba || 0;
     g.fillStyle = grad(g, 0, -arriba, 0, vistaH, ['#2b2634', '#3a3245', '#17141e']);
     g.fillRect(0, -arriba, vistaW, vistaH + arriba);
     [[0.25, 300, 26, '#5a5068', '#2e2838'], [0.5, 240, 16, '#4a4258', '#241f2e']].forEach(function (capa) {
@@ -1185,31 +1206,291 @@ function consume(action) {
     }
   }
 
+  // Montañas: picos con relieve irregular, cara iluminada a la izquierda y sombra a la derecha, grietas y nieve
+  // con borde irregular (si nieve es true)
+  function montanas(g, camX, f, baseY, amp, periodo, cols, sombra, nieve, vistaAncho) {
+    const ancho = vistaAncho || 242;
+    g.beginPath();
+    g.moveTo(-2, 144);
+    for (let x = -2; x <= ancho; x += 2) {
+      const wx = x + camX * f;
+      const t = (((wx / periodo) % 1) + 1) % 1;
+      const pico = Math.max(0, 1 - Math.abs(t - 0.5) * 2.6);
+      const roca = 0.06 * Math.abs(Math.sin(wx * 0.37)) + 0.04 * Math.sin(wx * 0.11 + 0.8);
+      const h = amp * pico * (0.85 + 0.15 * Math.sin(wx * 0.05 + 1.3) + roca);
+      g.lineTo(x, baseY - h);
+    }
+    g.lineTo(ancho, 144);
+    g.closePath();
+    g.fillStyle = grad(g, 0, baseY - amp, 0, 144, cols.map(function (c) { return rgba(c, 1); }));
+    g.fill();
+    g.save();
+    g.clip();
+    if (nieve !== false) {
+      // Nieve: el borde de arriba se corta en dientes irregulares
+      const linea = baseY - amp * 0.6;
+      g.fillStyle = 'rgba(255,255,255,0.9)';
+      g.beginPath();
+      g.moveTo(-2, 0); g.lineTo(ancho, 0);
+      for (let x = ancho; x >= -2; x -= 3) {
+        const wx = x + camX * f;
+        g.lineTo(x, linea + 3.5 * Math.sin(wx * 0.31) + 2 * Math.sin(wx * 0.9 + 1));
+      }
+      g.closePath(); g.fill();
+    }
+    if (sombra) {
+      // Cara en sombra (mitad derecha de cada pico) y grietas en la roca
+      const ancho = periodo * 0.385;
+      const n0 = Math.floor((camX * f - 20) / periodo) - 1, n1 = Math.floor((camX * f + 260) / periodo) + 1;
+      for (let n = n0; n <= n1; n++) {
+        const px = periodo * (n + 0.5) - camX * f;
+        if (px < -ancho * 1.5 || px > 242 + ancho) continue;
+        g.fillStyle = rgba(sombra, 0.22);
+        g.beginPath();
+        g.moveTo(px, baseY - amp * 0.9); g.lineTo(px + ancho, baseY); g.lineTo(px + ancho, 144); g.lineTo(px, 144);
+        g.closePath(); g.fill();
+        // grietas: líneas finas que bajan desde la cima
+        g.strokeStyle = rgba(sombra, 0.35); g.lineWidth = 0.6;
+        g.beginPath();
+        g.moveTo(px + 1, baseY - amp * 0.75); g.lineTo(px + ancho * 0.45, baseY - amp * 0.25);
+        g.moveTo(px + 3, baseY - amp * 0.45); g.lineTo(px + ancho * 0.7, baseY - amp * 0.05);
+        g.stroke();
+        g.strokeStyle = 'rgba(255,255,255,0.25)';
+        g.beginPath();
+        g.moveTo(px - 1, baseY - amp * 0.7); g.lineTo(px - ancho * 0.35, baseY - amp * 0.2);
+        g.stroke();
+      }
+    }
+    g.restore();
+  }
+
+  // Efectos de agua en una poza: gotas que caen y saltan, aros que se expanden y espuma.
+  // x, y: centro de la superficie; ancho: ancho de la poza; semilla: para que cada poza sea distinta.
+  // Todo se calcula con el tiempo, sin guardar estado.
+  function efectosAgua(g, x, y, ancho, tiempo, semilla) {
+    const t = tiempo || 0, s = semilla || 0;
+    // gotas que caen desde arriba y hacen un aro al tocar el agua
+    for (let i = 0; i < 6; i++) {
+      const p = mod(t * (0.9 + azar(i + s) * 0.5) + azar(i + 40 + s), 1);
+      const gx = x + (azar(i + 60 + s) - 0.5) * ancho * 0.8;
+      const alto = 16 + azar(i + 80 + s) * 14;
+      g.fillStyle = 'rgba(225,244,255,0.85)';
+      g.fillRect(gx - 0.35, y - alto * (1 - p), 0.7, 2.2);
+    }
+    // aros que se expanden sobre la superficie
+    for (let k = 0; k < 3; k++) {
+      const q = mod(t * 0.65 + k / 3 + s * 0.13, 1);
+      const cx = x + (azar(k + 90 + s) - 0.5) * ancho * 0.6;
+      g.strokeStyle = 'rgba(255,255,255,' + (0.7 * (1 - q)).toFixed(3) + ')';
+      g.lineWidth = 0.6;
+      g.beginPath(); g.ellipse(cx, y, 1 + ancho * 0.4 * q, 0.4 + 1.3 * q, 0, 0, Math.PI * 2); g.stroke();
+    }
+    // salpicaduras: gotas que saltan en arco y caen otra vez en la poza
+    for (let i = 0; i < 8; i++) {
+      const p = mod(t * (1.4 + azar(i + 110 + s) * 0.6) + azar(i + 130 + s), 1);
+      const hx = x + (azar(i + 150 + s) - 0.5) * ancho * 0.9 + (azar(i + 170 + s) - 0.5) * 3 * p;
+      const alto = Math.sin(Math.PI * p) * (4 + 6 * azar(i + 190 + s));
+      g.fillStyle = 'rgba(240,252,255,' + (0.95 - 0.4 * p).toFixed(3) + ')';
+      g.beginPath(); g.arc(hx, y - alto, 0.6 + 0.6 * azar(i + 210 + s), 0, Math.PI * 2); g.fill();
+    }
+    // espuma y bruma sobre la poza
+    g.fillStyle = 'rgba(255,255,255,' + (0.35 + 0.1 * Math.sin(t * 1.3 + s)).toFixed(3) + ')';
+    g.beginPath(); g.ellipse(x, y - 1, ancho * 0.45, 1.6, 0, 0, Math.PI * 2); g.fill();
+  }
+
+  // Cascada de plano intermedio: un salto de agua grande que cae por una pared de roca hasta una poza
+  // (la poza va delante de las montañas lejanas y detrás de las colinas cercanas)
+  function cascadaMedia(g, camX, tiempo) {
+    const f = 0.3, ciclo = 260;
+    for (let k = -1; k <= 1; k++) {
+      const x0 = ((130 - camX * f) % ciclo + ciclo) % ciclo + k * ciclo;
+      if (x0 < -40 || x0 > 280) continue;
+      const yArriba = 38, yPoza = 104;
+      // pared de roca con borde irregular
+      g.fillStyle = grad(g, 0, yArriba, 0, yPoza, ['rgba(176,186,206,1)', 'rgba(118,128,150,1)']);
+      g.beginPath();
+      g.moveTo(x0 - 22, yArriba + 4); g.lineTo(x0 - 6, yArriba - 2); g.lineTo(x0 + 10, yArriba);
+      g.lineTo(x0 + 24, yArriba + 8); g.lineTo(x0 + 18, yArriba + 34); g.lineTo(x0 + 24, yPoza - 6);
+      g.lineTo(x0 + 6, yPoza); g.lineTo(x0 - 4, yPoza - 4); g.lineTo(x0 - 12, yPoza - 2);
+      g.lineTo(x0 - 24, yPoza - 20); g.lineTo(x0 - 18, yArriba + 30);
+      g.closePath(); g.fill();
+      // reborde de roca iluminado por la izquierda
+      g.strokeStyle = 'rgba(210,222,240,0.5)'; g.lineWidth = 0.7;
+      g.beginPath(); g.moveTo(x0 - 22, yArriba + 4); g.lineTo(x0 - 18, yArriba + 30); g.lineTo(x0 - 24, yPoza - 20); g.stroke();
+      // labio del salto: espuma blanca en el borde superior
+      g.fillStyle = 'rgba(255,255,255,0.95)';
+      g.beginPath(); g.ellipse(x0, yArriba, 7, 2, 0, 0, Math.PI * 2); g.fill();
+      // tres cintas de agua que bajan a velocidades distintas
+      [[-5, 46], [0, 60], [5, 40]].forEach(function (c, i) {
+        const xs = x0 + c[0];
+        g.fillStyle = grad(g, 0, yArriba, 0, yPoza, ['rgba(255,255,255,1)', 'rgba(205,234,252,0.95)']);
+        g.beginPath();
+        g.moveTo(xs - 1.6, yArriba); g.lineTo(xs + 1.6, yArriba);
+        g.lineTo(xs + 2.6, yPoza - 2); g.lineTo(xs - 2.6, yPoza - 2);
+        g.closePath(); g.fill();
+        // brillos que bajan más deprisa que la cinta
+        for (let j = 0; j < 4; j++) {
+          const y = yArriba + ((tiempo * c[1] + j * 13 + i * 5) % (yPoza - yArriba - 6));
+          g.fillStyle = 'rgba(255,255,255,0.95)';
+          g.fillRect(xs - 0.6, y, 1.2, 4);
+        }
+      });
+      // bruma que sube de la caída
+      g.fillStyle = 'rgba(255,255,255,' + (0.22 + 0.06 * Math.sin(tiempo * 0.9)).toFixed(3) + ')';
+      g.beginPath(); g.ellipse(x0, yPoza - 3, 20 + Math.sin(tiempo * 0.7) * 2, 6, 0, 0, Math.PI * 2); g.fill();
+      // poza: agua azul con reflejos y los efectos de salpicadura
+      g.fillStyle = grad(g, x0 - 20, 0, x0 + 20, 0, ['rgba(90,170,220,0.95)', 'rgba(140,210,240,0.95)', 'rgba(90,170,220,0.95)']);
+      g.beginPath(); g.ellipse(x0, yPoza, 22, 3.6, 0, 0, Math.PI * 2); g.fill();
+      efectosAgua(g, x0, yPoza, 36, tiempo, 3);
+    }
+  }
+
+  // Pájaros en bandada lejana: pequeñas uves que aletean y cruzan el cielo despacio
+  function pajaros(g, vistaW, tiempo, tono) {
+    const W = vistaW * 1.3;
+    for (let i = 0; i < 5; i++) {
+      const x = ((azar(i + 50) * W + tiempo * (9 + azar(i) * 7)) % W + W) % W - vistaW * 0.15;
+      const y = 18 + azar(i + 7) * 34 + Math.sin(tiempo * 0.4 + i) * 2;
+      const ala = Math.sin(tiempo * 7 + i * 1.7) * 2.2;
+      const s = 0.7 + azar(i + 3) * 0.5;
+      g.strokeStyle = rgba(tono, 0.7); g.lineWidth = 0.9; g.lineCap = 'round';
+      g.beginPath();
+      g.moveTo(x - 4 * s, y - ala * s); g.lineTo(x, y); g.lineTo(x + 4 * s, y - ala * s);
+      g.stroke();
+    }
+  }
+
+  // Número pseudoaleatorio fijo (0..1) para repartir partículas sin guardar estado
+  function azar(n) { const x = Math.sin(n * 12.9898 + 78.233) * 43758.5453; return x - Math.floor(x); }
+  function mod(a, m) { return ((a % m) + m) % m; }
+
+  // Tormenta de arena: el aire se llena de polvo que vuela con el viento; el sol queda velado
+  function arenaVolando(g, vistaW, vistaH, camX, tiempo) {
+    const W = vistaW * 1.4;
+    for (let i = 0; i < 110; i++) {
+      const z = azar(i * 3 + 3);
+      const x = mod(azar(i * 3 + 1) * W - tiempo * (120 + 170 * z) - camX * 0.15, W) - vistaW * 0.2;
+      const y = 14 + azar(i * 3 + 2) * (vistaH - 24) + Math.sin(tiempo * 1.5 + i) * 3 * z;
+      g.fillStyle = rgba(mezclaRgb([236, 196, 130], [170, 120, 70], z * 0.6), 0.25 + 0.5 * z);
+      g.beginPath(); g.arc(x, y, 0.6 + 1.6 * z, 0, Math.PI * 2); g.fill();
+    }
+    // rachas de viento: líneas largas y finas que cruzan deprisa
+    for (let i = 0; i < 16; i++) {
+      const z = azar(i + 300);
+      const L = 16 + 26 * z;
+      const x = mod(azar(i + 200) * W - tiempo * (260 + 120 * z), W) - vistaW * 0.2;
+      const y = 20 + azar(i + 400) * (vistaH - 40);
+      g.strokeStyle = rgba([240, 210, 160], 0.35 + 0.3 * z); g.lineWidth = 0.8;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x - L, y + 1.5); g.stroke();
+    }
+  }
+
+  // Lluvia y tormenta: gotas inclinadas por el viento; la tormenta añade relámpagos
+  function lluvia(g, vistaW, vistaH, tiempo, tormenta) {
+    for (let i = 0; i < 80; i++) {
+      const z = azar(i * 2 + 9);
+      const x = mod(azar(i * 2 + 1) * vistaW * 1.2 - tiempo * 30, vistaW * 1.2) - vistaW * 0.1;
+      const y = mod(azar(i * 2 + 2) * vistaH + tiempo * (240 + 120 * z), vistaH);
+      g.strokeStyle = rgba([200, 218, 245], 0.3 + 0.3 * z); g.lineWidth = 0.8;
+      g.beginPath(); g.moveTo(x, y); g.lineTo(x - 3, y + 9 + 4 * z); g.stroke();
+    }
+    if (!tormenta) return;
+    const ciclo = 6.5, n = Math.floor(tiempo / ciclo), p = tiempo - n * ciclo;
+    if (azar(n) < 0.35 || p > 0.4) return;
+    // Relámpago: destello y una línea quebrada desde arriba
+    g.fillStyle = 'rgba(235,240,255,' + (p < 0.1 ? 0.5 : 0.5 * (1 - (p - 0.1) / 0.3)) + ')';
+    g.fillRect(0, 0, vistaW, vistaH);
+    let x = 40 + azar(n + 5) * (vistaW - 80), y = 0;
+    g.strokeStyle = 'rgba(255,255,255,0.95)'; g.lineWidth = 1.4;
+    g.beginPath(); g.moveTo(x, y);
+    for (let j = 1; j <= 7; j++) {
+      x += (azar(n * 10 + j) - 0.5) * 18; y += 13;
+      g.lineTo(x, y);
+    }
+    g.stroke();
+  }
+
+  // Nieve: copos que caen con un vaivén suave
+  function nieve(g, vistaW, vistaH, tiempo) {
+    for (let i = 0; i < 70; i++) {
+      const z = azar(i * 3 + 5);
+      const x = mod(azar(i * 3 + 1) * vistaW + Math.sin(tiempo * 0.9 + i) * (6 + 6 * z), vistaW);
+      const y = mod(azar(i * 3 + 2) * vistaH + tiempo * (18 + 26 * z), vistaH);
+      g.fillStyle = 'rgba(255,255,255,' + (0.55 + 0.35 * z) + ')';
+      g.beginPath(); g.arc(x, y, 0.7 + 1.2 * z, 0, Math.PI * 2); g.fill();
+    }
+  }
+
+  // Niebla: bancos blancos que cruzan despacio por delante del paisaje
+  function niebla(g, vistaW, vistaH, tiempo) {
+    for (let i = 0; i < 4; i++) {
+      const x = mod(azar(i + 60) * vistaW * 1.6 + tiempo * (6 + 5 * i), vistaW * 1.6) - vistaW * 0.3;
+      const y = 60 + i * 22 + Math.sin(tiempo * 0.3 + i) * 3;
+      const r = g.createRadialGradient(x, y, 2, x, y, 90);
+      r.addColorStop(0, 'rgba(240,244,248,0.5)'); r.addColorStop(1, 'rgba(240,244,248,0)');
+      g.fillStyle = r;
+      g.save(); g.translate(x, y); g.scale(1, 0.4); g.translate(-x, -y);
+      g.beginPath(); g.arc(x, y, 90, 0, Math.PI * 2); g.fill();
+      g.restore();
+    }
+  }
+
+  // Colores de paisaje según el tipo: bosque o desierto (dunas y mesetas de arena)
+  const PAISAJES = {
+    bosque: {
+      montana: ['#eef7ff', '#bcdcf2'], sombra: '#3b4f7a', nieve: true,
+      cordillera: ['#7aa592', '#4e7a6a'], sombraCord: '#2e4a48',
+      lejos: ['#b8e6a8', '#8ccb7a'], cerca: ['#7fc46a', '#3f8f3a']
+    },
+    desierto: {
+      montana: ['#f3dcae', '#c99a62'], sombra: '#6b3f22', nieve: false,
+      cordillera: ['#e0b27a', '#a8743e'], sombraCord: '#6b3f22',
+      lejos: ['#f2d9a4', '#dcb173'], cerca: ['#e2b774', '#b07a3a']
+    }
+  };
+
+  // Atmósfera según el clima: tinte del cielo, color de las nubes y capas de partículas
+  const CLIMAS = {
+    lluvia: { tinte: [60, 72, 96], fuerza: 0.35, nube: [90, 100, 120], sol: 0.25 },
+    tormenta: { tinte: [40, 46, 72], fuerza: 0.5, nube: [60, 66, 90], sol: 0.1 },
+    nieve: { tinte: [220, 230, 245], fuerza: 0.22, nube: [230, 236, 245], sol: 0.6 },
+    arena: { tinte: [214, 166, 102], fuerza: 0.6, nube: [222, 182, 120], sol: 0.35 },
+    niebla: { tinte: [225, 230, 236], fuerza: 0.55, nube: [240, 242, 246], sol: 0.3 }
+  };
+
   // Dibuja el fondo en capas. camX, camY: cámara del nivel; el contexto debe tener escala U (o U × zoom).
   // opt.hora: 0..1 (0 amanecer, 0.25 día, 0.5 atardecer, 0.75 noche); el sol y las nubes cambian con ella.
   // opt.ambiente: 'cueva' cambia el cielo por la roca de una cueva.
-  // opt.colinas: false deja solo el cielo (sol, nubes y estrellas), para poner otro paisaje encima.
-  // opt.arriba: unidades de cielo por encima de la vista (para pantallas altas, sin costuras).
+  // opt.paisaje: 'bosque' (por defecto) o 'desierto' (dunas y mesetas de arena).
+  // opt.clima: null (por defecto), 'lluvia', 'tormenta', 'nieve', 'arena' o 'niebla'.
+  // opt.cascada: true/false (por defecto, una cascada lejana en el paisaje de bosque). opt.pajaros: true/false.
   function fondo(g, camX, camY, vistaW, vistaH, tiempo, opt) {
     opt = opt || {};
-    const arriba = opt.arriba || 0;
     g.save();
+    const arriba = opt.arriba || 0;
     if (opt.ambiente === 'cueva') { cueva(g, camX, tiempo, vistaW, vistaH, arriba); g.restore(); return; }
 
     const P = paleta(opt.hora || 0);
     const noche = P.noche;
+    const clima = CLIMAS[opt.clima] || null;
+    const tipo = PAISAJES[opt.paisaje] ? opt.paisaje : 'bosque';
+    const pais = PAISAJES[tipo];
+    const t = tiempo || 0;
+
     g.fillStyle = grad(g, 0, -arriba, 0, vistaH, P.cielo.map(function (c) { return rgba(c, 1); }));
     g.fillRect(0, -arriba, vistaW, vistaH + arriba);
-    if (noche > 0.05) estrellas(g, noche, tiempo, vistaW);
+    if (noche > 0.05) estrellas(g, noche, t, vistaW);
 
-    // Sol (o luna de noche): disco con halo; el color cambia con la hora
+    // Sol (o luna de noche): disco con halo; el color cambia con la hora y se vela con el clima
     const sx = vistaW * 0.8 - camX * 0.03, sy = 30;
+    g.save();
+    g.globalAlpha = clima ? clima.sol : 1;
     g.fillStyle = radial(g, sx, sy, 6, 46, [rgba(P.halo, 0.9), rgba(P.halo, 0.35), rgba(P.halo, 0)]);
     g.beginPath(); g.arc(sx, sy, 46, 0, Math.PI * 2); g.fill();
     if (noche < 0.95) {
       g.save();
       g.translate(sx, sy);
-      g.rotate((tiempo || 0) * 0.12);
+      g.rotate(t * 0.12);
       g.strokeStyle = rgba(P.halo, 0.6 * (1 - noche)); g.lineWidth = 2; g.lineCap = 'round';
       for (let i = 0; i < 12; i++) {
         const a = (i / 12) * Math.PI * 2, l = i % 2 ? 20 : 24;
@@ -1220,9 +1501,14 @@ function consume(action) {
     g.fillStyle = radial(g, sx - 3, sy - 3, 1, 12, P.sol.map(function (c) { return rgba(c, 1); }));
     g.beginPath(); g.arc(sx, sy, 12, 0, Math.PI * 2); g.fill();
     g.strokeStyle = rgba(P.sol[2], 0.8); g.lineWidth = 1; g.stroke();
+    g.restore();
 
-    // Nubes: se oscurecen de noche
-    const tono = mezclaRgb([255, 255, 255], [70, 80, 130], noche);
+    // Pájaros (solo de día y con cielo despejado)
+    if (opt.pajaros !== false && noche < 0.4 && !clima) pajaros(g, vistaW, t, mezclaRgb([40, 36, 60], [70, 60, 90], noche));
+
+    // Nubes: se oscurecen de noche y de tormenta; con arena se tiñen de polvo
+    let tono = mezclaRgb([255, 255, 255], [70, 80, 130], noche);
+    if (clima) tono = mezclaRgb(tono, clima.nube, 0.8);
     NUBES.forEach(function (capa, i) {
       const f = NUBE_FACTOR[i], ciclo = NUBE_CICLO[i];
       capa.forEach(function (c) {
@@ -1233,13 +1519,83 @@ function consume(action) {
       });
     });
 
-    // Tres planos: montañas pálidas al fondo, luego dos planos de colinas cada vez más oscuros
-    if (opt.colinas !== false) {
-      montanas(g, camX, 0.1, 104, 60, 150, [tinta('#eef7ff', noche, 0.6), tinta('#bcdcf2', noche, 0.6)], vistaW + 4);
-      colina(g, camX, 0.3, 112, 20, 0.02, 2.4, [tinta('#b8e6a8', noche, 0.5), tinta('#8ccb7a', noche, 0.5)], vistaW + 4);
-      colina(g, camX, 0.7, 128, 14, 0.035, 0.7, [tinta('#7fc46a', noche, 0.5), tinta('#3f8f3a', noche, 0.5)], vistaW + 4);
+    // Montañas pálidas al fondo (las de bosque tienen nieve; las de desierto son mesetas de arena)
+    montanas(g, camX, 0.1, 104, 60, 150,
+      pais.montana.map(function (c) { return tinta(c, noche, 0.6); }),
+      tinta(pais.sombra, noche, 0.5), pais.nieve, vistaW);
+
+    // Cordillera cercana: más oscura, sin nieve, en el plano entre las montañas lejanas y las colinas
+    montanas(g, camX, 0.18, 118, 38, 110,
+      pais.cordillera.map(function (c) { return tinta(c, noche, 0.5); }),
+      tinta(pais.sombraCord, noche, 0.5), false, vistaW);
+
+    // Colinas (o dunas) lejanas; la cascada va delante de ellas y detrás de las colinas cercanas
+    if (tipo === 'desierto') colina(g, camX, 0.3, 112, 16, 0.012, 2.4, pais.lejos.map(function (c) { return tinta(c, noche, 0.5); }), vistaW);
+    else colina(g, camX, 0.3, 112, 20, 0.02, 2.4, pais.lejos.map(function (c) { return tinta(c, noche, 0.5); }), vistaW);
+    if (opt.cascada !== false && tipo !== 'desierto') cascadaMedia(g, camX, t);
+    if (tipo === 'desierto') colina(g, camX, 0.7, 128, 12, 0.02, 0.7, pais.cerca.map(function (c) { return tinta(c, noche, 0.5); }), vistaW);
+    else colina(g, camX, 0.7, 128, 14, 0.035, 0.7, pais.cerca.map(function (c) { return tinta(c, noche, 0.5); }), vistaW);
+
+    // Atmósfera y partículas del clima, por encima del paisaje
+    if (clima) {
+      const veladura = g.createLinearGradient(0, 0, 0, vistaH);
+      veladura.addColorStop(0, rgba(clima.tinte, clima.fuerza * 0.7));
+      veladura.addColorStop(1, rgba(clima.tinte, clima.fuerza));
+      g.fillStyle = veladura;
+      g.fillRect(0, 0, vistaW, vistaH);
     }
+    if (opt.clima === 'arena') arenaVolando(g, vistaW, vistaH, camX, t);
+    if (opt.clima === 'lluvia') lluvia(g, vistaW, vistaH, t, false);
+    if (opt.clima === 'tormenta') lluvia(g, vistaW, vistaH, t, true);
+    if (opt.clima === 'nieve') nieve(g, vistaW, vistaH, t);
+    if (opt.clima === 'niebla') niebla(g, vistaW, vistaH, t);
     g.restore();
+  }
+
+  // Burbujas de lava: cada una sube, crece y revienta en la superficie. Sin estado: todo sale del tiempo.
+  function burbujasLava(g, x, y, tiempo, semilla) {
+    const t = tiempo || 0;
+    for (let i = 0; i < 2; i++) {
+      const p = mod(t * (0.6 + azar(i + semilla) * 0.5) + azar(i + 30 + semilla), 1);
+      const bx = x + 3 + azar(i + 60 + semilla) * 10;
+      const r = 0.5 + 1.1 * Math.sin(Math.PI * p);
+      g.fillStyle = 'rgba(255,236,160,' + (0.9 * (1 - p)).toFixed(3) + ')';
+      g.beginPath(); g.arc(bx, y + 1 - 3 * p, r, 0, Math.PI * 2); g.fill();
+    }
+  }
+
+  // Partículas de ambiente del bosque: hojas que caen con el viento y, de noche, luciérnagas.
+  // Se dibuja encima del nivel. hora: la misma que el fondo (0..1).
+  function particulas(g, vistaW, vistaH, tiempo, camX, hora) {
+    const t = tiempo || 0;
+    const noche = paleta(hora || 0).noche;
+    const W = vistaW * 1.3;
+    const colores = ['#7fc46a', '#4f9a3a', '#e2a24a', '#c8703a'];
+    for (let i = 0; i < 14; i++) {
+      const z = azar(i * 4 + 400);
+      const x = mod(azar(i * 4 + 402) * W + t * (16 + 18 * z) - camX * 0.08, W) - vistaW * 0.15 + Math.sin(t * 2 + i) * 4;
+      const y = mod(azar(i * 4 + 401) * vistaH + t * (9 + 12 * z), vistaH);
+      g.save();
+      g.translate(x, y);
+      g.rotate(t * (1.5 + z * 2) + i);
+      g.fillStyle = colores[i % colores.length];
+      g.globalAlpha = 0.85;
+      g.beginPath(); g.ellipse(0, 0, 2.3, 1.1, 0, 0, Math.PI * 2); g.fill();
+      g.restore();
+    }
+    if (noche > 0.4) {
+      const k = (noche - 0.4) / 0.6;
+      for (let i = 0; i < 9; i++) {
+        const x = mod(azar(i * 3 + 500) * vistaW + Math.sin(t * 0.5 + i) * 14, vistaW);
+        const y = 56 + azar(i * 3 + 501) * 70 + Math.cos(t * 0.7 + i) * 8;
+        const brillo = 0.5 + 0.5 * Math.sin(t * 3 + i * 2.1);
+        const a = k * brillo;
+        g.fillStyle = rgba([220, 255, 120], 0.35 * a);
+        g.beginPath(); g.arc(x, y, 3.2, 0, Math.PI * 2); g.fill();
+        g.fillStyle = rgba([240, 255, 170], 0.95 * a);
+        g.beginPath(); g.arc(x, y, 0.9, 0, Math.PI * 2); g.fill();
+      }
+    }
   }
 
   const DIBUJOS = {
@@ -1257,7 +1613,9 @@ function consume(action) {
     'L': dibujarEscalera,
     'B': dibujarBarra,
     'S': dibujarInicio,
-    'E': dibujarMeta
+    'E': dibujarMeta,
+    'M': function (g) { dibujarMuelle(g, false); },
+    'M+': function (g) { dibujarMuelle(g, true); }
   };
   Object.assign(DIBUJOS, DECOR);
 
@@ -1300,7 +1658,75 @@ function consume(action) {
     });
   }
 
-  function crear(mapa, decor) {
+  // Plataforma móvil: recorre sus puntos de ida y vuelta a velocidad constante. Sólida solo desde arriba.
+  function crearPlataforma(d) {
+    const pts = d.puntos;
+    let L = 0;
+    const segs = [];
+    for (let i = 1; i < pts.length; i++) {
+      const len = Math.hypot(pts[i][0] - pts[i - 1][0], pts[i][1] - pts[i - 1][1]);
+      segs.push(len); L += len;
+    }
+    return { x: pts[0][0], y: pts[0][1], w: d.w || 32, h: TILE, pts: pts, segs: segs, L: L,
+             s: d.inicio || 0, dir: 1, vel: d.velocidad || 40, dx: 0, dy: 0,
+             // Plataforma que cae: tras pisarla tiembla y, al cabo de tCaida, cae fuera del nivel
+             cae: !!d.cae, estado: 'quieta', origen: { x: pts[0][0], y: pts[0][1] },
+             grupo: d.grupo || null, indice: d.indice || 0, tCaida: d.tCaida || 0.8,
+             t: 0, retraso: 0, pisadaEn: -9, reaparece: 0, sacudida: 0, vyCae: 0 };
+  }
+
+  const CAIDA_G = 900, CAIDA_MAX = 700, REAPARECE = 3;   // s hasta que vuelve una plataforma que cayó
+
+  function crearCanon(d) {
+    return { col: d.col, row: d.row, dir: d.dir || 1, cada: d.cada || 2.5, velocidad: d.velocidad || 90, t: d.inicio || 0 };
+  }
+
+  // Cañón de pared o de suelo: la boca mira hacia 'dir' (1 derecha, -1 izquierda). Coordenadas de un bloque.
+  function dibujarCanon(g, dir) {
+    const d = dir > 0 ? 1 : -1;
+    g.fillStyle = grad(g, 3, 8, 3, 16, ['#6a7088', '#353a4c']);
+    rr(g, 3, 8, 10, 8, 2); g.fill(); trazar(g, OUT, 0.8);
+    g.fillStyle = grad(g, 0, 4, 0, 9, ['#8c94ac', '#4a5064']);
+    const bx = d > 0 ? 6 : 0;
+    rr(g, bx, 4.5, 10, 4.5, 1.5); g.fill(); trazar(g, OUT, 0.8);
+    // boca oscura
+    g.fillStyle = '#15121c';
+    g.beginPath(); g.ellipse(d > 0 ? 15.5 : 0.5, 6.7, 0.9, 2.2, 0, 0, Math.PI * 2); g.fill();
+    // tornillo del soporte
+    g.fillStyle = '#d6dae6';
+    g.beginPath(); g.arc(8, 12, 1.1, 0, Math.PI * 2); g.fill();
+  }
+
+  // Bala de cañón: cápsula negra con un ojo; el ojo mira hacia donde vuela. Coordenadas de 8 × 6 px.
+  function dibujarBala(g, derecha) {
+    const cola = derecha ? 0 : 8;
+    g.fillStyle = '#24242e';
+    g.beginPath(); g.ellipse(4, 3, 4, 2.8, 0, 0, Math.PI * 2); g.fill(); trazar(g, OUT, 0.5);
+    g.beginPath();
+    g.moveTo(cola, 3); g.lineTo(derecha ? -1.8 : 9.8, 0.4); g.lineTo(derecha ? -1.8 : 9.8, 5.6); g.closePath();
+    g.fillStyle = '#24242e'; g.fill(); trazar(g, OUT, 0.4);
+    const fx = derecha ? 5.6 : 2.4;
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.arc(fx, 2.3, 1.2, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#111';
+    g.beginPath(); g.arc(fx + (derecha ? 0.4 : -0.4), 2.3, 0.55, 0, Math.PI * 2); g.fill();
+  }
+
+  // Posición de una plataforma a lo largo de sus puntos (s: distancia recorrida)
+  function posicionEn(p, s) {
+    let resto = s;
+    for (let i = 0; i < p.segs.length; i++) {
+      if (resto <= p.segs[i] || i === p.segs.length - 1) {
+        const t = p.segs[i] ? Math.min(1, resto / p.segs[i]) : 0;
+        const a = p.pts[i], b = p.pts[i + 1];
+        return { x: a[0] + (b[0] - a[0]) * t, y: a[1] + (b[1] - a[1]) * t };
+      }
+      resto -= p.segs[i];
+    }
+    return { x: p.pts[0][0], y: p.pts[0][1] };
+  }
+
+  function crear(mapa, decor, extras) {
     const grid = leerMapa(mapa);
     const rows = grid.length;
     const cols = grid[0].length;
@@ -1340,8 +1766,95 @@ function consume(action) {
       return null;
     }
 
+    let reloj = 0;
+    // Puentes: cada tramo de 16 px cae por su cuenta; al pisar uno, los demás caen en cascada
+    const defs = ((extras && extras.plataformas) || []).slice();
+    ((extras && extras.puentes) || []).forEach(function (pt, gi) {
+      for (let k = 0; k < pt.n; k++) {
+        defs.push({ puntos: [[pt.x + k * TILE, pt.y]], w: TILE, cae: true, grupo: 'puente' + gi, indice: k, tCaida: pt.tCaida || 0.6 });
+      }
+    });
+    const plataformas = defs.map(crearPlataforma);
+    const canones = ((extras && extras.canones) || []).map(crearCanon);
+    let balas = [];
+    const muellesActivos = {};
+    const anchoMundo = cols * TILE, altoMundo = rows * TILE;
+
+    function solapa(a, b) {
+      return a.x < b.x + b.w && a.x + a.w > b.x && a.y < b.y + b.h && a.y + a.h > b.y;
+    }
+
+    // Al pisar una plataforma que cae, empieza a temblar el grupo entero (los puentes caen en cascada)
+    function disparar(p) {
+      const grupo = p.grupo ? plataformas.filter(function (q) { return q.grupo === p.grupo; }) : [p];
+      grupo.forEach(function (q) {
+        if (q.estado !== 'quieta') return;
+        q.estado = 'temblando'; q.t = 0;
+        q.retraso = 0.15 * Math.abs(q.indice - p.indice);
+      });
+    }
+
+    function actualizarCaida(p, dt, caja) {
+      p.dx = 0; p.dy = 0;
+      if (p.estado === 'oculta') {
+        p.reaparece -= dt;
+        // Vuelve a su sitio cuando ya no hay nadie encima
+        if (p.reaparece <= 0 && !(caja && solapa(caja, { x: p.origen.x, y: p.origen.y - 16, w: p.w, h: 32 }))) {
+          p.estado = 'quieta'; p.x = p.origen.x; p.y = p.origen.y; p.vyCae = 0;
+        }
+        return;
+      }
+      if (p.estado === 'quieta') {
+        if (reloj - p.pisadaEn < 0.05) disparar(p);
+        return;
+      }
+      if (p.estado === 'temblando') {
+        p.t += dt;
+        p.sacudida = Math.sin(p.t * 70) * 1.2;
+        if (p.t >= p.tCaida + p.retraso) { p.estado = 'cayendo'; p.sacudida = 0; p.vyCae = 0; }
+        return;
+      }
+      // cayendo
+      p.vyCae = Math.min(p.vyCae + CAIDA_G * dt, CAIDA_MAX);
+      const dy = p.vyCae * dt;
+      p.dy = dy; p.y += dy;
+      if (p.y > altoMundo + 24) { p.estado = 'oculta'; p.reaparece = REAPARECE; p.dy = 0; }
+    }
+
+
+    // Plataforma sobre la que está la caja (de pie, sin subir)
+    function plataformaBajo(caja) {
+      for (let i = 0; i < plataformas.length; i++) {
+        const p = plataformas[i];
+        if (p.estado === 'oculta') continue;
+        const topeAntes = p.y - p.dy;
+        if (Math.abs(caja.y + caja.h - topeAntes) <= 1.5 && caja.x + caja.w > p.x + EPS && caja.x < p.x + p.w - EPS) return p;
+      }
+      return null;
+    }
+
+    // Plataforma móvil sobre la que cae la caja: la más alta que toca en este cuadro
+    function plataformaQueCae(x, w, h, bottomAntes, ny, topeTile) {
+      let mejor = null;
+      for (let i = 0; i < plataformas.length; i++) {
+        const p = plataformas[i];
+        if (p.estado === 'oculta') continue;
+        if (bottomAntes <= p.y + EPS && ny + h >= p.y - EPS && x + w > p.x + EPS && x < p.x + p.w - EPS && p.y < topeTile) {
+          if (mejor === null || p.y < mejor.y) mejor = p;
+        }
+      }
+      return mejor;
+    }
+
+    // Muelle bajo los pies: una celda 'M' en la fila de aterrizaje
+    function muelleEn(c0, c1, row) {
+      for (let c = c0; c <= c1; c++) if (get(c, row) === MUELLE) return { col: c, row: row };
+      return null;
+    }
+
     const mundo = {
       tile: TILE,
+      plataformas: plataformas,
       U: U,
       cols: cols,
       rows: rows,
@@ -1361,6 +1874,50 @@ function consume(action) {
 
       get: get,
 
+      // Avanza el tiempo: mueve las plataformas y guarda cuánto se movió cada una en este cuadro.
+      // Llamar una vez por cuadro, antes de resolver.
+      actualizar: function (dt, caja) {
+        reloj += dt;
+        plataformas.forEach(function (p) {
+          if (p.cae) { actualizarCaida(p, dt, caja); return; }
+          p.s += p.dir * p.vel * dt;
+          if (p.s >= p.L) { p.s = 2 * p.L - p.s; p.dir = -1; }
+          if (p.s <= 0) { p.s = -p.s; p.dir = 1; }
+          p.s = Math.max(0, Math.min(p.L, p.s));
+          const pos = posicionEn(p, p.s);
+          p.dx = pos.x - p.x; p.dy = pos.y - p.y;
+          p.x = pos.x; p.y = pos.y;
+        });
+        // Cañones: disparan cada cierto tiempo; las balas vuelan en línea recta hasta chocar con un bloque
+        canones.forEach(function (c) {
+          c.t += dt;
+          if (c.t >= c.cada) {
+            c.t -= c.cada;
+            balas.push({ x: c.dir > 0 ? (c.col + 1) * TILE : c.col * TILE - 8, y: c.row * TILE + 5,
+                         w: 8, h: 6, vx: c.dir * c.velocidad, vida: 7, muerta: false });
+          }
+        });
+        balas.forEach(function (b) {
+          b.x += b.vx * dt; b.vida -= dt;
+          const frente = b.vx > 0 ? b.x + b.w : b.x;
+          const c = Math.floor(frente / TILE), r = Math.floor((b.y + b.h / 2) / TILE);
+          if (b.vida <= 0 || esSolido(get(c, r)) || b.x < -32 || b.x > anchoMundo + 32) b.muerta = true;
+        });
+        balas = balas.filter(function (b) { return !b.muerta; });
+      },
+
+      // ¿Una bala toca la caja? La bala desaparece. Devuelve true si hubo impacto.
+      golpeBala: function (caja) {
+        let tocada = false;
+        balas.forEach(function (b) {
+          if (!b.muerta && solapa(caja, b)) { b.muerta = true; tocada = true; }
+        });
+        balas = balas.filter(function (b) { return !b.muerta; });
+        return tocada;
+      },
+
+      balasVivas: function () { return balas; },
+
       golpear: function (c, r) {
         const ch = get(c, r);
         if (ch === '?') { set(c, r, 'x'); return 'moneda'; }
@@ -1372,7 +1929,11 @@ function consume(action) {
       resolver: function (caja, vx, vy, dt) {
         let x = caja.x, y = caja.y;
         const w = caja.w, h = caja.h;
-        const out = { x: x, y: y, vx: vx, vy: vy, enSuelo: false, golpeTecho: null };
+        const out = { x: x, y: y, vx: vx, vy: vy, enSuelo: false, golpeTecho: null, plataforma: null, muelle: null };
+
+        // Si la caja está de pie sobre una plataforma móvil, se mueve con ella
+        const sobre = vy >= 0 ? plataformaBajo(caja) : null;
+        if (sobre) { x += sobre.dx; y += sobre.dy; out.plataforma = sobre; }
 
         // Eje X
         if (vx !== 0) {
@@ -1412,10 +1973,25 @@ function consume(action) {
               if ((esSolido(ch) || ch === UNIDIRECCIONAL) && (aterriza === null || r < aterriza)) aterriza = r;
             }
           }
-          if (aterriza !== null) {
+          const topeTile = aterriza !== null ? aterriza * TILE : Infinity;
+          const pl = plataformaQueCae(x, w, h, bottomAntes, ny, topeTile);
+          if (pl) {
+            y = pl.y - h;
+            out.vy = 0;
+            out.enSuelo = true;
+            out.plataforma = pl;
+          } else if (aterriza !== null) {
             y = aterriza * TILE - h;
             out.vy = 0;
             out.enSuelo = true;
+            const m = muelleEn(c0, c1, aterriza);
+            if (m) {
+              // El muelle devuelve al jugador hacia arriba
+              out.vy = -MUELLE_FUERZA;
+              out.enSuelo = false;
+              out.muelle = m;
+              muellesActivos[m.col + ',' + m.row] = reloj;
+            }
           } else {
             y = ny;
           }
@@ -1438,6 +2014,7 @@ function consume(action) {
           }
         }
 
+        if (out.plataforma) out.plataforma.pisadaEn = reloj;
         out.x = x;
         out.y = y;
         return out;
@@ -1474,13 +2051,24 @@ function consume(action) {
         const c0 = Math.max(0, Math.floor(camX / TILE)), c1 = Math.min(cols - 1, Math.floor((camX + vistaW) / TILE));
         const r0 = Math.max(0, Math.floor(camY / TILE)), r1 = Math.min(rows - 1, Math.floor((camY + vistaH) / TILE));
         // Decoración: va detrás de los bloques; las animadas usan el cuadro del momento
-        const cuadro = Math.floor((tiempo || 0) * 8) % 4;
+        const cuadro = Math.floor((tiempo || 0) * 8);
         for (let r = r0; r <= r1; r++) {
           for (let c = c0; c <= c1; c++) {
             const d = capaDeco[r][c];
             if (d === ' ') continue;
             const clave = ANIMADO[d] ? d + ':' + (cuadro % ANIMADO[d]) : d;
             ctx.drawImage(spriteDe(clave), c * TILE - camX, r * TILE - camY, TILE, TILE);
+          }
+        }
+        // Efectos de agua sobre las pozas visibles (gotas, salpicaduras y aros en la superficie)
+        for (let r = r0; r <= r1; r++) {
+          for (let c = c0; c <= c1; c++) {
+            if (capaDeco[r][c] !== 'l') continue;
+            if (r > 0 && capaDeco[r - 1][c] === 'l') continue;   // solo la superficie de la poza
+            ctx.save();
+            ctx.translate(-camX, -camY);
+            efectosAgua(ctx, c * TILE + TILE / 2, r * TILE + 5, TILE - 2, tiempo, c * 7 + r);
+            ctx.restore();
           }
         }
         const frame = Math.floor((tiempo || 0) * 8) % FRAMES_MONEDA;
@@ -1499,8 +2087,40 @@ function consume(action) {
               clave = ch + '|' + f;
             } else if (ch === COLECCION) {
               clave = COLECCION + frame;
+            } else if (ch === MUELLE) {
+              const t = muellesActivos[c + ',' + r];
+              if (t !== undefined && reloj - t < MUELLE_TIEMPO) clave = 'M+';
             }
             ctx.drawImage(spriteDe(clave), c * TILE - camX, r * TILE - camY, TILE, TILE);
+          }
+        }
+        // Plataformas móviles: se dibujan con las piezas de plataforma de un bloque
+        plataformas.forEach(function (p) {
+          if (p.estado === 'oculta') return;
+          if (p.x + p.w < camX || p.x > camX + vistaW || p.y + TILE < camY || p.y > camY + vistaH) return;
+          const sx = p.sacudida || 0;
+          for (let i = 0; i < p.w / TILE; i++) {
+            ctx.drawImage(spriteDe('-'), p.x + sx + i * TILE - camX, p.y - camY, TILE, TILE);
+          }
+        });
+        // Cañones y balas
+        canones.forEach(function (c) {
+          const x = c.col * TILE - camX, y = c.row * TILE - camY;
+          if (x < -TILE || x > vistaW || y < -TILE || y > vistaH) return;
+          ctx.save(); ctx.translate(x, y); dibujarCanon(ctx, c.dir); ctx.restore();
+        });
+        balas.forEach(function (b) {
+          if (b.x + b.w < camX || b.x > camX + vistaW) return;
+          ctx.save(); ctx.translate(b.x - camX, b.y - camY); dibujarBala(ctx, b.vx > 0); ctx.restore();
+        });
+        // Burbujas que suben de la lava de la superficie
+        for (let r = r0; r <= r1; r++) {
+          for (let c = c0; c <= c1; c++) {
+            if (get(c, r) !== '~' || (r > 0 && get(c, r - 1) === '~')) continue;
+            ctx.save();
+            ctx.translate(-camX, -camY);
+            burbujasLava(ctx, c * TILE, r * TILE + 3, tiempo, c * 5 + r);
+            ctx.restore();
           }
         }
       },
@@ -1521,10 +2141,24 @@ function consume(action) {
     '            ?=?=?           =?=?=                        L                      B      ooo      ',
     '                  ####              ----      PQ         L                      B     IIII      ',
     '        PQ                                    pq         L                      B   XX          ',
-    '  S     pq                                    pq    ^^   L                      B   XX       E  ',
+    '  S     pq        M                           pq    ^^   L                      B   XX       E  ',
     '######################    AAAAAAAAAAAAAA  NNNNNNNNNNNNNNNN#############RRR  WWWWWWWWWWWWWWWWWWWW',
     '######################~~~~AAAAAAAAAAAAAA  NNNNNNNNNNNNNNNN#############RRR  WWWWWWWWWWWWWWWWWWWW'
   ];
+
+  // Elementos de movimiento del nivel de ejemplo (se pasan a crear como tercer argumento)
+  const EXTRAS_EJEMPLO = {
+    plataformas: [
+      { puntos: [[320, 128], [448, 128]], w: 32, velocidad: 40 },   // sobre el foso de lava, de un lado a otro
+      { puntos: [[640, 144]], w: 32, cae: true, tCaida: 0.8 }        // sobre el foso del medio: cae al pisarla
+    ],
+    canones: [
+      { col: 30, row: 9, dir: 1, cada: 2.4, velocidad: 90, inicio: 1 }  // dispara hacia la derecha sobre el suelo
+    ],
+    puentes: [
+      { x: 1184, y: 160, n: 2, tCaida: 0.6 }                          // puente de dos tramos sobre el hueco
+    ]
+  };
 
   // Castillo: 12 × 7 bloques con la esquina superior izquierda en (84, 3). '.' = aire.
   const CASTILLO = [
@@ -1579,15 +2213,36 @@ function consume(action) {
   // sprite('W|0000') es madera cubierta. Los demás: sprite('='), sprite('o0'), sprite('E'), etc.
   function sprite(clave) { return spriteDe(ANIMADO[clave] ? clave + ':0' : clave); }
 
+  // Clima suelto para escenas propias (el castillo): velo de color y partículas, sin fondo
+  function climaSuelto(g, vistaW, vistaH, tiempo, nombre) {
+    const clima = CLIMAS[nombre] || null;
+    if (!clima) return;
+    g.save();
+    const veladura = g.createLinearGradient(0, 0, 0, vistaH);
+    veladura.addColorStop(0, rgba(clima.tinte, clima.fuerza * 0.7));
+    veladura.addColorStop(1, rgba(clima.tinte, clima.fuerza));
+    g.fillStyle = veladura;
+    g.fillRect(0, 0, vistaW, vistaH);
+    if (nombre === 'arena') arenaVolando(g, vistaW, vistaH, 0, tiempo);
+    if (nombre === 'lluvia') lluvia(g, vistaW, vistaH, tiempo, false);
+    if (nombre === 'tormenta') lluvia(g, vistaW, vistaH, tiempo, true);
+    if (nombre === 'nieve') nieve(g, vistaW, vistaH, tiempo);
+    if (nombre === 'niebla') niebla(g, vistaW, vistaH, tiempo);
+    g.restore();
+  }
+
   global.Bloques = {
     TILE: TILE,
+    clima: climaSuelto,
     U: U,
     crear: crear,
     sprite: sprite,
     NIVEL_EJEMPLO: NIVEL_EJEMPLO,
     NIVEL_DECOR: NIVEL_DECOR,
+    EXTRAS_EJEMPLO: EXTRAS_EJEMPLO,
     fondo: fondo,
-    LEYENDA: '# A N R W I = ? x X P Q p q - L B S E o ^ ~ T k b f K c m g u F h r C l y d e j v a'
+    particulas: particulas,
+    LEYENDA: '# A N R W I = ? x X P Q p q - L B S E o ^ ~ T k b f K c m g u F h r C l y d e j v a M'
   };
 })(typeof window !== 'undefined' ? window : globalThis);
 /*
@@ -3555,6 +4210,8 @@ const MUNDOS = [
     nombre: "Pradera",
     tema: "pradera",
     jefeTipo: "koopa",
+    climas: {},                    // fase (1-8) -> clima de bloques.js; sin clima = despejado
+    particulas: false,
     hora: 0.25,
     paleta: {
       cielo: "#4aa8ff", lejos: "#8ee07a", cerca: "#3cb84a", arbusto: "#2a9a3a",
@@ -3571,6 +4228,8 @@ const MUNDOS = [
     nombre: "Desierto",
     tema: "desierto",
     jefeTipo: "arena",
+    climas: { 1: "arena", 4: "arena" },
+    particulas: false,
     hora: 0.5,
     paleta: {
       cielo: "#4fc3f7", lejos: "#f2c38a", cerca: "#f0b860", arbusto: "#7aa83a",
@@ -3587,6 +4246,9 @@ const MUNDOS = [
     nombre: "Bosque",
     tema: "bosque",
     jefeTipo: "selva",
+    climas: { 4: "lluvia", 5: "niebla", 8: "niebla" },
+    particulas: true,              // hojas que caen y luciérnagas de noche (solo en el bosque, sin clima)
+    cascada: [4],                  // el río tiene cascada en el fondo
     hora: 0.75,
     paleta: {
       cielo: "#2d6b3a", lejos: "#245a2f", cerca: "#1d4d28", arbusto: "#16381e",
@@ -3602,6 +4264,8 @@ const MUNDOS = [
     nombre: "Cueva",
     tema: "cueva",
     jefeTipo: "magma",
+    climas: {},
+    particulas: false,
     hora: 0.25,
     paleta: {
       cielo: "#2a2438", lejos: "#3b3350", cerca: "#4a4262", arbusto: "#3b3350",
@@ -3617,6 +4281,8 @@ const MUNDOS = [
     nombre: "Hielo",
     tema: "hielo",
     jefeTipo: "helado",
+    climas: { 1: "nieve", 2: "nieve", 3: "nieve", 4: "nieve", 5: "nieve", 6: "nieve", 7: "tormenta", 8: "nieve" },
+    particulas: false,
     hora: 0.25,
     paleta: {
       cielo: "#a8dcf5", lejos: "#c8e8f8", cerca: "#e6f6ff", arbusto: "#8fc8e0",
@@ -3632,6 +4298,8 @@ const MUNDOS = [
     nombre: "Agua",
     tema: "agua",
     jefeTipo: "abisal",
+    climas: { 2: "lluvia", 7: "tormenta" },
+    particulas: false,
     hora: 0.5,
     paleta: {
       cielo: "#1f5fa8", lejos: "#2a74c0", cerca: "#2f86d0", arbusto: "#2a6fb0",
@@ -3647,6 +4315,8 @@ const MUNDOS = [
     nombre: "Castillo",
     tema: "castillo",
     jefeTipo: "golem",
+    climas: { 1: "niebla" },
+    particulas: false,
     hora: 0.5,
     paleta: {
       cielo: "#1a1a2e", lejos: "#2a2a44", cerca: "#363656", arbusto: "#2a2a44",
@@ -3662,6 +4332,8 @@ const MUNDOS = [
     nombre: "Cielo",
     tema: "cielo",
     jefeTipo: "oscuro",
+    climas: { 6: "tormenta", 7: "niebla" },
+    particulas: false,
     hora: 0.25,
     paleta: {
       cielo: "#9ad8ff", lejos: "#ffffff", cerca: "#f0f8ff", arbusto: "#ffffff",
@@ -3701,6 +4373,11 @@ function construirMapa(m) {
   return seq;
 }
 for (const m of MUNDOS) m.mapa = construirMapa(m);
+// Cada fase lleva su clima y su cascada según el mundo (ver climas y cascada en MUNDOS)
+for (const m of MUNDOS) m.niveles.forEach((nv, i) => {
+  nv.clima = m.climas[i + 1] || null;
+  nv.cascada = !!(m.cascada && m.cascada.includes(i + 1));
+});
 
 /* Paleta de los niveles de castillo (piedra, atardecer y antorchas) */
 const PALETA_CASTILLO = {
@@ -4703,14 +5380,23 @@ const ESC_FONDO = (GY * TILE) / 144;
 
 // Fondo del escenario. El cielo, el sol o la luna, las nubes y las montañas vienen de bloques.js
 // y cambian con la hora (0 amanecer, 0.25 día, 0.5 atardecer, 0.75 noche); la cueva usa roca.
-function dibujarFondo(cam, pal, tema, hora) {
-  if (tema === "castillo") return escenaCastillo(cam, pal);
+// lv (opcional): el nivel, de donde salen su clima, su cascada y si hay hojas y luciérnagas
+function dibujarFondo(cam, pal, tema, hora, lv) {
+  const clima = lv ? lv.clima : null, t = performance.now() / 1000;
+  if (tema === "castillo") {
+    escenaCastillo(cam, pal);
+    if (clima) Bloques.clima(ctx, W, H, t, clima);   // niebla del foso: entre el castillo y las piezas
+    return;
+  }
   // El cielo llega hasta arriba de la pantalla, también en las pantallas altas (OY > 0)
   ctx.save();
   ctx.translate(0, OY);
   ctx.scale(ESC_FONDO, ESC_FONDO);
-  Bloques.fondo(ctx, cam.x, 0, W / ESC_FONDO, (H - OY) / ESC_FONDO, performance.now() / 1000,
-    { hora: hora, ambiente: tema === "cueva" ? "cueva" : "cielo", colinas: tema !== "desierto", arriba: OY / ESC_FONDO });
+  Bloques.fondo(ctx, cam.x, 0, W / ESC_FONDO, (H - OY) / ESC_FONDO, t,
+    { hora: hora, ambiente: tema === "cueva" ? "cueva" : "cielo", clima: clima, cascada: !!(lv && lv.cascada),
+      colinas: tema !== "desierto", arriba: OY / ESC_FONDO });
+  // Hojas que caen y luciérnagas: solo en el bosque y sin clima (como en la demo de bloques.js)
+  if (lv && lv.particulas && !clima) Bloques.particulas(ctx, W / ESC_FONDO, (H - OY) / ESC_FONDO, t, cam.x, hora);
   ctx.restore();
   // En el desierto, las dunas y las pirámides van encima del cielo
   if (tema === "desierto") {
@@ -4907,6 +5593,9 @@ class Level {
     this.pal = this.castillo ? PALETA_CASTILLO : mundo.paleta;
     this.temaKey = this.castillo ? "castillo" : mundo.tema;   // separa la caché de sprites por tema
     this.hora = def.hora !== undefined ? def.hora : mundo.hora;   // momento del día del fondo
+    this.clima = def.clima || null;          // lluvia, nieve, niebla... (bloques.js)
+    this.cascada = !!def.cascada;            // cascada en el fondo (el río del bosque)
+    this.particulas = !!mundo.particulas;    // hojas y luciérnagas (el bosque)
     this.avisoT = 0;   // tiempo que se muestra el aviso "derrota al jefe"
     this.player = new Player(data.start.x, data.start.y);
     this.enemigos = [];   // { e: objeto de enemigos.js, llevado: true si el jugador lo lleva }
@@ -5032,7 +5721,7 @@ class Level {
   // Dibuja el nivel completo con la cámara actual
   dibujar(game) {
     const cam = this.cam;
-    dibujarFondo(cam, this.pal, this.temaKey, this.hora);
+    dibujarFondo(cam, this.pal, this.temaKey, this.hora, this);
     // El área de diseño se desplaza según la pantalla (OY); el HUD se dibuja aparte, arriba
     ctx.save();
     ctx.translate(0, OY);
