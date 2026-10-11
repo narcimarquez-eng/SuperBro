@@ -1531,6 +1531,14 @@ function consume(action) {
     }
   }
 
+  // Altura de la cresta de una cordillera en la coordenada wx del mundo (la misma forma que dibuja montanas)
+  function alturaMontana(wx, periodo, amp) {
+    const t = (((wx / periodo) % 1) + 1) % 1;
+    const pico = Math.max(0, 1 - Math.abs(t - 0.5) * 2.6);
+    const roca = 0.06 * Math.abs(Math.sin(wx * 0.37)) + 0.04 * Math.sin(wx * 0.11 + 0.8);
+    return amp * pico * (0.85 + 0.15 * Math.sin(wx * 0.05 + 1.3) + roca);
+  }
+
   // Montañas: picos con relieve irregular, cara iluminada a la izquierda y sombra a la derecha, grietas y nieve
   // con borde irregular (si nieve es true)
   function montanas(g, camX, f, baseY, amp, periodo, cols, sombra, nieve, vistaAncho) {
@@ -1538,11 +1546,7 @@ function consume(action) {
     g.beginPath();
     g.moveTo(-2, 144);
     for (let x = -2; x <= ancho; x += 2) {
-      const wx = x + camX * f;
-      const t = (((wx / periodo) % 1) + 1) % 1;
-      const pico = Math.max(0, 1 - Math.abs(t - 0.5) * 2.6);
-      const roca = 0.06 * Math.abs(Math.sin(wx * 0.37)) + 0.04 * Math.sin(wx * 0.11 + 0.8);
-      const h = amp * pico * (0.85 + 0.15 * Math.sin(wx * 0.05 + 1.3) + roca);
+      const h = alturaMontana(x + camX * f, periodo, amp);
       g.lineTo(x, baseY - h);
     }
     g.lineTo(ancho, 144);
@@ -1623,50 +1627,46 @@ function consume(action) {
     g.beginPath(); g.ellipse(x, y - 1, ancho * 0.45, 1.6, 0, 0, Math.PI * 2); g.fill();
   }
 
-  // Cascada de plano intermedio: un salto de agua grande que cae por una pared de roca hasta una poza
-  // (la poza va delante de las montañas lejanas y detrás de las colinas cercanas)
-  function cascadaMedia(g, camX, tiempo) {
-    const f = 0.3, ciclo = 260;
-    for (let k = -1; k <= 1; k++) {
-      const x0 = ((130 - camX * f) % ciclo + ciclo) % ciclo + k * ciclo;
-      if (x0 < -40 || x0 > 280) continue;
-      const yArriba = 38, yPoza = 104;
-      // pared de roca con borde irregular
-      g.fillStyle = grad(g, 0, yArriba, 0, yPoza, ['rgba(176,186,206,1)', 'rgba(118,128,150,1)']);
+  // Cascada de la cordillera lejana: sale de la cresta, cae por una garganta de la ladera y llega a una poza al pie.
+  // Va pegada a las montañas (mismo paralaje y misma altura de cresta) y se tiñe de noche igual que ellas.
+  function cascadaMedia(g, camX, tiempo, noche, pais, vistaW) {
+    const f = 0.1, periodo = 150, amp = 60, baseY = 104;
+    const n0 = Math.floor((camX * f - 40) / periodo) - 1, n1 = Math.floor((camX * f + vistaW + 40) / periodo) + 1;
+    for (let n = n0; n <= n1; n++) {
+      if (n % 2 !== 0) continue;                              // una cascada cada dos picos
+      const wxG = periodo * (n + 0.5) - 20;                   // garganta a la izquierda del pico (cara iluminada)
+      const xs = wxG - camX * f;
+      if (xs < -30 || xs > vistaW + 30) continue;
+      const yTop = baseY - alturaMontana(wxG, periodo, amp);  // el agua nace en la cresta
+      // garganta de roca oscura por la que baja el agua, con borde iluminado por la izquierda
+      g.fillStyle = rgba(tinta(pais.sombra, noche, 0.75), 0.95);
       g.beginPath();
-      g.moveTo(x0 - 22, yArriba + 4); g.lineTo(x0 - 6, yArriba - 2); g.lineTo(x0 + 10, yArriba);
-      g.lineTo(x0 + 24, yArriba + 8); g.lineTo(x0 + 18, yArriba + 34); g.lineTo(x0 + 24, yPoza - 6);
-      g.lineTo(x0 + 6, yPoza); g.lineTo(x0 - 4, yPoza - 4); g.lineTo(x0 - 12, yPoza - 2);
-      g.lineTo(x0 - 24, yPoza - 20); g.lineTo(x0 - 18, yArriba + 30);
+      // los bordes de la garganta siguen la silueta de la cresta, no una línea horizontal
+      const yIzq = baseY - alturaMontana(wxG - 6, periodo, amp), yDer = baseY - alturaMontana(wxG + 6, periodo, amp);
+      g.moveTo(xs - 6, yIzq); g.lineTo(xs + 6, yDer); g.lineTo(xs + 9, baseY); g.lineTo(xs - 9, baseY);
       g.closePath(); g.fill();
-      // reborde de roca iluminado por la izquierda
-      g.strokeStyle = 'rgba(210,222,240,0.5)'; g.lineWidth = 0.7;
-      g.beginPath(); g.moveTo(x0 - 22, yArriba + 4); g.lineTo(x0 - 18, yArriba + 30); g.lineTo(x0 - 24, yPoza - 20); g.stroke();
-      // labio del salto: espuma blanca en el borde superior
-      g.fillStyle = 'rgba(255,255,255,0.95)';
-      g.beginPath(); g.ellipse(x0, yArriba, 7, 2, 0, 0, Math.PI * 2); g.fill();
-      // tres cintas de agua que bajan a velocidades distintas
-      [[-5, 46], [0, 60], [5, 40]].forEach(function (c, i) {
-        const xs = x0 + c[0];
-        g.fillStyle = grad(g, 0, yArriba, 0, yPoza, ['rgba(255,255,255,1)', 'rgba(205,234,252,0.95)']);
-        g.beginPath();
-        g.moveTo(xs - 1.6, yArriba); g.lineTo(xs + 1.6, yArriba);
-        g.lineTo(xs + 2.6, yPoza - 2); g.lineTo(xs - 2.6, yPoza - 2);
-        g.closePath(); g.fill();
-        // brillos que bajan más deprisa que la cinta
-        for (let j = 0; j < 4; j++) {
-          const y = yArriba + ((tiempo * c[1] + j * 13 + i * 5) % (yPoza - yArriba - 6));
-          g.fillStyle = 'rgba(255,255,255,0.95)';
-          g.fillRect(xs - 0.6, y, 1.2, 4);
-        }
-      });
-      // bruma que sube de la caída
+      g.strokeStyle = 'rgba(210,222,240,0.45)'; g.lineWidth = 0.6;
+      g.beginPath(); g.moveTo(xs - 6, yIzq + 1); g.lineTo(xs - 9, baseY - 2); g.stroke();
+      // lámina de agua que baja por la garganta
+      g.fillStyle = grad(g, 0, yTop, 0, baseY, ['rgba(235,248,255,0.95)', 'rgba(130,195,235,0.9)']);
+      g.beginPath();
+      g.moveTo(xs - 2.5, yTop); g.lineTo(xs + 2.5, yTop); g.lineTo(xs + 4.5, baseY - 1); g.lineTo(xs - 4.5, baseY - 1);
+      g.closePath(); g.fill();
+      // brillos que bajan por el agua a distinta velocidad
+      for (let j = 0; j < 3; j++) {
+        const y = yTop + ((tiempo * 40 + j * 13 + n * 7) % Math.max(1, baseY - yTop - 6));
+        g.fillStyle = 'rgba(255,255,255,0.95)';
+        g.fillRect(xs - 0.8, y, 1.6, 4);
+      }
+      // labio de espuma donde nace la cascada, sobre la cresta
+      g.fillStyle = 'rgba(255,255,255,0.9)';
+      g.beginPath(); g.ellipse(xs, yTop + 2, 3.5, 1.1, 0, 0, Math.PI * 2); g.fill();
+      // poza al pie, con bruma y salpicaduras
+      g.fillStyle = grad(g, xs - 14, 0, xs + 14, 0, ['rgba(90,170,220,0.95)', 'rgba(140,210,240,0.95)', 'rgba(90,170,220,0.95)']);
+      g.beginPath(); g.ellipse(xs, baseY, 14, 2.6, 0, 0, Math.PI * 2); g.fill();
       g.fillStyle = 'rgba(255,255,255,' + (0.22 + 0.06 * Math.sin(tiempo * 0.9)).toFixed(3) + ')';
-      g.beginPath(); g.ellipse(x0, yPoza - 3, 20 + Math.sin(tiempo * 0.7) * 2, 6, 0, 0, Math.PI * 2); g.fill();
-      // poza: agua azul con reflejos y los efectos de salpicadura
-      g.fillStyle = grad(g, x0 - 20, 0, x0 + 20, 0, ['rgba(90,170,220,0.95)', 'rgba(140,210,240,0.95)', 'rgba(90,170,220,0.95)']);
-      g.beginPath(); g.ellipse(x0, yPoza, 22, 3.6, 0, 0, Math.PI * 2); g.fill();
-      efectosAgua(g, x0, yPoza, 36, tiempo, 3);
+      g.beginPath(); g.ellipse(xs, baseY - 3, 9 + Math.sin(tiempo * 0.7), 3, 0, 0, Math.PI * 2); g.fill();
+      efectosAgua(g, xs, baseY, 24, tiempo, 3);
     }
   }
 
@@ -1848,16 +1848,17 @@ function consume(action) {
     montanas(g, camX, 0.1, 104, 60, 150,
       pais.montana.map(function (c) { return tinta(c, noche, 0.6); }),
       tinta(pais.sombra, noche, 0.5), pais.nieve, vistaW);
+    // Cascada pegada a las montañas lejanas: la cordillera y las colinas van delante de ella
+    if (opt.cascada !== false && tipo !== 'desierto') cascadaMedia(g, camX, t, noche, pais, vistaW);
 
     // Cordillera cercana: más oscura, sin nieve, en el plano entre las montañas lejanas y las colinas
     montanas(g, camX, 0.18, 118, 38, 110,
       pais.cordillera.map(function (c) { return tinta(c, noche, 0.5); }),
       tinta(pais.sombraCord, noche, 0.5), false, vistaW);
 
-    // Colinas (o dunas) lejanas; la cascada va delante de ellas y detrás de las colinas cercanas
+    // Colinas (o dunas) lejanas
     if (tipo === 'desierto') colina(g, camX, 0.3, 112, 16, 0.012, 2.4, pais.lejos.map(function (c) { return tinta(c, noche, 0.5); }), vistaW);
     else colina(g, camX, 0.3, 112, 20, 0.02, 2.4, pais.lejos.map(function (c) { return tinta(c, noche, 0.5); }), vistaW);
-    if (opt.cascada !== false && tipo !== 'desierto') cascadaMedia(g, camX, t);
     if (tipo === 'desierto') colina(g, camX, 0.7, 128, 12, 0.02, 0.7, pais.cerca.map(function (c) { return tinta(c, noche, 0.5); }), vistaW);
     else colina(g, camX, 0.7, 128, 14, 0.035, 0.7, pais.cerca.map(function (c) { return tinta(c, noche, 0.5); }), vistaW);
 
