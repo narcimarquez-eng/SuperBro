@@ -36,22 +36,36 @@
     display: block;
     background: #000;
   }
+  html, body {
+    touch-action: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
   /* Controles táctiles: solo se muestran en pantallas con puntero "grueso" */
   #pad {
+    --b: 58px;            /* diámetro de los botones grandes */
+    --p: 40px;            /* diámetro de los pequeños */
     display: none;
     position: fixed;
     left: 0; right: 0; bottom: 0;
     height: 150px;
+    z-index: 4;
     pointer-events: none;
     touch-action: none;
     user-select: none;
     -webkit-user-select: none;
   }
+  #pad.tam-s { --b: 48px; --p: 34px; }
+  #pad.tam-l { --b: 68px; --p: 46px; }
   #pad .grupo { position: absolute; bottom: 12px; display: flex; gap: 10px; pointer-events: auto; }
   #pad .izq { left: 14px; }
   #pad .der { right: 14px; align-items: flex-end; }
+  #pad.zurdo .izq { left: auto; right: 14px; }
+  #pad.zurdo .der { right: auto; left: 14px; }
+  #pad.sin-cruceta .izq,
+  #pad.sin-mandos .der { display: none; }
   #pad button {
-    width: 58px; height: 58px;
+    width: var(--b); height: var(--b);
     border-radius: 50%;
     border: 3px solid rgba(255,255,255,0.8);
     background: rgba(0,0,0,0.35);
@@ -60,10 +74,74 @@
     touch-action: none;
   }
   #pad button.on { background: rgba(255,255,255,0.45); }
-  #pad button.peq { width: 40px; height: 40px; font-size: 11px; }
+  #pad button.peq { width: var(--p); height: var(--p); font-size: 11px; }
   #pad .top { position: absolute; top: 8px; right: 8px; display: flex; gap: 8px; pointer-events: auto; }
+  #pad .top button.activo { background: rgba(255,255,255,0.45); }
+  #btn-pantalla, #btn-ajustes { font-size: 16px; }
+  /* Zona de toque sobre el juego: toda la pantalla (gestos) o la mitad izquierda (joystick) */
+  #zonas { display: none; position: fixed; left: 0; top: 0; bottom: 0; right: 0; z-index: 1; touch-action: none; }
+  #zonas.joystick { right: 50%; }
+  /* Joystick flotante: aparece donde pones el dedo */
+  #stick {
+    display: none;
+    position: fixed;
+    width: 112px; height: 112px;
+    border-radius: 50%;
+    border: 3px solid rgba(255,255,255,0.55);
+    background: rgba(0,0,0,0.2);
+    transform: translate(-50%, -50%);
+    pointer-events: none;
+    z-index: 2;
+  }
+  #stick .knob {
+    position: absolute; left: 50%; top: 50%;
+    width: 46px; height: 46px;
+    margin: -23px 0 0 -23px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.5);
+    border: 2px solid rgba(255,255,255,0.9);
+  }
+  /* Hoja de ajustes de controles, sobre el juego */
+  #ajustes {
+    display: none;
+    position: fixed; inset: 0;
+    z-index: 10;
+    background: rgba(8,10,22,0.86);
+    align-items: center; justify-content: center;
+    padding: 10px;
+    box-sizing: border-box;
+  }
+  #ajustes.abierto { display: flex; }
+  #ajustes .caja {
+    width: min(440px, 100%);
+    max-height: 100%;
+    overflow: auto;
+    box-sizing: border-box;
+    background: var(--panel);
+    border: 3px solid var(--line);
+    padding: 10px 14px 14px;
+    font-size: 13px;
+  }
+  #ajustes h2 { margin: 10px 0 6px; font-size: 13px; color: var(--gold); letter-spacing: 1px; }
+  #ajustes h2:first-child { margin-top: 0; }
+  #ajustes .fila { display: flex; gap: 6px; flex-wrap: wrap; }
+  #ajustes button {
+    flex: 1 1 auto;
+    min-width: 84px;
+    padding: 9px 6px;
+    font: bold 12px "Courier New", monospace;
+    color: #fff;
+    background: rgba(0,0,0,0.35);
+    border: 2px solid rgba(255,255,255,0.7);
+    cursor: pointer;
+  }
+  #ajustes button[aria-pressed="true"] { background: var(--gold); color: #111; border-color: var(--gold); }
+  #ajustes .desc { margin: 8px 0 4px; min-height: 3.6em; line-height: 1.4; }
+  #ajustes label { display: flex; align-items: center; gap: 8px; margin-top: 12px; cursor: pointer; }
+  #ajustes input { width: 18px; height: 18px; }
   @media (pointer: coarse) {
     #pad { display: block; }
+    #zonas.gestos, #zonas.joystick { display: block; }
     #hint { display: none; }
   }
   #hint {
@@ -80,6 +158,8 @@
 </head>
 <body>
 <canvas id="c" width="256" height="224"></canvas>
+<div id="zonas"></div>
+<div id="stick"><div class="knob"></div></div>
 <div id="pad">
   <div class="grupo izq">
     <button data-act="left">&#9664;</button>
@@ -92,8 +172,32 @@
     <button data-act="jump">SALTO</button>
   </div>
   <div class="top">
+    <button class="peq" id="btn-pantalla" aria-label="Pantalla completa" title="Pantalla completa">&#x26F6;</button>
+    <button class="peq" id="btn-ajustes" aria-label="Ajustes de controles" title="Ajustes de controles">&#x2699;</button>
     <button class="peq" data-act="enter">OK</button>
     <button class="peq" data-act="pause">II</button>
+  </div>
+</div>
+<div id="ajustes" role="dialog" aria-modal="true" aria-label="Ajustes de controles">
+  <div class="caja">
+    <h2>CONTROLES</h2>
+    <div class="fila">
+      <button data-esquema="botones">BOTONES</button>
+      <button data-esquema="zurdo">ZURDO</button>
+      <button data-esquema="joystick">JOYSTICK</button>
+      <button data-esquema="gestos">GESTOS</button>
+    </div>
+    <p class="desc" id="desc-esquema"></p>
+    <h2>TAMAÑO DE BOTONES</h2>
+    <div class="fila">
+      <button data-tam="s">PEQUEÑO</button>
+      <button data-tam="m">MEDIO</button>
+      <button data-tam="l">GRANDE</button>
+    </div>
+    <label><input type="checkbox" id="correr-siempre"> Correr siempre (sin mantener X)</label>
+    <div class="fila" style="margin-top:14px">
+      <button id="cerrar-ajustes">CERRAR</button>
+    </div>
   </div>
 </div>
 <div id="hint">Flechas: mover · Z/Espacio: saltar · X: correr/disparar · C/Shift: salto giratorio · Q: usar potenciador · Enter: entrar · P/Esc: pausa</div>
@@ -114,6 +218,26 @@ let H = H_MIN;             // alto interno actual
 let OY = 0;                // desplazamiento vertical del área de diseño (cielo arriba, suelo para los botones abajo)
 const TOUCH = matchMedia("(pointer: coarse)").matches;
 const ALTO_BOTONES_PX = 150; // alto reservado a los botones táctiles, en píxeles del dispositivo
+
+// Ajustes de controles táctiles. Se guardan en este navegador (localStorage, con try/catch).
+const CTL_KEY = "superbro_ctl_v1";
+const ESQUEMAS = ["botones", "zurdo", "joystick", "gestos"];
+const DESC_ESQUEMA = {
+  botones: "Cruceta a la izquierda y acciones a la derecha.",
+  zurdo: "Lo mismo, con la cruceta a la derecha, para zurdos.",
+  joystick: "Arrastra en la mitad izquierda: el mando aparece donde pones el dedo. Los botones de la derecha siguen igual.",
+  gestos: "Sin botones: mantén abajo a la izquierda para ir a la izquierda, abajo a la derecha para ir a la derecha, y toca arriba para saltar."
+};
+const ajustes = { esquema: "botones", tam: "m", correr: false };
+try {
+  const guardado = JSON.parse(localStorage.getItem(CTL_KEY) || "{}");
+  if (ESQUEMAS.includes(guardado.esquema)) ajustes.esquema = guardado.esquema;
+  if (["s", "m", "l"].includes(guardado.tam)) ajustes.tam = guardado.tam;
+  ajustes.correr = guardado.correr === true;
+} catch (e) { /* sin acceso a localStorage: valores por defecto */ }
+function guardarAjustes() {
+  try { localStorage.setItem(CTL_KEY, JSON.stringify(ajustes)); } catch (e) { /* modo privado: no se guarda */ }
+}
 const TILE = 16;           // tamaño de tile en píxeles
 const GRAVITY = 900;       // px/s²
 const MAX_FALL = 360;      // velocidad máxima de caída
@@ -134,8 +258,9 @@ function resize() {
   const a = sw / sh;
   if (a >= W_MIN / H_MIN) { H = H_MIN; W = Math.round(H_MIN * a); }
   else { W = W_MIN; H = Math.round(W_MIN / a); }
-  // En vertical con botones táctiles se reserva una franja inferior (suelo) para ellos
-  const reserva = TOUCH && H > H_MIN ? Math.round(ALTO_BOTONES_PX * H / sh) : 0;
+  // En vertical con botones táctiles se reserva una franja inferior (suelo) para ellos.
+  // Con gestos no hay botones, así que el juego ocupa toda la pantalla.
+  const reserva = TOUCH && H > H_MIN && ajustes.esquema !== "gestos" ? Math.round(ALTO_BOTONES_PX * H / sh) : 0;
   OY = Math.max(0, H - H_MIN - reserva);
   canvas.width = W * U;
   canvas.height = H * U;
@@ -298,8 +423,7 @@ function rect(x, y, w, h, color) {
    4. ENTRADA
    Estados "pressed" (flanco de subida) y "held" (mantenido).
    ===================================================================== */
-const keys = {};     // tecla -> true mientras está pulsada
-const pressed = {};  // tecla -> true solo el frame en que se pulsó
+const pressed = {};  // acción -> true solo el frame en que empieza (flanco de subida)
 const KEYMAP = {
   ArrowLeft: "left", KeyA: "left",
   ArrowRight: "right", KeyD: "right",
@@ -312,40 +436,196 @@ const KEYMAP = {
   KeyP: "pause", Escape: "pause",
   KeyQ: "item",
 };
-const held = { left: 0, right: 0, up: 0, down: 0, jump: 0, run: 0, spin: 0, enter: 0, pause: 0, item: 0 };
+const ACCIONES = ["left", "right", "up", "down", "jump", "run", "spin", "enter", "pause", "item", "reset"];
+const held = { left: 0, right: 0, up: 0, down: 0, jump: 0, run: 0, spin: 0, enter: 0, pause: 0, item: 0, reset: 0 };
+
+/* Cada acción se mantiene si lo hace al menos una fuente:
+   - tecla: teclado físico
+   - dedos: cada dedo en pantalla (botones, joystick o gestos)
+   - correr siempre: la opción de ajustes */
+const tecla = {};        // acción -> true mientras una tecla física la mantiene
+const dedos = new Map(); // pointerId -> { acciones: Set, ox, oy } de cada dedo en pantalla
+let autoCorrer = false;  // se fija al aplicar los ajustes
+let hojaAbierta = false; // con la hoja de ajustes abierta el juego se detiene
+
+function refrescarHeld() {
+  const tocando = {};
+  for (const d of dedos.values()) for (const a of d.acciones) tocando[a] = true;
+  for (const a of ACCIONES) {
+    const on = !!(tecla[a] || tocando[a] || (autoCorrer && a === "run"));
+    if (on && !held[a]) pressed[a] = true;   // flanco de subida, igual que una tecla
+    held[a] = on ? 1 : 0;
+  }
+}
+function ponerDedo(id, acciones, extra) {
+  dedos.set(id, Object.assign({ acciones: new Set(acciones) }, extra || {}));
+  refrescarHeld();
+}
+function quitarDedo(id) {
+  const d = dedos.get(id) || null;
+  if (d) { dedos.delete(id); refrescarHeld(); }
+  return d;
+}
 
 addEventListener("keydown", (e) => {
   const act = KEYMAP[e.code];
   if (!act) return;
   e.preventDefault();
-  if (!e.repeat) pressed[act] = true;
-  held[act] = 1;
+  if (e.repeat) return;
+  tecla[act] = true;
+  refrescarHeld();
 });
 addEventListener("keyup", (e) => {
   const act = KEYMAP[e.code];
   if (!act) return;
-  held[act] = 0;
+  tecla[act] = false;
+  refrescarHeld();
 });
-// Al perder el foco se sueltan todas las teclas para evitar "teclas pegadas"
+// Al perder el foco se sueltan todas las entradas para evitar "teclas pegadas"
 addEventListener("blur", () => {
-  for (const k in held) held[k] = 0;
+  for (const k in tecla) tecla[k] = false;
+  dedos.clear();
+  refrescarHeld();
 });
 
-/* Botones táctiles: cada botón con data-act se comporta como una tecla */
+/* Botones táctiles: cada botón con data-act se comporta como una tecla.
+   Cada dedo mantiene su propio botón, así que se pueden pulsar varios a la vez. */
 document.querySelectorAll("#pad [data-act]").forEach((b) => {
   const act = b.dataset.act;
   b.addEventListener("pointerdown", (e) => {
     e.preventDefault();
     b.setPointerCapture(e.pointerId);
-    held[act] = 1;
-    pressed[act] = true;   // flanco de subida, igual que una tecla
+    ponerDedo(e.pointerId, [act]);
     b.classList.add("on");
   });
-  const soltar = () => { held[act] = 0; b.classList.remove("on"); };
+  const soltar = (e) => { quitarDedo(e.pointerId); b.classList.remove("on"); };
   b.addEventListener("pointerup", soltar);
   b.addEventListener("pointercancel", soltar);
   b.addEventListener("lostpointercapture", soltar);
 });
+
+/* Zona de toque sobre el juego (esquemas "gestos" y "joystick").
+   gestos: toda la pantalla. Abajo a la izquierda / derecha = andar; arriba = saltar.
+   joystick: mitad izquierda. El mando nace donde se pone el dedo. */
+const zonas = document.getElementById("zonas");
+const stick = document.getElementById("stick");
+const stickKnob = stick.querySelector(".knob");
+const barra = document.getElementById("pad");
+const ZONA_MUERTA = 14;   // px: desplazamiento horizontal mínimo para contar como dirección
+const ZONA_MUERTA_V = 26; // px: lo mismo para arriba/abajo, más alto para no subir sin querer al andar
+const RADIO_STICK = 40;   // px: recorrido máximo de la bola del joystick
+
+zonas.addEventListener("pointerdown", (e) => {
+  e.preventDefault();
+  zonas.setPointerCapture(e.pointerId);
+  if (ajustes.esquema === "gestos") {
+    const arriba = e.clientY < innerHeight / 2;
+    if (arriba) pressed.enter = true;   // tocar arriba también confirma en los menús
+    ponerDedo(e.pointerId, [arriba ? "jump" : e.clientX < innerWidth / 2 ? "left" : "right"]);
+  } else if (ajustes.esquema === "joystick") {
+    ponerDedo(e.pointerId, [], { ox: e.clientX, oy: e.clientY });
+    stick.style.left = e.clientX + "px";
+    stick.style.top = e.clientY + "px";
+    stickKnob.style.transform = "";
+    stick.style.display = "block";
+  }
+});
+zonas.addEventListener("pointermove", (e) => {
+  const d = dedos.get(e.pointerId);
+  if (!d || d.ox === undefined) return;
+  const dx = e.clientX - d.ox, dy = e.clientY - d.oy;
+  const acc = new Set();
+  if (dx < -ZONA_MUERTA) acc.add("left"); else if (dx > ZONA_MUERTA) acc.add("right");
+  if (dy < -ZONA_MUERTA_V) acc.add("up"); else if (dy > ZONA_MUERTA_V) acc.add("down");
+  d.acciones = acc;
+  // La bola se queda dentro del anillo
+  const m = Math.hypot(dx, dy), k = m > RADIO_STICK ? RADIO_STICK / m : 1;
+  stickKnob.style.transform = `translate(${(dx * k).toFixed(1)}px, ${(dy * k).toFixed(1)}px)`;
+  refrescarHeld();
+});
+function soltarZona(e) {
+  const d = quitarDedo(e.pointerId);
+  if (d && d.ox !== undefined) {
+    const otro = [...dedos.values()].find((x) => x.ox !== undefined);
+    if (!otro) stick.style.display = "none";
+  }
+}
+zonas.addEventListener("pointerup", soltarZona);
+zonas.addEventListener("pointercancel", soltarZona);
+zonas.addEventListener("lostpointercapture", soltarZona);
+
+/* Pantalla completa (botón ⛶) y ajustes (botón ⚙) */
+const docEl = document.documentElement;
+const pedirPantalla = docEl.requestFullscreen || docEl.webkitRequestFullscreen;
+const btnPantalla = document.getElementById("btn-pantalla");
+const hoja = document.getElementById("ajustes");
+function enPantallaCompleta() { return !!(document.fullscreenElement || document.webkitFullscreenElement); }
+function alternarPantallaCompleta() {
+  if (enPantallaCompleta()) {
+    const salir = document.exitFullscreen || document.webkitExitFullscreen;
+    try { const p = salir.call(document); if (p && p.catch) p.catch(() => {}); } catch (e) { /* nada que hacer */ }
+    return;
+  }
+  try {
+    const p = pedirPantalla.call(docEl, { navigationUI: "hide" });
+    if (p && p.catch) p.catch(() => {});
+  } catch (e) { /* el navegador no deja entrar: el botón no hace nada */ }
+  // En móvil, girar a horizontal al entrar en pantalla completa, si el navegador lo permite
+  if (screen.orientation && screen.orientation.lock) screen.orientation.lock("landscape").catch(() => {});
+}
+function alCambiarPantalla() {
+  btnPantalla.classList.toggle("activo", enPantallaCompleta());
+  if (!enPantallaCompleta() && screen.orientation && screen.orientation.unlock) {
+    try { screen.orientation.unlock(); } catch (e) { /* no estaba bloqueada */ }
+  }
+}
+document.addEventListener("fullscreenchange", alCambiarPantalla);
+document.addEventListener("webkitfullscreenchange", alCambiarPantalla);
+btnPantalla.addEventListener("click", alternarPantallaCompleta);
+if (!pedirPantalla) btnPantalla.hidden = true;   // iPhone: la web no puede ir a pantalla completa
+
+function pintarAjustes() {
+  hoja.querySelectorAll("[data-esquema]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.esquema === ajustes.esquema)));
+  hoja.querySelectorAll("[data-tam]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tam === ajustes.tam)));
+  document.getElementById("desc-esquema").textContent = DESC_ESQUEMA[ajustes.esquema];
+  document.getElementById("correr-siempre").checked = ajustes.correr;
+}
+function aplicarAjustes() {
+  // Clases de la barra de botones y de la zona de toque según el esquema
+  barra.className = [
+    ajustes.esquema === "zurdo" ? "zurdo" : "",
+    "tam-" + ajustes.tam,
+    ajustes.esquema === "joystick" || ajustes.esquema === "gestos" ? "sin-cruceta" : "",
+    ajustes.esquema === "gestos" ? "sin-mandos" : ""
+  ].filter(Boolean).join(" ");
+  zonas.className = ajustes.esquema === "gestos" || ajustes.esquema === "joystick" ? ajustes.esquema : "";
+  if (ajustes.esquema !== "joystick") stick.style.display = "none";
+  autoCorrer = ajustes.correr;
+  refrescarHeld();
+  resize();   // la franja inferior reservada depende del esquema
+  pintarAjustes();
+}
+function abrirAjustes(abrir) {
+  hojaAbierta = abrir;
+  hoja.classList.toggle("abierto", abrir);
+  // Al abrir o cerrar la hoja se sueltan los dedos: nada queda "pegado"
+  dedos.clear();
+  barra.querySelectorAll(".on").forEach((b) => b.classList.remove("on"));
+  stick.style.display = "none";
+  refrescarHeld();
+}
+hoja.querySelectorAll("[data-esquema]").forEach((b) => b.addEventListener("click", () => {
+  ajustes.esquema = b.dataset.esquema; guardarAjustes(); aplicarAjustes();
+}));
+hoja.querySelectorAll("[data-tam]").forEach((b) => b.addEventListener("click", () => {
+  ajustes.tam = b.dataset.tam; guardarAjustes(); aplicarAjustes();
+}));
+document.getElementById("correr-siempre").addEventListener("change", (e) => {
+  ajustes.correr = e.target.checked; guardarAjustes(); aplicarAjustes();
+});
+document.getElementById("btn-ajustes").addEventListener("click", () => abrirAjustes(true));
+document.getElementById("cerrar-ajustes").addEventListener("click", () => abrirAjustes(false));
+aplicarAjustes();
 
 // Consume un "pressed" para que solo actúe una vez por pulsación
 function consume(action) {
@@ -7003,7 +7283,7 @@ function bucle(t) {
   const dt = Math.min(1 / 30, (t - ultimo) / 1000);
   ultimo = t;
   try {
-    actualizarJuego(dt);
+    if (!hojaAbierta) actualizarJuego(dt);   // con la hoja de ajustes abierta el juego se detiene
     ctx.setTransform(U, 0, 0, U, 0, 0);   // dibujo en coordenadas lógicas
     dibujarJuego(game);
   } catch (err) {
