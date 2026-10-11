@@ -7682,6 +7682,7 @@ class Overworld {
     txt("MUNDO " + this.m.id + " - " + this.m.nombre.toUpperCase(), W / 2, 3, PAL.w, "center");
     if (this.g.pruebaTodo) txt("PRUEBA", W - 4, 3, PAL.y, "right");
     const texto = n.ref !== undefined ? this.m.niveles[n.ref].nombre : this.hecho(n) ? "CASA VACIA" : "CASA DE MINIJUEGOS";
+    rect(0, H - 46, W, 46, "rgba(0,0,0,0.5)");   // banda oscura para leer los textos de abajo
     txt(texto, W / 2, H - 12, PAL.w, "center");
     dibujarReserva(W / 2 - 60, H - 42, this.g.reserva);
     txt("ENTER: entrar  ESC: mundos", W / 2, H - 24, PAL.w, "center");
@@ -7697,20 +7698,64 @@ function dibujarReserva(x, y, reserva) {
   });
 }
 
-/* Pantalla de selección de mundo: 8 tarjetas en 4x2 */
+/* Paisaje en miniatura de un mundo con su paleta: cielo, colinas lejanas y suelo con franja de hierba */
+function miniPaisaje(x, y, w, h, pal) {
+  rect(x, y, w, h, pal.cielo);
+  for (let c = 0; c < w; c++) {
+    const alto = Math.round(12 + 7 * Math.sin(c * 0.21 + 1.1) + 3 * Math.sin(c * 0.57 + 0.4));
+    rect(x + c, y + h - 16 - alto, 1, alto + 16, pal.lejos);
+  }
+  rect(x, y + h - 16, w, 16, pal.cerca);
+  rect(x, y + h - 16, w, 2, pal.arbusto);
+}
+
+// Candado de pixel art para los mundos cerrados
+function candado(cx, cy) {
+  rect(cx - 4, cy - 1, 8, 6, PAL.gr);
+  rect(cx - 2, cy - 5, 1, 4, PAL.gr);
+  rect(cx + 1, cy - 5, 1, 4, PAL.gr);
+  rect(cx - 2, cy - 6, 4, 1, PAL.gr);
+  rect(cx - 1, cy + 1, 2, 2, PAL.k);
+}
+
+/* Pantalla de selección de mundo: 8 tarjetas en 4x2, cada una con el paisaje de su mundo */
 function dibujarSelMundo(game) {
-  rect(0, 0, W, H, PAL.k);
+  // Fondo nocturno con estrellas que parpadean
+  const fondo = ctx.createLinearGradient(0, 0, 0, H);
+  fondo.addColorStop(0, "#141c3e");
+  fondo.addColorStop(1, "#2a1f48");
+  ctx.fillStyle = fondo;
+  ctx.fillRect(0, 0, W, H);
+  const t = performance.now();
+  for (let i = 0; i < 40; i++) {
+    ctx.globalAlpha = 0.3 + 0.7 * Math.abs(Math.sin(t / 700 + i * 1.7));
+    rect((i * 97) % W, (i * 53) % 150, 1, 1, PAL.w);
+  }
+  ctx.globalAlpha = 1;
   txt("SELECCION DE MUNDO", W / 2, 10, PAL.y, "center");
   MUNDOS.forEach((m, i) => {
     const col = i % 4, fila = Math.floor(i / 4);
     const x = Math.max(0, Math.floor((W - W_MIN) / 2)) + 10 + col * 61, y = 40 + fila * 80;
     const abierto = game.mundoDesbloqueado(i);
     rect(x, y, 54, 64, PAL.k);
-    rect(x + 2, y + 2, 50, 60, abierto ? m.paleta.cielo : PAL.dgr);
-    txt(String(m.id), x + 27, y + 8, PAL.w, "center");
-    txt(abierto ? m.nombre : "???", x + 27, y + 42, PAL.w, "center");
-    if (game.completados[i + ":" + (m.niveles.length - 1)]) txt("*", x + 27, y + 24, PAL.y, "center");
-    if (i === game.selMundo) rect(x - 2, y - 2, 58, 68, PAL.y);
+    miniPaisaje(x + 2, y + 2, 50, 60, m.paleta);
+    if (!abierto) {
+      rect(x + 2, y + 2, 50, 60, "rgba(8,8,20,0.6)");
+      candado(x + 27, y + 26);
+    }
+    txt(String(m.id), x + 4, y + 5, PAL.w);
+    if (game.completados[i + ":" + (m.niveles.length - 1)]) txt("*", x + 46, y + 5, PAL.y);
+    rect(x + 2, y + 46, 50, 16, "rgba(0,0,0,0.35)");   // franja para leer el nombre sobre cualquier suelo
+    txt(abierto ? m.nombre : "???", x + 27, y + 50, PAL.w, "center");
+    if (i === game.selMundo) {
+      // Anillo amarillo que pulsa alrededor de la tarjeta, sin tapar su contenido
+      ctx.globalAlpha = 0.6 + 0.4 * Math.sin(t / 180);
+      rect(x - 2, y - 2, 58, 2, PAL.y);
+      rect(x - 2, y + 64, 58, 2, PAL.y);
+      rect(x - 2, y, 2, 64, PAL.y);
+      rect(x + 54, y, 2, 64, PAL.y);
+      ctx.globalAlpha = 1;
+    }
   });
   txt("ENTER: jugar   ESC: menu", W / 2, H - 14, PAL.w, "center");
   txt("ITEM (Q): MODO PRUEBA " + (game.pruebaTodo ? "ACTIVO" : "APAGADO"), W / 2, H - 26, game.pruebaTodo ? PAL.y : PAL.w, "center");
