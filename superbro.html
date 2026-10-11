@@ -4635,16 +4635,16 @@ function objetoSprite(tipo) {
 
   x, y: esquina superior izquierda de la caja de colisión (12 × 14 píxeles lógicos).
   El dibujo sobresale 2 px a cada lado y 4 px por encima de la caja; los pies quedan en el borde inferior.
-  camisa: 'fuego' cambia la camisa roja por una blanca (opcional).
+  camisa: 'fuego' cambia la camisa de color por una blanca (opcional).
   El contexto debe tener escala U (o U × zoom), igual que el resto de los dibujos.
 */
 (function (global) {
   'use strict';
 
   const OUT = '#2a1a10';
-  const ROJO = ['#ff7a66', '#d9341f', '#8f1a10'];
+  const MORADO = ['#d7b8ff', '#8b4dea', '#4b1f9a'];
   const BLANCO = ['#ffffff', '#e4e4ee', '#a8a8bc'];   // camisa de la flor de fuego (añadido)
-  const AZUL = ['#8cc4ff', '#2f6fd0', '#183f80'];
+  const NARANJA = ['#ffd29a', '#f7941d', '#a84a06'];
   const PIEL = ['#ffe6cc', '#f2b88a', '#b87850'];
   const PELO = '#5a3418';
 
@@ -4681,7 +4681,7 @@ function objetoSprite(tipo) {
     g.stroke();
   }
 
-  // Brazo: manga roja y mano de piel. Gira alrededor del hombro (ang 0 = colgando)
+  // Brazo: manga de color y mano de piel. Gira alrededor del hombro (ang 0 = colgando)
   function brazo(g, sx, sy, ang, manga) {
     g.save();
     g.translate(sx, sy);
@@ -4693,10 +4693,10 @@ function objetoSprite(tipo) {
     g.restore();
   }
 
-  // Pierna: overol azul y zapato marrón. dx: desplazamiento horizontal; lift: cuánto se levanta el pie
+  // Pierna: overol naranja y zapato marrón. dx: desplazamiento horizontal; lift: cuánto se levanta el pie
   function pierna(g, cadera, dx, lift) {
     const x = cadera + dx, y = 15.2 - lift;
-    g.fillStyle = grad(g, x - 1.5, 0, x + 1.5, 0, AZUL);
+    g.fillStyle = grad(g, x - 1.5, 0, x + 1.5, 0, NARANJA);
     rr(g, x - 1.5, y, 3, 2.6, 1); g.fill(); trazar(g);
     g.fillStyle = grad(g, 0, 16, 0, 18, ['#9a6a3a', '#4a2a10']);
     rr(g, x - 2, 16.2 - lift, 4.2, 1.8, 0.9); g.fill(); trazar(g);
@@ -4706,11 +4706,11 @@ function objetoSprite(tipo) {
     // camisa (roja, o blanca con la flor de fuego)
     g.fillStyle = grad(g, 0, 10.2, 0, 14.4, camisa);
     rr(g, 4.2, 10.2, 7.6, 4.2, 1.4); g.fill(); trazar(g);
-    // overol azul
-    g.fillStyle = grad(g, 0, 12.4, 0, 16.6, AZUL);
+    // overol naranja
+    g.fillStyle = grad(g, 0, 12.4, 0, 16.6, NARANJA);
     rr(g, 4.6, 12.4, 6.8, 4.2, 1); g.fill(); trazar(g);
     // tirantes y botón
-    g.fillStyle = AZUL[1];
+    g.fillStyle = NARANJA[1];
     g.fillRect(5.4, 10.4, 0.9, 2.4); g.fillRect(9.7, 10.4, 0.9, 2.4);
     g.fillStyle = radial(g, 8.2, 13.2, 0.1, 1, ['#fff8c0', '#ffd23f', '#d98a00']);
     g.beginPath(); g.arc(8.1, 13.1, 0.6, 0, Math.PI * 2); g.fill(); trazar(g, 0.4);
@@ -4728,9 +4728,9 @@ function objetoSprite(tipo) {
     g.beginPath(); g.ellipse(8.2, 7.2, 4.1, 3.7, 0, 0, Math.PI * 2); g.fill(); trazar(g);
 
     // gorra roja con visera y emblema
-    g.fillStyle = grad(g, 0, 2.3, 0, 4.8, ROJO);
+    g.fillStyle = grad(g, 0, 2.3, 0, 4.8, MORADO);
     g.beginPath(); g.ellipse(8.1, 4.8, 4.4, 2.5, 0, Math.PI, 0, false); g.closePath(); g.fill(); trazar(g);
-    g.fillStyle = grad(g, 8, 4.7, 8, 6.1, ROJO);
+    g.fillStyle = grad(g, 8, 4.7, 8, 6.1, MORADO);
     rr(g, 8.2, 4.7, 5.2, 1.4, 0.7); g.fill(); trazar(g);
     g.fillStyle = '#ffffff';
     g.beginPath(); g.arc(7.8, 3.9, 0.75, 0, Math.PI * 2); g.fill(); trazar(g, 0.4);
@@ -4786,7 +4786,7 @@ function objetoSprite(tipo) {
     opt = opt || {};
     const dir = opt.dir < 0 ? -1 : 1;
     const estado = opt.estado || 'quieto';
-    const camisa = opt.camisa === 'fuego' ? BLANCO : ROJO;
+    const camisa = opt.camisa === 'fuego' ? BLANCO : MORADO;
     const p = pose(estado, opt.tiempo || 0);
 
     g.save();
@@ -7794,7 +7794,7 @@ function dibujarHUD(game) {
   ctx.fillStyle = franja;
   ctx.fillRect(0, 0, W, 32);
   // Izquierda: jugador, vidas y monedas con icono
-  txtHud("MARIO " + poder, 6, 6);
+  txtHud("BRO " + poder, 6, 6);
   txtHud("X" + String(game.vidas).padStart(2, "0"), 22, 17);
   drawSprite(Bloques.sprite("o0"), 4, 25);
   txtHud("X" + String(game.monedas).padStart(3, "0"), 22, 30, PAL.y);
@@ -7893,7 +7893,7 @@ function dibujarJuego(game) {
   // Pantallas con nivel de fondo
   dibujarNivelYHUD(game);
   if (e === "pausa") velo("PAUSA", "P o ESC para seguir");
-  else if (e === "muerte") velo("MARIO x" + game.vidas, "");
+  else if (e === "muerte") velo("BRO x" + game.vidas, "");
   else if (e === "nivelOK") velo("NIVEL COMPLETADO", "PUNTOS " + game.score);
   else if (e === "mundoOK") velo("MUNDO " + MUNDOS[game.mundoIdx].id + " COMPLETADO", "¡Nuevo mundo abierto!");
   else if (e === "gameover") velo("GAME OVER", "Se reinicia el mapa");
