@@ -3727,7 +3727,7 @@ const DECOR_DE_TEMA = {
      { cols, rows, tiles[][], ents[], plats[], decor[], goalX, theme, boss }
    Tiles: "." vacío, "G" suelo, "B" ladrillo, "Q" bloque ?, "S" bloque
           sólido, "T" tubería, "F" poste de meta,
-          "M" muelle (lanza al pisarlo), "H" pinchos, "V" lava,
+          "M" muelle (lanza alto al pisarlo, con una repisa), "H" pinchos (en el fondo de un hoyo), "V" lava,
           "L" escalera, "D" plataforma de una dirección.
    Entidades: "walker" "shell" "flyer" "plant" "coin" "boss".
    Plataformas (plats): "movil" (va y viene) y "caida" (se cae al pisarla).
@@ -3760,7 +3760,16 @@ function gridVacia(cols) {
   return t;
 }
 
-/* Genera un nivel a partir de gen = { seed, dif, enemigos } y de sus mecánicas */
+/* Genera un nivel a partir de gen = { seed, dif, enemigos } y de sus mecánicas.
+   Cada mecánica es un módulo con sentido. Los módulos reservan sus celdas antes que los bloques
+   sueltos, los enemigos y las monedas, así que no se pisan entre sí:
+     muelle                : lanza a una repisa alta que no se alcanza saltando (monedas y un bloque ?)
+     pinchos               : hoyos con pinchos en el fondo; se saltan, y las monedas marcan el salto
+     una_direccion         : escalinata de plataformas que se atraviesan desde abajo, hasta lo alto
+     escalera              : escalera a un mirador de piedra que no se alcanza saltando
+     plataforma_movil/caida: cruzan los huecos anchos (3 tiles o más)
+     lava                  : los huecos de la zona B son lava
+   Las monedas solo se crean en celdas de aire. */
 function generarNivel(gen, mecanicas = []) {
   const rnd01 = prng(gen.seed);
   const r = (a, b) => a + rnd01() * (b - a);
@@ -3773,18 +3782,33 @@ function generarNivel(gen, mecanicas = []) {
   const ents = [];
   const plats = [];
 
+  // Celdas reservadas por los módulos: ni bloques sueltos, ni enemigos, ni monedas ajenas
+  const reservado = new Set();
+  const clave = (c, rr) => c + "," + rr;
+  const libre = (c, rr) => c >= 0 && c < cols && rr >= 0 && rr < ROWS && tiles[rr][c] === "." && !reservado.has(clave(c, rr));
+  const reservar = (c0, c1, f0, f1) => {
+    for (let c = c0; c <= c1; c++) for (let rr = f0; rr <= f1; rr++) reservado.add(clave(c, rr));
+  };
+  // Monedas que marcan cada módulo: se crean al final, solo si la celda sigue en el aire
+  const monedas = [];
+  const moneda = (c, rr) => monedas.push([c, rr]);
+
   // Límites de las 3 secciones: abierta, plataformas flotantes y meta
   const A1 = 90, B1 = 146, C1 = 180;
   // Huecos saltables caminando (2 tiles) en los primeros mundos; más anchos al subir la dificultad
   const gapMax = dif <= 3 ? 2 : dif <= 5 ? 3 : 4;
+  // Las plataformas necesitan huecos de 3 tiles o más que cruzar: se garantizan dos en la zona B
+  let anchos = usa("plataforma_movil") || usa("plataforma_caida") ? 2 : 0;
 
   // Suelo base con huecos controlados (nunca dos huecos juntos)
   const suelo = new Array(cols).fill(true);
   let c = 6;
   while (c < C1) {
     const seccionB = c >= A1 && c < B1;
-    if (seccionB && rnd01() < 0.25 + dif * 0.04) {
-      const w = ri(2, gapMax);
+    const ancho = seccionB && anchos > 0 && c >= A1 + 12 + (2 - anchos) * 30;
+    if (seccionB && (ancho || rnd01() < 0.25 + dif * 0.04)) {
+      const w = ancho ? 3 : ri(2, gapMax);
+      if (ancho) anchos--;
       for (let k = 0; k < w && c + k < cols; k++) suelo[c + k] = false;
       c += w + ri(3, 5);            // al menos 3 tiles de suelo entre huecos
     } else {
@@ -3808,38 +3832,6 @@ function generarNivel(gen, mecanicas = []) {
   const goalX = cols - 4;
   for (let y = 4; y < GY; y++) tiles[y][goalX] = "F";
 
-  // Sección abierta: bloques ? y ladrillos
-  for (let x = 12; x < A1; x++) {
-    if (rnd01() < 0.06 + dif * 0.005) {
-      const row = 7;
-      if (rnd01() < 0.5) {
-        tiles[row][x] = "Q";
-      } else {
-        for (let k = 0; k < ri(1, 3) && x + k < A1; k++) tiles[row][x + k] = "B";
-      }
-      x += 4;
-    }
-  }
-  // Sección de plataformas flotantes: ladrillos y ? en el aire
-  for (let x = A1; x < B1; x++) {
-    if (rnd01() < 0.1) {
-      const row = ri(6, 8);
-      const n = ri(2, 4);
-      for (let k = 0; k < n && x + k < B1; k++) {
-        if (!tiles[row][x + k] || tiles[row][x + k] === ".") {
-          tiles[row][x + k] = k === 1 && rnd01() < 0.4 ? "Q" : "B";
-        }
-      }
-      x += n + 2;
-    }
-  }
-
-  // Aire libre sobre cada hueco: un bloque encima frena el salto (la cabeza choca) y el jugador cae
-  for (let x = 0; x < cols; x++) {
-    if (suelo[x]) continue;
-    for (let r = 4; r <= GY - 3; r++) for (let c = x - 1; c <= x + 1; c++) if (c >= 0 && c < cols) tiles[r][c] = ".";
-  }
-
   // Tuberías con plantas (si el enemigo "plant" está permitido)
   if (tipos.includes("plant")) {
     for (let x = 30; x < B1; x += ri(22, 30)) {
@@ -3849,7 +3841,7 @@ function generarNivel(gen, mecanicas = []) {
       ents.push({ t: "plant", x: x * TILE + 1, y: (GY - 2) * TILE - 8 });
       // Despeja el aire sobre la tubería: un bloque a esa altura deja un hueco de 16 px
       // que el jugador (también de 16 px) no puede cruzar sin un salto perfecto
-      for (let c = x - 2; c <= x + 3; c++) for (let r = 4; r <= GY - 3; r++) if (c >= 0 && c < cols) tiles[r][c] = ".";
+      for (let cc = x - 2; cc <= x + 3; cc++) for (let rr = 4; rr <= GY - 3; rr++) if (cc >= 0 && cc < cols) tiles[rr][cc] = ".";
     }
   }
 
@@ -3862,86 +3854,157 @@ function generarNivel(gen, mecanicas = []) {
     huecos.push([x, fin]);
     x = fin + 1;
   }
+  // Aire libre sobre cada hueco: un bloque encima frena el salto (la cabeza choca) y el jugador cae
+  for (const [a, b] of huecos) {
+    for (let cc = a - 1; cc <= b + 1; cc++) for (let rr = 4; rr <= GY - 3; rr++) if (cc >= 0 && cc < cols) tiles[rr][cc] = ".";
+  }
 
-  /* ----- Mecánicas de la fase ----- */
-  // Plataformas de una dirección: se pisan desde arriba y se atraviesan saltando desde abajo
-  if (usa("una_direccion")) {
-    for (let x = A1 + 4; x < B1 - 4; x += ri(9, 14)) {
-      if (![x, x + 1, x + 2].every((cc) => tiles[FILA_PLAT][cc] === ".")) continue;
-      for (let k = 0; k < 3; k++) tiles[FILA_PLAT][x + k] = "D";
-    }
-  }
-  // Muelles: un bloque bajo que lanza muy alto al pisarlo
-  if (usa("muelle")) {
-    for (let k = 0, n = 0; k < 12 && n < 2; k++) {
-      const x = ri(14, A1 - 6);
-      if (!suelo[x - 1] || !suelo[x] || !suelo[x + 1]) continue;
-      if (tiles[GY - 1][x - 1] !== "." || tiles[GY - 1][x] !== "." || tiles[GY - 1][x + 1] !== ".") continue;
-      tiles[GY - 1][x] = "M";
-      n++;
-    }
-  }
-  // Pinchos: un bloque sobre el suelo. Bloquean de lado y hacen daño al caer sobre ellos.
-  // Separados al menos tres bloques, para que siempre quepa un salto entre dos
+  /* ----- Módulos de las mecánicas de la fase ----- */
+  // Pinchos en hoyos: un hueco de 2 o 3 tiles con los pinchos en el fondo, rodeado de suelo.
+  // Se salta por encima; solo hace daño si se cae dentro. Las monedas sobre el hoyo marcan el salto
   if (usa("pinchos")) {
-    for (let k = 0, n = 0; k < 24 && n < 4; k++) {
-      const x = ri(14, A1 - 6);
-      if (!suelo[x - 1] || !suelo[x] || !suelo[x + 1]) continue;
-      if (tiles[GY - 1][x - 1] !== "." || tiles[GY - 1][x] !== "." || tiles[GY - 1][x + 1] !== ".") continue;
-      if ([x - 3, x - 2, x - 1, x, x + 1, x + 2, x + 3].some((cc) => tiles[GY - 1][cc] === "H")) continue;
-      tiles[GY - 1][x] = "H";
-      n++;
+    const n = 2 + Math.floor(dif / 3);
+    for (let k = 0, hechos = 0; k < 80 && hechos < n; k++) {
+      const w = ri(2, 3), x = ri(14, A1 - 12);
+      let ok = true;
+      for (let cc = x - 1; cc <= x + w && ok; cc++) ok = libre(cc, GY - 1) && tiles[GY][cc] === "G";
+      if (!ok) continue;
+      for (let cc = x; cc < x + w; cc++) { tiles[GY][cc] = "."; tiles[GY + 1][cc] = "H"; }
+      reservar(x - 1, x + w, GY - 3, GY + 1);
+      for (let cc = x; cc < x + w; cc++) moneda(cc, GY - 2);
+      hechos++;
     }
   }
-  // Escalera: una columna que sube a una plataforma de piedra en el aire
+
+  // Muelles con repisa: el muelle lanza a una repisa de piedra que no se alcanza saltando.
+  // Hay que pisar el muelle y avanzar hacia la repisa mientras se sube; arriba hay monedas y un bloque ?
+  if (usa("muelle")) {
+    const n = dif >= 5 ? 2 : 1;
+    for (let k = 0, hechos = 0; k < 80 && hechos < n; k++) {
+      const x = ri(14, A1 - 12);
+      let ok = true;
+      for (let cc = x - 1; cc <= x + 8 && ok; cc++) ok = suelo[cc] && tiles[GY][cc] === "G";
+      for (let cc = x; cc <= x + 8 && ok; cc++) for (let rr = 0; rr < GY && ok; rr++) ok = libre(cc, rr);
+      if (!ok) continue;
+      tiles[GY - 1][x] = "M";
+      for (let cc = x + 4; cc <= x + 7; cc++) tiles[3][cc] = "S";
+      tiles[1][x + 5] = "Q";
+      reservar(x - 1, x + 8, 0, GY - 1);
+      for (let cc = x + 4; cc <= x + 7; cc++) moneda(cc, 2);
+      hechos++;
+    }
+  }
+
+  // Plataformas sobre los huecos anchos: la móvil va y viene de un lado a otro del hueco;
+  // la que cae tiembla y se hunde al pisarla, así que hay que cruzarla sin pararse.
+  // Se colocan antes que las escaleras y escalinatas, que así no ocupan los huecos
+  const anchosHuecos = huecos.filter(([a, b]) => b - a >= 2);
+  const celdasLibres = (c0, c1) => {
+    for (let cc = c0; cc <= c1; cc++) for (let rr = FILA_PLAT - 1; rr <= FILA_PLAT; rr++) if (!libre(cc, rr)) return false;
+    return true;
+  };
+  let cruzado = null;
+  if (usa("plataforma_movil")) {
+    const h = anchosHuecos.find(([a, b]) => celdasLibres(a - 2, b + 3));
+    if (h) {
+      const [a, b] = h;
+      reservar(a - 2, b + 3, FILA_PLAT - 1, FILA_PLAT);
+      plats.push({ t: "movil", x: (a - 2) * TILE, y: FILA_PLAT * TILE, w: 3 * TILE, h: TILE, x0: (a - 2) * TILE, x1: (b + 1) * TILE, vel: 36 });
+      cruzado = h;
+    }
+  }
+  if (usa("plataforma_caida")) {
+    const h = anchosHuecos.find((g) => g !== cruzado && celdasLibres(g[0], g[1]));
+    if (h) {
+      const [a, b] = h;
+      reservar(a, b, FILA_PLAT - 1, FILA_PLAT);
+      // Tres bloques centrados sobre el hueco
+      plats.push({ t: "caida", x: (Math.floor((a + b + 1) / 2) - 1) * TILE, y: FILA_PLAT * TILE, w: 3 * TILE, h: TILE });
+    }
+  }
+
+  // Escalinata de plataformas de una dirección: se sube atravesándolas desde abajo, escalón a escalón,
+  // hasta una zona alta con un bloque ? y monedas. Las monedas de cada escalón marcan el camino
+  if (usa("una_direccion")) {
+    const n = dif >= 6 ? 2 : 1;
+    for (let k = 0, hechos = 0; k < 80 && hechos < n; k++) {
+      const x = ri(A1 + 2, B1 - 14);
+      let ok = true;
+      for (let cc = x - 1; cc <= x + 9 && ok; cc++) ok = suelo[cc] && tiles[GY][cc] === "G";
+      for (let cc = x; cc <= x + 9 && ok; cc++) for (let rr = 1; rr < GY && ok; rr++) ok = libre(cc, rr);
+      if (!ok) continue;
+      for (let s = 0; s < 3; s++) for (let cc = x + 3 * s; cc <= x + 3 * s + 2; cc++) tiles[8 - 2 * s][cc] = "D";
+      tiles[1][x + 7] = "Q";
+      reservar(x - 1, x + 9, 1, GY - 1);
+      for (let cc = x; cc <= x + 2; cc++) moneda(cc, 7);
+      for (let cc = x + 3; cc <= x + 5; cc++) moneda(cc, 5);
+      for (let cc = x + 6; cc <= x + 8; cc++) moneda(cc, 3);
+      hechos++;
+    }
+  }
+
+  // Escalera a un mirador: una columna de escalera hasta una plataforma de piedra muy alta,
+  // que no se alcanza saltando. Arriba hay monedas
   if (usa("escalera")) {
-    for (let x = A1 + 2; x < B1 - 6; x++) {
-      if (!suelo[x] || tiles[GY - 1][x] !== ".") continue;
-      if (![7, 8, 9, 10].every((rr) => tiles[rr][x] === ".")) continue;
-      if (![x + 1, x + 2, x + 3].every((cc) => tiles[FILA_PLAT][cc] === "." && tiles[FILA_PLAT - 1][cc] === ".")) continue;
-      for (let rr = 7; rr <= GY - 1; rr++) tiles[rr][x] = "L";
-      for (let cc = x + 1; cc <= x + 3; cc++) tiles[FILA_PLAT][cc] = "S";
-      break;
+    for (let k = 0, hecho = false; k < 80 && !hecho; k++) {
+      const x = ri(A1 + 2, B1 - 8);
+      let ok = suelo[x - 1] && suelo[x] && tiles[GY][x] === "G";
+      for (let rr = 1; rr < GY && ok; rr++) ok = libre(x, rr);
+      for (let cc = x + 1; cc <= x + 5 && ok; cc++) for (let rr = 2; rr <= 3 && ok; rr++) ok = libre(cc, rr);
+      if (!ok) continue;
+      for (let rr = 2; rr < GY; rr++) tiles[rr][x] = "L";
+      tiles[1][x] = "S";   // tope: al llegar arriba la cabeza para y se puede pasar al mirador
+      // Una columna de plataforma de una dirección junto a la escalera (se sube por debajo y se pisa desde arriba)
+      // y después la repisa de piedra: así la escalera no choca con el mirador al subir
+      tiles[3][x + 1] = "D";
+      for (let cc = x + 2; cc <= x + 5; cc++) { tiles[3][cc] = "S"; moneda(cc, 2); }
+      reservar(x - 1, x + 5, 1, GY - 1);
+      hecho = true;
     }
   }
+
   // Lava: los huecos de la zona B se llenan de lava (caer en ella es mortal)
   if (usa("lava")) {
     for (const [a, b] of huecos) for (let cc = a; cc <= b; cc++) for (let rr = GY; rr < ROWS; rr++) tiles[rr][cc] = "V";
   }
-  // Plataforma móvil: va y viene por encima de un hueco. Quita los ladrillos que estorban en su camino
-  let usado = null;
-  if (usa("plataforma_movil")) {
-    // Vale cualquier hueco cuyo camino no choque con la escalera ni con su plataforma de piedra
-    const libre = (a, b) => {
-      for (let cc = a - 2; cc <= b + 3; cc++) {
-        if (cc < 0 || cc >= cols) return false;
-        if (["S", "L"].includes(tiles[FILA_PLAT][cc])) return false;
+  // Monedas por encima de cada hueco: marcan el salto y quedan libres de bloques
+  for (const [a, b] of huecos) {
+    for (let cc = a; cc <= b; cc++) { moneda(cc, 6); reservado.add(clave(cc, 6)); }
+  }
+
+  /* ----- Bloques sueltos (solo en celdas libres), enemigos y monedas ----- */
+  // Bloques ? y ladrillos en la zona abierta
+  for (let x = 12; x < A1; x++) {
+    if (rnd01() < 0.06 + dif * 0.005) {
+      const row = 7;
+      if (libre(x, row)) {
+        if (rnd01() < 0.5) {
+          tiles[row][x] = "Q";
+        } else {
+          for (let k = 0; k < ri(1, 3) && x + k < A1; k++) if (libre(x + k, row)) tiles[row][x + k] = "B";
+        }
       }
-      return true;
-    };
-    const h = huecos.find(([a, b]) => b - a >= 1 && libre(a, b));
-    usado = h || null;
-    if (h) {
-      const [a, b] = h;
-      for (let cc = a - 2; cc <= b + 3; cc++) tiles[FILA_PLAT][cc] = ".";
-      plats.push({ t: "movil", x: (a - 2) * TILE, y: FILA_PLAT * TILE, w: 3 * TILE, h: TILE, x0: (a - 2) * TILE, x1: (b + 1) * TILE, vel: 36 });
+      x += 4;
     }
   }
-  // Plataforma que cae: se hunde al pisarla durante un momento; sobre un hueco
-  if (usa("plataforma_caida")) {
-    // Las plataformas que caen van sobre los huecos que no usa la móvil
-    for (const [a, b] of huecos.filter((h) => h !== usado).slice(-2)) {
-      // Tres bloques centrados sobre el hueco, alineados con la rejilla
-      const x = (Math.floor((a + b + 1) / 2) - 1) * TILE;
-      plats.push({ t: "caida", x, y: FILA_PLAT * TILE, w: 3 * TILE, h: TILE });
+  // Sección de plataformas flotantes: ladrillos y ? en el aire, sin tapar huecos ni módulos
+  const cercaHueco = (cc) => huecos.some(([a, b]) => cc >= a - 1 && cc <= b + 1);
+  for (let x = A1; x < B1; x++) {
+    if (rnd01() < 0.1) {
+      const row = ri(6, 8);
+      const n = ri(2, 4);
+      for (let k = 0; k < n && x + k < B1; k++) {
+        if (libre(x + k, row) && !cercaHueco(x + k)) tiles[row][x + k] = k === 1 && rnd01() < 0.4 ? "Q" : "B";
+      }
+      x += n + 2;
     }
   }
 
-  // Enemigos caminantes/caparazones/voladores sobre el suelo
+  // Enemigos caminantes, caparazones y voladores sobre el suelo (nunca en un hoyo ni en un módulo)
   const nEnem = 4 + dif * 2;
   for (let i = 0; i < nEnem; i++) {
     const x = ri(10, C1 - 4);
-    if (!suelo[x] || x < 12 || tiles[GY - 1][x] !== ".") continue;
+    if (!suelo[x] || x < 12 || tiles[GY][x] !== "G" || !libre(x, GY - 1)) continue;
     const t = tipos[ri(0, tipos.length - 1)];
     if (t === "plant") continue;
     if (t === "flyer") {
@@ -3951,12 +4014,20 @@ function generarNivel(gen, mecanicas = []) {
     }
   }
 
-  // Monedas en arcos sobre el suelo (zona abierta y plataformas)
-  for (let x = 16; x < B1; x += ri(10, 16)) {
+  // Monedas: las de los módulos y los arcos sueltos de la zona abierta, solo en celdas de aire
+  // (así nunca aparecen dentro de un bloque ?, un ladrillo o una plataforma)
+  const conMoneda = new Set();
+  const ponerMoneda = (cc, rr) => {
+    const k = clave(cc, rr);
+    if (conMoneda.has(k) || tiles[rr][cc] !== ".") return;
+    conMoneda.add(k);
+    ents.push({ t: "coin", x: cc * TILE + 4, y: rr * TILE + 4 });
+  };
+  for (const [cc, rr] of monedas) ponerMoneda(cc, rr);
+  for (let x = 16; x < A1; x += ri(10, 16)) {
     const n = ri(3, 5);
     for (let k = 0; k < n; k++) {
-      const yArc = 8 - Math.round(Math.sin((k / (n - 1)) * Math.PI) * 2);
-      ents.push({ t: "coin", x: (x + k) * TILE + 4, y: yArc * TILE + 4 });
+      ponerMoneda(x + k, 9 - Math.round(Math.sin((k / (n - 1)) * Math.PI) * 2));
     }
   }
 
@@ -3971,9 +4042,9 @@ function generarNivel(gen, mecanicas = []) {
   const decor = [];
   const piezas = DECOR_DE_TEMA[gen.theme] || [];
   for (let x = 12; x < A1 && piezas.length; x++) {
-    if (!suelo[x] || rnd01() > 0.14) continue;
+    if (!suelo[x] || tiles[GY][x] !== "G" || rnd01() > 0.14) continue;
     const pieza = piezas[ri(0, piezas.length - 1)];
-    if (pieza.some((_, k) => tiles[GY - 1 - k][x] !== ".")) continue;
+    if (pieza.some((_, k) => tiles[GY - 1 - k][x] !== "." || reservado.has(clave(x, GY - 1 - k)))) continue;
     pieza.forEach((ch, k) => decor.push({ ch, c: x, r: GY - 1 - k }));
     x++;   // deja al menos un tile libre entre dos piezas
   }
@@ -4124,7 +4195,7 @@ const PHYS = {
   glideV: 70, glideTime: 1.6,  // planeo con capa
   shellSpeed: 230,
   climbV: 110,    // velocidad al trepar por una escalera
-  springV: 430,   // impulso de un muelle (unos 6 bloques de altura)
+  springV: 500,   // impulso de un muelle: unos 8 bloques de altura, con o sin mantener salto
 };
 
 class Player {
@@ -4145,6 +4216,7 @@ class Player {
     this.glideT = 0;         // planeo restante
     this.big = false;
     this.fire = false;
+    this.rebotando = false;   // rebote de muelle o de pinchos: sube sin cortarse hasta el punto más alto
     this.cape = false;
     this.star = 0;           // segundos de invencibilidad
     this.hurtT = 0;          // segundos de animación de daño / invulnerabilidad
@@ -4214,7 +4286,7 @@ class Player {
 
     // --- Escaleras: con arriba o abajo se trepa; saltar suelta la escalera ---
     if (!enEscalera(lvl, this)) this.trepando = false;
-    else if (!this.trepando && (held.up || held.down)) this.trepando = true;
+    else if (!this.trepando && (held.up || held.down)) { this.trepando = true; this.vx = 0; }   // al agarrarla se para: no se sale de la columna
     if (this.trepando && pressed.jump) { this.trepando = false; this.coyoteT = PHYS.coyote; }
     if (this.trepando) {
       this.vy = held.up ? -PHYS.climbV : held.down ? PHYS.climbV : 0;
@@ -4257,7 +4329,7 @@ class Player {
     }
     if (this.vy > MAX_FALL) this.vy = MAX_FALL;
     if (this.vy >= 0) this.jumping = false;
-    if (!held.jump && this.vy < -120) this.vy = -120; // corta el salto al soltar
+    if (!held.jump && this.vy < -120 && !this.rebotando) this.vy = -120; // corta el salto al soltar
 
     // --- Colisiones ---
     const vyAntes = this.vy, enAireAntes = !this.onGround;
@@ -4269,18 +4341,22 @@ class Player {
     // Plataformas de una dirección: solo paran al caer desde arriba
     if (!r.suelo && this.vy >= 0 && aterrizaEnDireccional(lvl, this, this.prevBottom)) { r.suelo = true; this.vy = 0; }
     this.onGround = r.suelo;
+    if (r.suelo || this.vy >= 0) this.rebotando = false;
     // Muelle: al pisarlo, salta muy alto
     if (r.suelo && vyAntes >= 0 && bajoPies(lvl, this, "M")) {
+      // Sin "jumping" la gravidad es la normal: la altura no depende de mantener salto
       this.vy = -PHYS.springV;
       this.onGround = false;
-      this.jumping = true;
+      this.jumping = false;
+      this.rebotando = true;
       game.sfx("salto");
       emitir(this.x + this.w / 2, this.y + this.h, 6, [PAL.y, PAL.w], { up: 80, spread: 60, life: 0.3, size: 2 });
     }
     // Pinchos: solo hacen daño al caer sobre ellos (tocarlos de lado no); el jugador rebota
     if (r.suelo && vyAntes >= 0 && bajoPies(lvl, this, "H")) {
       game.recibirDano(this);
-      if (!this.dead) { this.vy = -PHYS.jumpV * 0.6; this.onGround = false; this.jumping = false; }
+      // El rebote de pinchos sube lo justo para salir del hoyo andando (unos 32 px)
+      if (!this.dead) { this.vy = -PHYS.jumpV * 0.8; this.onGround = false; this.jumping = false; this.rebotando = true; }
     }
     // Aterrizaje fuerte: aplastamiento y polvo
     if (r.suelo && enAireAntes && vyAntes > 150) {
