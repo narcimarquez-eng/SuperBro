@@ -7796,23 +7796,62 @@ function velo(texto, sub) {
   if (sub) txt(sub, W / 2, H / 2 + 4, PAL.y, "center");
 }
 
+// Logo del título: cada letra ondula, tiene contorno negro y un destello blanco la recorre
+function txtLogo(s, cx, y, escala, t) {
+  const ancho = s.length * 4 * escala - escala;
+  let x = Math.round(cx - ancho / 2);
+  const destello = Math.floor((t % 3200) / 110) - 2;
+  [...s].forEach((ch, i) => {
+    const yy = Math.round(y + Math.sin(t / 260 + i * 0.7) * 2);
+    dibujarGlifo(ch, x + escala, yy + escala, PAL.k, ctx, escala);
+    for (const [ox, oy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) dibujarGlifo(ch, x + ox, yy + oy, PAL.k, ctx, escala);
+    dibujarGlifo(ch, x, yy, i === destello ? PAL.w : PAL.y, ctx, escala);
+    x += 4 * escala;
+  });
+}
+
 // Dibuja la pantalla actual del juego
 function dibujarJuego(game) {
   const e = game.estado;
   if (e === "titulo") {
-    // Pradera de fondo, logo con sombra y el personaje apoyado en el suelo
-    dibujarFondo({ x: performance.now() / 40 }, MUNDOS[0].paleta, MUNDOS[0].tema, MUNDOS[0].hora);
-    rect(W / 2 - 96, 24, 192, 66, "rgba(0,0,0,0.4)");
-    txt("SUPERBRO", W / 2 + 2, 42, PAL.k, "center", 3);
-    txt("SUPERBRO", W / 2, 40, PAL.y, "center", 3);
+    // Pradera de fondo con viñeta, logo ondulante y el personaje apoyado en el suelo
+    const t = performance.now();
+    dibujarFondo({ x: t / 40 }, MUNDOS[0].paleta, MUNDOS[0].tema, MUNDOS[0].hora);
+    const vineta = ctx.createRadialGradient(W / 2, H * 0.42, H * 0.25, W / 2, H * 0.42, W * 0.62);
+    vineta.addColorStop(0, "rgba(0,0,0,0)");
+    vineta.addColorStop(1, "rgba(0,0,0,0.38)");
+    ctx.fillStyle = vineta;
+    ctx.fillRect(0, 0, W, H);
+    // Panel del logo: fondo translúcido con marco amarillo de píxeles
+    rect(W / 2 - 96, 22, 192, 70, "rgba(12,8,30,0.55)");
+    rect(W / 2 - 96, 22, 192, 1, PAL.y);
+    rect(W / 2 - 96, 91, 192, 1, PAL.y);
+    rect(W / 2 - 96, 22, 1, 70, PAL.y);
+    rect(W / 2 + 95, 22, 1, 70, PAL.y);
+    txtLogo("SUPERBRO", W / 2, 38, 3, t);
+    // Subtítulo entre dos guiones amarillos
     txt("PLATAFORMAS 2D", W / 2, 72, PAL.w, "center");
+    rect(W / 2 - 43, 74, 12, 1, PAL.y);
+    rect(W / 2 + 32, 74, 12, 1, PAL.y);
+    // Destellos en cruz que aparecen y se apagan alrededor del logo
+    [[W / 2 - 112, 26], [W / 2 + 108, 34], [W / 2 + 84, 80], [W / 2 - 100, 86]].forEach(([sx, sy], k) => {
+      ctx.globalAlpha = 0.25 + 0.75 * Math.abs(Math.sin(t / 420 + k * 1.9));
+      rect(sx - 2, sy, 5, 1, PAL.w);
+      rect(sx, sy - 2, 1, 5, PAL.w);
+    });
+    ctx.globalAlpha = 1;
     // Personaje, mensajes y panel se anclan al suelo del escenario (OY)
     ctx.save();
     ctx.translate(0, OY);
     dibujarProtagonista(W / 2, 176, 16, { estado: "quieto", dir: 1 });
-    const parpadeo = Math.floor(performance.now() / 500) % 2 === 0;
     rect(0, 186, W, 38, "rgba(0,0,0,0.45)");
-    if (parpadeo) txt("PULSA ENTER", W / 2, 192, PAL.w, "center");
+    rect(0, 186, W, 1, PAL.y);
+    // "PULSA ENTER" parpadea dentro de una etiqueta amarilla
+    if (Math.floor(t / 500) % 2 === 0) {
+      rect(W / 2 - 30, 189, 60, 11, PAL.k);
+      rect(W / 2 - 29, 190, 58, 9, PAL.y);
+      txt("PULSA ENTER", W / 2, 192, PAL.k, "center");
+    }
     txt("BACKSPACE: BORRAR PROGRESO", W / 2, 206, PAL.w, "center");
     ctx.restore();
     return;
