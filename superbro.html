@@ -2234,6 +2234,8 @@ function consume(action) {
   global.Bloques = {
     TILE: TILE,
     clima: climaSuelto,
+    canon: dibujarCanon,   // cañón de pared: la boca mira a 'dir' (1 derecha, -1 izquierda), 16 × 16
+    bala: dibujarBala,     // bala de cañón: 8 × 6, con el ojo hacia donde vuela
     U: U,
     crear: crear,
     sprite: sprite,
@@ -4182,6 +4184,55 @@ const MECANICAS_POR_FASE = [
   ["muelle", "una_direccion", "pinchos", "plataforma_movil", "escalera", "plataforma_caida", "lava"], // 8
 ];
 
+// Mecánicas de cada fase según el mundo: cada mundo presenta primero las de su tema (puentes en el río,
+// cañones en las almenas, arena que se hunde en el desierto...) y añade una cada fase. Solo se usan
+// las mecánicas que el generador sabe colocar con sentido (ver generarNivel en part5)
+const MECANICAS_MUNDO = {
+  1: [[], ["muelle"], ["muelle", "puente"], ["muelle", "puente", "pinchos"],
+      ["muelle", "puente", "pinchos", "plataforma_movil"],
+      ["muelle", "puente", "pinchos", "plataforma_movil", "escalera"],
+      ["muelle", "puente", "pinchos", "plataforma_movil", "escalera", "plataforma_caida"],
+      ["muelle", "puente", "pinchos", "plataforma_movil", "escalera", "plataforma_caida", "canon"]],
+  2: [[], ["muelle"], ["muelle", "pinchos"], ["muelle", "pinchos", "plataforma_caida"],
+      ["muelle", "pinchos", "plataforma_caida", "escalera"],
+      ["muelle", "pinchos", "plataforma_caida", "escalera", "plataforma_movil"],
+      ["muelle", "pinchos", "plataforma_caida", "escalera", "plataforma_movil", "una_direccion"],
+      ["muelle", "pinchos", "plataforma_caida", "escalera", "plataforma_movil", "una_direccion", "canon"]],
+  3: [[], ["muelle"], ["muelle", "una_direccion"], ["muelle", "una_direccion", "puente"],
+      ["muelle", "una_direccion", "puente", "escalera"],
+      ["muelle", "una_direccion", "puente", "escalera", "plataforma_movil"],
+      ["muelle", "una_direccion", "puente", "escalera", "plataforma_movil", "plataforma_caida"],
+      ["muelle", "una_direccion", "puente", "escalera", "plataforma_movil", "plataforma_caida", "pinchos", "canon"]],
+  4: [[], ["pinchos"], ["pinchos", "muelle"], ["pinchos", "muelle", "puente"],
+      ["pinchos", "muelle", "puente", "escalera"],
+      ["pinchos", "muelle", "puente", "escalera", "plataforma_movil"],
+      ["pinchos", "muelle", "puente", "escalera", "plataforma_movil", "plataforma_caida"],
+      ["pinchos", "muelle", "puente", "escalera", "plataforma_movil", "plataforma_caida", "una_direccion", "canon", "lava"]],
+  5: [[], ["plataforma_caida"], ["plataforma_caida", "plataforma_movil"],
+      ["plataforma_caida", "plataforma_movil", "una_direccion"],
+      ["plataforma_caida", "plataforma_movil", "una_direccion", "muelle"],
+      ["plataforma_caida", "plataforma_movil", "una_direccion", "muelle", "pinchos"],
+      ["plataforma_caida", "plataforma_movil", "una_direccion", "muelle", "pinchos", "escalera"],
+      ["plataforma_caida", "plataforma_movil", "una_direccion", "muelle", "pinchos", "escalera", "canon"]],
+  6: [["puente"], ["puente", "plataforma_movil"], ["puente", "plataforma_movil", "plataforma_caida"],
+      ["puente", "plataforma_movil", "plataforma_caida", "canon"],
+      ["puente", "plataforma_movil", "plataforma_caida", "canon", "pinchos"],
+      ["puente", "plataforma_movil", "plataforma_caida", "canon", "pinchos", "muelle"],
+      ["puente", "plataforma_movil", "plataforma_caida", "canon", "pinchos", "muelle", "escalera"],
+      ["puente", "plataforma_movil", "plataforma_caida", "canon", "pinchos", "muelle", "escalera", "una_direccion"]],
+  7: [["lava"], ["lava", "canon"], ["lava", "canon", "escalera"], ["lava", "canon", "escalera", "pinchos"],
+      ["lava", "canon", "escalera", "pinchos", "plataforma_caida"],
+      ["lava", "canon", "escalera", "pinchos", "plataforma_caida", "puente"],
+      ["lava", "canon", "escalera", "pinchos", "plataforma_caida", "puente", "plataforma_movil"],
+      ["lava", "canon", "escalera", "pinchos", "plataforma_caida", "puente", "plataforma_movil", "muelle"]],
+  8: [["plataforma_movil"], ["plataforma_movil", "muelle"], ["plataforma_movil", "muelle", "plataforma_caida"],
+      ["plataforma_movil", "muelle", "plataforma_caida", "una_direccion"],
+      ["plataforma_movil", "muelle", "plataforma_caida", "una_direccion", "escalera"],
+      ["plataforma_movil", "muelle", "plataforma_caida", "una_direccion", "escalera", "pinchos"],
+      ["plataforma_movil", "muelle", "plataforma_caida", "una_direccion", "escalera", "pinchos", "canon"],
+      ["plataforma_movil", "muelle", "plataforma_caida", "una_direccion", "escalera", "pinchos", "canon", "puente"]],
+};
+
 /* Crea las 8 fases de un mundo con sus nombres. w: número del mundo.
    Las dos primeras fases usan solo dos tipos de enemigo; la 8 es el castillo.
    opc.horas: momento del día de cada fase; opc.castillo: el castillo usa el escenario de piedra. */
@@ -4196,7 +4247,7 @@ function fases(w, nombres, enemigos, opc = {}) {
         dif: Math.min(8, w + Math.floor((k - 1) / 3) + (castillo ? 1 : 0)),
         enemigos: k <= 2 ? enemigos.slice(0, 2) : enemigos,
       },
-      mecanicas: MECANICAS_POR_FASE[i],
+      mecanicas: (MECANICAS_MUNDO[w] || MECANICAS_POR_FASE)[i],
     };
     if (opc.horas && opc.horas[i] !== undefined) lv.hora = opc.horas[i];
     if (castillo) { lv.jefe = true; if (opc.castillo) lv.castillo = true; }
@@ -4458,6 +4509,7 @@ function generarNivel(gen, mecanicas = []) {
   const tiles = gridVacia(cols);
   const ents = [];
   const plats = [];
+  const canones = [];
 
   // Celdas reservadas por los módulos: ni bloques sueltos, ni enemigos, ni monedas ajenas
   const reservado = new Set();
@@ -4519,6 +4571,8 @@ function generarNivel(gen, mecanicas = []) {
       // Despeja el aire sobre la tubería: un bloque a esa altura deja un hueco de 16 px
       // que el jugador (también de 16 px) no puede cruzar sin un salto perfecto
       for (let cc = x - 2; cc <= x + 3; cc++) for (let rr = 4; rr <= GY - 3; rr++) if (cc >= 0 && cc < cols) tiles[rr][cc] = ".";
+      // Y que ningún módulo posterior (ladrillos, bloques ?, cañones...) tape la salida de la planta
+      reservar(Math.max(0, x - 2), x + 3, 4, GY - 3);
     }
   }
 
@@ -4580,6 +4634,7 @@ function generarNivel(gen, mecanicas = []) {
     for (let cc = c0; cc <= c1; cc++) for (let rr = FILA_PLAT - 1; rr <= FILA_PLAT; rr++) if (!libre(cc, rr)) return false;
     return true;
   };
+  const usados = [];          // huecos que ya usa una plataforma o un puente
   let cruzado = null;
   if (usa("plataforma_movil")) {
     const h = anchosHuecos.find(([a, b]) => celdasLibres(a - 2, b + 3));
@@ -4588,6 +4643,7 @@ function generarNivel(gen, mecanicas = []) {
       reservar(a - 2, b + 3, FILA_PLAT - 1, FILA_PLAT);
       plats.push({ t: "movil", x: (a - 2) * TILE, y: FILA_PLAT * TILE, w: 3 * TILE, h: TILE, x0: (a - 2) * TILE, x1: (b + 1) * TILE, vel: 36 });
       cruzado = h;
+      usados.push(h);
     }
   }
   if (usa("plataforma_caida")) {
@@ -4595,6 +4651,7 @@ function generarNivel(gen, mecanicas = []) {
     if (h) {
       const [a, b] = h;
       reservar(a, b, FILA_PLAT - 1, FILA_PLAT);
+      usados.push(h);
       // Tres bloques centrados sobre el hueco
       plats.push({ t: "caida", x: (Math.floor((a + b + 1) / 2) - 1) * TILE, y: FILA_PLAT * TILE, w: 3 * TILE, h: TILE });
     }
@@ -4637,6 +4694,45 @@ function generarNivel(gen, mecanicas = []) {
       for (let cc = x + 2; cc <= x + 5; cc++) { tiles[3][cc] = "S"; moneda(cc, 2); }
       reservar(x - 1, x + 5, 1, GY - 1);
       hecho = true;
+    }
+  }
+
+  // Puentes de madera sobre los huecos libres (de hasta 4 tiles): al pisar un tramo, el puente entero
+  // cae en cascada, así que hay que cruzarlo sin pararse. Se rehacen solos al cabo de unos segundos
+  if (usa("puente")) {
+    const n = dif >= 4 ? 2 : 1;
+    let hechos = 0;
+    huecos.forEach((g, gi) => {
+      if (hechos >= n || usados.includes(g) || g[1] - g[0] > 3) return;
+      const [a, b] = g;
+      for (let cc = a; cc <= b; cc++) {
+        plats.push({ t: "caida", madera: true, x: cc * TILE, y: GY * TILE, w: TILE, h: TILE,
+                     grupo: "puente" + gi, indice: cc - a, tCaida: 0.6 });
+      }
+      usados.push(g);
+      hechos++;
+    });
+  }
+
+  // Cañones de pared sobre un pilar de piedra junto al camino: disparan a la altura del cuerpo, así que
+  // hay que saltar la bala. Tienen ocho casillas de aire delante para que la bala llegue lejos
+  if (usa("canon")) {
+    const n = dif >= 6 ? 2 : 1;
+    for (let k = 0, hechos = 0; k < 120 && hechos < n; k++) {
+      const x = ri(16, B1 - 10);
+      let dir = rnd01() < 0.5 ? 1 : -1;
+      // Con jefe, una bala que va a la derecha desde cerca de la arena llegaría a ella (alcance ~39 casillas): dispara hacia atrás
+      if (gen.jefe && x > B1 - 42) dir = -1;
+      // Para esquivar la bala hay que saltar: la calle de disparo queda libre hasta arriba (filas 5 a 10, más que el salto)
+      const despejada = (cc) => { for (let rr = GY - 6; rr <= GY - 1; rr++) if (!libre(cc, rr)) return false; return true; };
+      let ok = suelo[x] && tiles[GY][x] === "G" && despejada(x);
+      for (let cc = x + dir; cc !== x + dir * 9 && ok; cc += dir) ok = despejada(cc);
+      if (!ok) continue;
+      tiles[GY - 1][x] = "S";
+      reservar(Math.min(x, x + dir * 8), Math.max(x, x + dir * 8), GY - 6, GY - 1);
+      // El segundo cañón de la fase dispara medio ciclo después: nunca llegan dos balas a la vez desde lados opuestos
+      canones.push({ col: x, row: GY - 1, dir, cada: 2.4, velocidad: 90, inicio: 1.2 + 1.2 * canones.length });
+      hechos++;
     }
   }
 
@@ -4735,7 +4831,7 @@ function generarNivel(gen, mecanicas = []) {
   return {
     cols, rows: ROWS, tiles,
     ents: ents.filter((e) => e.x >= 10 * TILE),
-    plats, decor,
+    plats, decor, canones,
     start: { x: 3 * TILE, y: (GY - 2) * TILE },
     goalX: goalX * TILE,
     theme: gen.theme || null,
@@ -4765,7 +4861,7 @@ function parsearMapa(strs) {
       ents.push({ t: tipo, x: x * TILE, y: y * TILE });
     }
   }
-  return { cols, rows: ROWS, tiles, ents, plats: [], decor: [], start, goalX, theme: null, boss: false, arenaX0: 0 };
+  return { cols, rows: ROWS, tiles, ents, plats: [], decor: [], canones: [], start, goalX, theme: null, boss: false, arenaX0: 0 };
 }
 
 /* Punto de entrada: usa el mapa escrito a mano si existe, si no genera */
@@ -5210,6 +5306,11 @@ class Plataforma {
     this.caida = false;             // ya cae
     this.vivo = true;
     this.respawn = 0;
+    this.grupo = d.grupo || null;   // tramos de un mismo puente: al pisar uno caen todos en cascada
+    this.indice = d.indice || 0;    // posición del tramo dentro del puente
+    this.tCaida = d.tCaida || 0.45; // segundos que tiembla antes de caer
+    this.retraso = 0;               // espera extra de un tramo lejano del pisado
+    this.madera = !!d.madera;       // se dibuja con tablones de madera
   }
 
   update(dt, lvl) {
@@ -5219,7 +5320,7 @@ class Plataforma {
       if (this.x >= this.x1) { this.x = this.x1; this.dir = -1; }
       if (this.x <= this.x0) { this.x = this.x0; this.dir = 1; }
     } else if (this.vivo) {
-      if (this.pisada && this.temblor <= 0 && !this.caida) this.temblor = 0.45;
+      if (this.pisada && this.temblor <= 0 && !this.caida) this.temblor = this.tCaida + this.retraso;
       if (this.temblor > 0) {
         this.temblor -= dt;
         if (this.temblor <= 0) this.caida = true;
@@ -5607,6 +5708,10 @@ class Level {
     this.qItems = new Map();   // "col,fila" -> objeto del bloque ?
     this.bossRef = null;
     this.bolas = [];           // bolas de fuego del jugador (flor de fuego)
+    // Cañones de pared: disparan a su altura; la bala para en el primer bloque sólido
+    this.canones = (data.canones || []).map((c) => ({ col: c.col, row: c.row, dir: c.dir || 1, cada: c.cada || 2.4,
+                                                       velocidad: c.velocidad || 90, t: c.inicio !== undefined ? c.inicio : 1.2 }));
+    this.balas = [];
     this.jefeTipo = mundo.jefeTipo || "koopa";   // jefe de este mundo (jefes.js)
     this.arenaX0 = data.arenaX0 || 0;            // el jefe no sale por la izquierda de su arena
     this.introJefeT = data.boss ? 3 : 0;         // tiempo que se muestra el nombre del jefe
@@ -5690,6 +5795,11 @@ class Level {
     let sobre = null;
     for (const pl of this.plats) if (pl.pisa(p, p.prevBottom)) { sobre = pl; break; }
     if (sobre) sobre.pisada = true;
+    // Puentes: al pisar un tramo, los demás del mismo puente empiezan a temblar y caen en cascada
+    if (sobre && sobre.grupo) {
+      sobre.retraso = 0;
+      for (const q of this.plats) if (q !== sobre && q.grupo === sobre.grupo && !q.caida) { q.pisada = true; q.retraso = 0.15 * Math.abs(q.indice - sobre.indice); }
+    }
     p.plat = sobre;
     if (p.spinT > 0) this.romperConGiro(p, game);
 
@@ -5708,6 +5818,7 @@ class Level {
     for (const it of this.items) it.update(dt, this);
     this.items = this.items.filter((it) => it.alive);
 
+    this.actualizarCanones(dt, game);
     game.colisionesJugador(this);
     this.cam.seguir(p, this, dt);
 
@@ -5746,7 +5857,7 @@ class Level {
     for (const pl of this.plats) {
       if (!pl.vivo) continue;
       for (let k = 0; k < pl.w / TILE; k++) {
-        drawSprite(Bloques.sprite(pl.t === "movil" ? "W|1000" : "X"), pl.x + k * TILE - cam.x, pl.y - cam.y);
+        drawSprite(Bloques.sprite(pl.t === "movil" || pl.madera ? "W|1000" : "X"), pl.x + k * TILE - cam.x, pl.y - cam.y);
       }
     }
     // Monedas: arte de bloques.js (8 frames de giro), centradas en su hitbox
@@ -5764,6 +5875,7 @@ class Level {
     ctx.restore();
     if (this.bossRef) this.dibujarJefe(this.bossRef, cam);
     this.dibujarBolas(cam);
+    this.dibujarCanones(cam);
     this.dibujarJugador(game, cam);
     dibujarParticulas(cam);
     ctx.restore();
@@ -5850,6 +5962,49 @@ class Level {
       }
     }
     this.bolas = this.bolas.filter((b) => !b.dead);
+  }
+
+  // Cañones: disparan cada cierto tiempo en línea recta; la bala para en el primer bloque sólido y
+  // hace daño al jugador (no con la estrella)
+  actualizarCanones(dt, game) {
+    const p = this.player;
+    for (const c of this.canones) {
+      c.t -= dt;
+      if (c.t <= 0) {
+        c.t += c.cada;
+        this.balas.push({ x: c.dir > 0 ? (c.col + 1) * TILE : c.col * TILE - 8, y: c.row * TILE + 5,
+                          w: 8, h: 6, vx: c.dir * c.velocidad, vida: 7, muerta: false });
+      }
+    }
+    const caja = { x: p.x, y: p.y, w: p.w, h: p.h };
+    for (const b of this.balas) {
+      b.x += b.vx * dt;
+      b.vida -= dt;
+      const frente = b.vx > 0 ? b.x + b.w : b.x;
+      if (b.vida <= 0 || b.x < -32 || b.x > this.cols * TILE + 32 ||
+          SOLIDOS[tileAt(this, Math.floor(frente / TILE), Math.floor((b.y + b.h / 2) / TILE))]) { b.muerta = true; continue; }
+      if (!p.dead && aabb(caja, b)) {
+        b.muerta = true;
+        if (p.star <= 0) game.recibirDano(p);
+      }
+    }
+    this.balas = this.balas.filter((b) => !b.muerta);
+  }
+
+  // Cañones y balas dibujados con bloques.js
+  dibujarCanones(cam) {
+    for (const c of this.canones) {
+      ctx.save();
+      ctx.translate(c.col * TILE - cam.x, c.row * TILE - cam.y);
+      Bloques.canon(ctx, c.dir);
+      ctx.restore();
+    }
+    for (const b of this.balas) {
+      ctx.save();
+      ctx.translate(Math.round(b.x - cam.x), Math.round(b.y - cam.y));
+      Bloques.bala(ctx, b.vx > 0);
+      ctx.restore();
+    }
   }
 
   // Bola de fuego: disco naranja con centro amarillo que parpadea al girar
