@@ -1655,14 +1655,23 @@ function consume(action) {
     };
   }
 
-  // Física de caminante: gravedad, paredes, suelo por baldosas y giro en los bordes
+  // ¿Hay pared delante de la caja? Mira arriba y en medio: un bloque a cualquiera de esas alturas frena.
+  // (La base no se mira: el suelo del otro lado de un hueco no debe frenar la caída.)
+  function paredEn(mundo, x, e) {
+    return mundo.solid(x, e.y - e.h / 2 + 2) || mundo.solid(x, e.y);
+  }
+
+  // Física de caminante: gravedad, paredes, suelo por baldosas y giro en los bordes.
+  // Un caparazón lanzado no gira en los bordes: cae. Para chocar con las paredes cuenta
+  // como si tuviera el ancho de un bloque, así puede caer por un hueco de dos bloques.
   function caminar(e, dt, mundo) {
     const tile = mundo.tile || 16;
     e.vy = Math.min(e.vy + GRAV * dt, MAX_CAIDA);
 
     const nx = e.x + e.vx * dt;
-    const frente = nx + (e.vx >= 0 ? 1 : -1) * e.w / 2;
-    if (mundo.solid(frente, e.y)) e.vx = -e.vx;
+    const media = e.state === 'kicked' ? tile / 2 : e.w / 2;
+    const frente = nx + (e.vx >= 0 ? 1 : -1) * media;
+    if (paredEn(mundo, frente, e)) e.vx = -e.vx;
     else e.x = nx;
 
     let ny = e.y + e.vy * dt;
@@ -1675,7 +1684,7 @@ function consume(action) {
     }
     e.y = ny;
 
-    if (e.onGround && e.vx !== 0 && e.state !== 'dive') {
+    if (e.onGround && e.vx !== 0 && e.state !== 'dive' && e.state !== 'kicked') {
       const d = e.vx > 0 ? 1 : -1;
       if (!mundo.solid(e.x + d * (e.w / 2 + 3), e.y + e.h / 2 + 3)) e.vx = -e.vx; // no girar al vacío
     }
@@ -3038,12 +3047,14 @@ function generarNivel(gen, mecanicas = []) {
       n++;
     }
   }
-  // Pinchos: una punta sobre el suelo que hace daño al tocarla
+  // Pinchos: un bloque sobre el suelo. Bloquean de lado y hacen daño al caer sobre ellos.
+  // Separados al menos tres bloques, para que siempre quepa un salto entre dos
   if (usa("pinchos")) {
     for (let k = 0, n = 0; k < 24 && n < 4; k++) {
       const x = ri(14, A1 - 6);
       if (!suelo[x - 1] || !suelo[x] || !suelo[x + 1]) continue;
       if (tiles[GY - 1][x - 1] !== "." || tiles[GY - 1][x] !== "." || tiles[GY - 1][x + 1] !== ".") continue;
+      if ([x - 3, x - 2, x - 1, x, x + 1, x + 2, x + 3].some((cc) => tiles[GY - 1][cc] === "H")) continue;
       tiles[GY - 1][x] = "H";
       n++;
     }
@@ -3188,7 +3199,7 @@ function construirNivel(def, tema) {
    8. COLISIÓN CON TILES Y FÍSICA DEL JUGADOR
    Movimiento por ejes: primero X (y paredes), luego Y (suelo/techo).
    ===================================================================== */
-const SOLIDOS = { G: 1, B: 1, Q: 1, S: 1, T: 1, U: 1, M: 1 };
+const SOLIDOS = { G: 1, B: 1, Q: 1, S: 1, T: 1, U: 1, M: 1, H: 1 };   // H: pinchos (bloquean de lado)
 
 // Devuelve el carácter del tile en (col,fila); fuera del nivel: lateral = pared, abajo = vacío
 function tileAt(lvl, col, row) {
@@ -3430,6 +3441,11 @@ class Player {
       this.jumping = true;
       game.sfx("salto");
       emitir(this.x + this.w / 2, this.y + this.h, 6, [PAL.y, PAL.w], { up: 80, spread: 60, life: 0.3, size: 2 });
+    }
+    // Pinchos: solo hacen daño al caer sobre ellos (tocarlos de lado no); el jugador rebota
+    if (r.suelo && vyAntes >= 0 && bajoPies(lvl, this, "H")) {
+      game.recibirDano(this);
+      if (!this.dead) { this.vy = -PHYS.jumpV * 0.6; this.onGround = false; this.jumping = false; }
     }
     // Aterrizaje fuerte: aplastamiento y polvo
     if (r.suelo && enAireAntes && vyAntes > 150) {
@@ -4476,14 +4492,12 @@ class Game {
     }
   }
 
-  // Pinchos (hacen daño) y lava (mata) en los tiles que toca la caja del jugador
+  // Lava (mata) en los tiles que toca la caja del jugador. Los pinchos se miran al caer (ver Player.update)
   peligrosTiles(lvl, p) {
     const c0 = Math.floor(p.x / TILE), c1 = Math.floor((p.x + p.w - 0.01) / TILE);
     const r0 = Math.floor(p.y / TILE), r1 = Math.floor((p.y + p.h - 0.01) / TILE);
     for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
-      const t = tileAt(lvl, c, r);
-      if (t === "V") { p.dead = true; return; }
-      if (t === "H") this.recibirDano(p);
+      if (tileAt(lvl, c, r) === "V") { p.dead = true; return; }
     }
   }
 
