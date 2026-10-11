@@ -195,6 +195,8 @@
       <button data-tam="l">GRANDE</button>
     </div>
     <label><input type="checkbox" id="correr-siempre"> Correr siempre (sin mantener X)</label>
+    <h2>MANDO BLUETOOTH</h2>
+    <p class="desc" id="estado-mando">Sin mando. Conéctalo por Bluetooth y pulsa un botón.</p>
     <div class="fila" style="margin-top:14px">
       <button id="cerrar-ajustes">CERRAR</button>
     </div>
@@ -445,11 +447,12 @@ const held = { left: 0, right: 0, up: 0, down: 0, jump: 0, run: 0, spin: 0, ente
    - correr siempre: la opción de ajustes */
 const tecla = {};        // acción -> true mientras una tecla física la mantiene
 const dedos = new Map(); // pointerId -> { acciones: Set, ox, oy } de cada dedo en pantalla
+let mando = {};          // acción -> true mientras un mando (Bluetooth) la mantiene
 let autoCorrer = false;  // se fija al aplicar los ajustes
 let hojaAbierta = false; // con la hoja de ajustes abierta el juego se detiene
 
 function refrescarHeld() {
-  const tocando = {};
+  const tocando = Object.assign({}, mando);
   for (const d of dedos.values()) for (const a of d.acciones) tocando[a] = true;
   for (const a of ACCIONES) {
     const on = !!(tecla[a] || tocando[a] || (autoCorrer && a === "run"));
@@ -465,6 +468,42 @@ function quitarDedo(id) {
   const d = dedos.get(id) || null;
   if (d) { dedos.delete(id); refrescarHeld(); }
   return d;
+}
+
+/* Mando (Bluetooth, por ejemplo Amazon Luna) con la API Gamepad del navegador.
+   Se lee en cada frame. Mapa estándar, tipo Xbox:
+   palanca o cruceta = mover · A = saltar y confirmar · B = giro · X = correr · Y = ITEM · Start = pausa */
+const MANDO_ZONA = 0.4;   // zona muerta de la palanca (de 0 a 1)
+const MANDO_BOTONES = { 0: "jump", 1: "spin", 2: "run", 3: "item", 4: "spin", 5: "spin", 9: "pause", 12: "up", 13: "down", 14: "left", 15: "right" };
+const estadoMando = document.getElementById("estado-mando");
+
+function leerMando() {
+  const lista = navigator.getGamepads ? navigator.getGamepads() : [];
+  const acc = {};
+  const pulsados = [];
+  let nombre = "";
+  for (const g of lista) {
+    if (!g || g.connected === false) continue;
+    nombre = nombre || g.id;
+    (g.buttons || []).forEach((b, i) => {
+      if (b && (b.pressed || b.value > 0.5)) {
+        pulsados.push(i);
+        if (MANDO_BOTONES[i]) acc[MANDO_BOTONES[i]] = true;
+      }
+    });
+    const ax = (g.axes && g.axes[0]) || 0, ay = (g.axes && g.axes[1]) || 0;
+    if (ax < -MANDO_ZONA) acc.left = true; else if (ax > MANDO_ZONA) acc.right = true;
+    if (ay < -MANDO_ZONA) acc.up = true; else if (ay > MANDO_ZONA) acc.down = true;
+  }
+  // A también confirma en los menús (el salto por sí solo no sirve allí)
+  if (acc.jump && !mando.jump) pressed.enter = true;
+  mando = acc;
+  refrescarHeld();
+  // Diagnóstico en los ajustes: sirve para ver qué número de botón es cuál en otro mando
+  const texto = nombre
+    ? "Detectado: " + nombre + ". Botones pulsados: " + (pulsados.join(", ") || "ninguno") + "."
+    : "Sin mando. Conéctalo por Bluetooth y pulsa un botón.";
+  if (estadoMando.textContent !== texto) estadoMando.textContent = texto;
 }
 
 addEventListener("keydown", (e) => {
@@ -7283,6 +7322,7 @@ function bucle(t) {
   const dt = Math.min(1 / 30, (t - ultimo) / 1000);
   ultimo = t;
   try {
+    leerMando();                             // el mando se lee en cada frame
     if (!hojaAbierta) actualizarJuego(dt);   // con la hoja de ajustes abierta el juego se detiene
     ctx.setTransform(U, 0, 0, U, 0, 0);   // dibujo en coordenadas lógicas
     dibujarJuego(game);
