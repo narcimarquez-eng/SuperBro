@@ -4615,7 +4615,7 @@ const MUNDOS = [
     ruta: [[20, 96], [60, 140], [110, 150], [150, 120], [126, 70], [170, 44], [226, 60]],
     bonus: [3, 6],
     niveles: fases(2, ["Dunas", "Oasis", "Cactus", "Arenas", "Ruinas", "Escorpiones", "Escalones", "Pirámide"],
-      ["walker", "shell"]),
+      ["hormiga", "esqueleto"]),
   },
   {
     id: 3,
@@ -4633,7 +4633,7 @@ const MUNDOS = [
     ruta: [[24, 60], [80, 40], [120, 70], [84, 108], [120, 146], [176, 132], [226, 100]],
     bonus: [2, 6],
     niveles: fases(3, ["Sendero", "Claro", "Raíces", "Río", "Copas", "Tronco", "Cabaña", "Guarida"],
-      ["walker", "flyer"]),
+      ["walker", "flyer", "plant", "hormiga"]),
   },
   {
     id: 4,
@@ -4650,7 +4650,7 @@ const MUNDOS = [
     ruta: [[30, 44], [70, 60], [60, 104], [112, 124], [160, 100], [140, 50], [210, 40], [228, 120]],
     bonus: [1, 4],
     niveles: fases(4, ["Entrada", "Estalactitas", "Túnel", "Lago", "Minas", "Puentes", "Grietas", "Corazón"],
-      ["walker", "shell"]),
+      ["esqueleto", "caracol_zombie", "erizo_zombie"]),
   },
   {
     id: 5,
@@ -4701,7 +4701,7 @@ const MUNDOS = [
     ruta: [[24, 130], [96, 130], [96, 70], [160, 70], [160, 130], [232, 130]],
     bonus: [2, 5],
     niveles: fases(7, ["Foso", "Almenas", "Torres", "Patio", "Mazmorra", "Puente levadizo", "Armería", "Fortaleza"],
-      ["walker", "shell", "plant"]),
+      ["esqueleto", "erizo_zombie", "caracol_zombie", "planta_zombie"]),
   },
   {
     id: 8,
@@ -4718,7 +4718,7 @@ const MUNDOS = [
     ruta: [[30, 120], [78, 70], [126, 120], [176, 60], [226, 110]],
     bonus: [3, 6],
     niveles: fases(8, ["Nubes", "Islas", "Viento", "Arcoíris", "Escalera", "Tormenta", "Nube oscura", "Torre final"],
-      ["walker", "shell", "flyer", "plant"]),
+      ["flyer", "walker", "shell"]),
   },
 ];
 
@@ -4886,13 +4886,15 @@ function generarNivel(gen, mecanicas = []) {
   const goalX = cols - 4;
   for (let y = 4; y < GY; y++) tiles[y][goalX] = "F";
 
-  // Tuberías con plantas (si el enemigo "plant" está permitido)
-  if (tipos.includes("plant")) {
+  // Tuberías con plantas: la planta del mundo (planta normal en la pradera y el bosque,
+  // planta zombi en el castillo). Solo si el mundo permite alguna de las dos
+  const tipoPlanta = tipos.includes("planta_zombie") ? "planta_zombie" : tipos.includes("plant") ? "plant" : null;
+  if (tipoPlanta) {
     for (let x = 30; x < B1; x += ri(22, 30)) {
       if (!suelo[x] || !suelo[x + 1]) continue;
       tiles[GY - 1][x] = "T"; tiles[GY - 2][x] = "T";
       tiles[GY - 1][x + 1] = "T"; tiles[GY - 2][x + 1] = "T";
-      ents.push({ t: "plant", x: x * TILE + 1, y: (GY - 2) * TILE - 8 });
+      ents.push({ t: tipoPlanta, x: x * TILE + 1, y: (GY - 2) * TILE - 8 });
       // Despeja el aire sobre la tubería: un bloque a esa altura deja un hueco de 16 px
       // que el jugador (también de 16 px) no puede cruzar sin un salto perfecto
       for (let cc = x - 2; cc <= x + 3; cc++) for (let rr = 4; rr <= GY - 3; rr++) if (cc >= 0 && cc < cols) tiles[rr][cc] = ".";
@@ -5104,7 +5106,7 @@ function generarNivel(gen, mecanicas = []) {
     const x = ri(10, C1 - 4);
     if (!suelo[x] || x < 12 || tiles[GY][x] !== "G" || !libre(x, GY - 1)) continue;
     const t = tipos[ri(0, tipos.length - 1)];
-    if (t === "plant") continue;
+    if (t === "plant" || t === "planta_zombie") continue;   // las plantas van en las tuberías
     if (t === "flyer") {
       ents.push({ t, x: x * TILE, y: ri(3, 7) * TILE });
     } else {
