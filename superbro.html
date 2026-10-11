@@ -195,6 +195,7 @@
       <button data-tam="l">GRANDE</button>
     </div>
     <label><input type="checkbox" id="correr-siempre"> Correr siempre (sin mantener X)</label>
+    <label><input type="checkbox" id="musica-on"> Música de fondo</label>
     <h2>MANDO BLUETOOTH</h2>
     <p class="desc" id="estado-mando">Sin mando. Conéctalo por Bluetooth y pulsa un botón.</p>
     <div class="fila" style="margin-top:14px">
@@ -230,12 +231,13 @@ const DESC_ESQUEMA = {
   joystick: "Arrastra en la mitad izquierda: el mando aparece donde pones el dedo. Los botones de la derecha siguen igual.",
   gestos: "Sin botones: mantén abajo a la izquierda para ir a la izquierda, abajo a la derecha para ir a la derecha, y toca arriba para saltar."
 };
-const ajustes = { esquema: "botones", tam: "m", correr: false };
+const ajustes = { esquema: "botones", tam: "m", correr: false, musica: true };
 try {
   const guardado = JSON.parse(localStorage.getItem(CTL_KEY) || "{}");
   if (ESQUEMAS.includes(guardado.esquema)) ajustes.esquema = guardado.esquema;
   if (["s", "m", "l"].includes(guardado.tam)) ajustes.tam = guardado.tam;
   ajustes.correr = guardado.correr === true;
+  ajustes.musica = guardado.musica !== false;
 } catch (e) { /* sin acceso a localStorage: valores por defecto */ }
 function guardarAjustes() {
   try { localStorage.setItem(CTL_KEY, JSON.stringify(ajustes)); } catch (e) { /* modo privado: no se guarda */ }
@@ -628,6 +630,7 @@ function pintarAjustes() {
   hoja.querySelectorAll("[data-tam]").forEach((b) => b.setAttribute("aria-pressed", String(b.dataset.tam === ajustes.tam)));
   document.getElementById("desc-esquema").textContent = DESC_ESQUEMA[ajustes.esquema];
   document.getElementById("correr-siempre").checked = ajustes.correr;
+  document.getElementById("musica-on").checked = ajustes.musica;
 }
 function aplicarAjustes() {
   // Clases de la barra de botones y de la zona de toque según el esquema
@@ -661,6 +664,9 @@ hoja.querySelectorAll("[data-tam]").forEach((b) => b.addEventListener("click", (
 }));
 document.getElementById("correr-siempre").addEventListener("change", (e) => {
   ajustes.correr = e.target.checked; guardarAjustes(); aplicarAjustes();
+});
+document.getElementById("musica-on").addEventListener("change", (e) => {
+  ajustes.musica = e.target.checked; guardarAjustes();   // la música se para o arranca en el siguiente frame
 });
 document.getElementById("btn-ajustes").addEventListener("click", () => abrirAjustes(true));
 document.getElementById("cerrar-ajustes").addEventListener("click", () => abrirAjustes(false));
@@ -5956,6 +5962,160 @@ function tocar(nombre) {
 addEventListener("keydown", () => { if (audioCtx && audioCtx.state === "suspended") audioCtx.resume(); }, { once: false });
 
 /* =====================================================================
+   11b. MÚSICA DE FONDO
+   Tema propio generado con ondas, sin archivos. Sol mayor, 8 compases
+   en bucle a 150 BPM: melodía en cuadrada, bajo en triángulo y
+   percusión con ruido (bombo y charles). Se programa unas décimas por
+   delante del reloj de audio para que no cruja.
+   ===================================================================== */
+const MUSICA_BPM = 150;
+const MUSICA_LOOP = 64;     // corcheas por vuelta: 8 compases de 8
+const MUSICA_ADELANTO = 0.15;
+// Melodía: "nota:corcheas". Nota = letra, # opcional y octava (C4 = do central)
+const MELODIA = [
+  "G5:2", "E5:1", "G5:1", "A5:2", "G5:1", "E5:1",
+  "E5:2", "C5:1", "E5:1", "G5:2", "E5:1", "C5:1",
+  "F#5:1", "A5:1", "D6:2", "C6:1", "A5:1", "F#5:2",
+  "G5:1", "B5:1", "D6:2", "B5:1", "G5:1", "A5:2",
+  "E5:2", "G5:1", "B5:1", "E6:2", "D6:1", "B5:1",
+  "C6:2", "A5:1", "G5:1", "E5:2", "G5:2",
+  "F#5:1", "E5:1", "D5:1", "F#5:1", "A5:2", "F#5:2",
+  "G5:4", "D5:2", "G5:2"
+];
+// Raíz del bajo en cada compás (una raíz por compás, octava 2 o 3)
+const BAJO_COMPASES = ["G2", "C3", "D3", "G2", "E3", "C3", "D3", "G2"];
+const NOTAS_BASE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
+function frecuencia(nombre) {   // "F#5" -> Hz (A4 = 440)
+  const m = /^([A-G])(#?)(\d)$/.exec(nombre);
+  const midi = (+m[3] + 1) * 12 + NOTAS_BASE[m[1]] + (m[2] ? 1 : 0);
+  return 440 * Math.pow(2, (midi - 69) / 12);
+}
+// Pasos (corchea a corchea) de la melodía y del bajo, para consultarlos al programar
+const pasosMelodia = new Map();   // paso -> { f, d }
+const pasosBajo = new Map();      // paso -> frecuencia
+(function prepararMusica() {
+  let p = 0;
+  for (const tok of MELODIA) {
+    const [n, d] = tok.split(":");
+    pasosMelodia.set(p, { f: frecuencia(n), d: +d });
+    p += +d;
+  }
+  BAJO_COMPASES.forEach((raiz, c) => {
+    const base = frecuencia(raiz);
+    [1, 1, 2, 1, 1, 2, 1, 1].forEach((mult, k) => pasosBajo.set(c * 8 + k, base * mult));
+  });
+})();
+
+let musicaGain = null;       // la música usa el mismo audioCtx que los efectos
+let bufRuido = null;
+let musicaNotas = 0;         // notas programadas (para comprobar que suena)
+let gestoAudio = false;      // el navegador exige un gesto del usuario antes de sonar
+function marcarGesto() {
+  gestoAudio = true;
+  if (audioCtx && audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+}
+addEventListener("pointerdown", marcarGesto);
+addEventListener("keydown", marcarGesto);
+
+function asegurarAudio() {
+  try {
+    if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+    if (audioCtx.state === "suspended") audioCtx.resume().catch(() => {});
+    if (!musicaGain) {
+      musicaGain = audioCtx.createGain();
+      musicaGain.gain.value = 0.5;
+      musicaGain.connect(audioCtx.destination);
+    }
+    return true;
+  } catch (e) { return false; }
+}
+function ruidoBuffer() {
+  if (!bufRuido) {
+    bufRuido = audioCtx.createBuffer(1, Math.floor(audioCtx.sampleRate * 0.06), audioCtx.sampleRate);
+    const d = bufRuido.getChannelData(0);
+    for (let i = 0; i < d.length; i++) d[i] = Math.random() * 2 - 1;
+  }
+  return bufRuido;
+}
+function nota(freq, t, dur, tipo, vol) {
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = tipo;
+  o.frequency.setValueAtTime(freq, t);
+  g.gain.setValueAtTime(vol, t);
+  g.gain.setValueAtTime(vol, t + dur * 0.75);
+  g.gain.linearRampToValueAtTime(0.0001, t + dur);
+  o.connect(g); g.connect(musicaGain);
+  o.start(t); o.stop(t + dur + 0.02);
+  musicaNotas++;
+}
+function bombo(t) {
+  const o = audioCtx.createOscillator();
+  const g = audioCtx.createGain();
+  o.type = "sine";
+  o.frequency.setValueAtTime(140, t);
+  o.frequency.exponentialRampToValueAtTime(45, t + 0.12);
+  g.gain.setValueAtTime(0.9, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.15);
+  o.connect(g); g.connect(musicaGain);
+  o.start(t); o.stop(t + 0.16);
+  musicaNotas++;
+}
+function charles(t) {
+  const src = audioCtx.createBufferSource();
+  src.buffer = ruidoBuffer();
+  const filtro = audioCtx.createBiquadFilter();
+  filtro.type = "highpass";
+  filtro.frequency.value = 7000;
+  const g = audioCtx.createGain();
+  g.gain.setValueAtTime(0.18, t);
+  g.gain.exponentialRampToValueAtTime(0.001, t + 0.04);
+  src.connect(filtro); filtro.connect(g); g.connect(musicaGain);
+  src.start(t); src.stop(t + 0.05);
+  musicaNotas++;
+}
+function programarPaso(p, t, dur) {
+  const m = pasosMelodia.get(p);
+  if (m) nota(m.f, t, m.d * dur * 0.92, "square", 0.035);
+  const b = pasosBajo.get(p);
+  if (b) nota(b, t, dur * 0.9, "triangle", 0.2);
+  if (p % 8 === 0 || p % 8 === 4) bombo(t);
+  if (p % 2 === 1) charles(t);
+}
+
+const musica = { activa: false, paso: 0, siguiente: 0, timer: null };
+function planificar() {
+  const dur = 60 / MUSICA_BPM / 2;
+  // Si la pestaña estuvo oculta, el reloj de audio ya pasó: no se programa en el pasado
+  if (musica.siguiente < audioCtx.currentTime) musica.siguiente = audioCtx.currentTime + 0.05;
+  while (musica.siguiente < audioCtx.currentTime + MUSICA_ADELANTO) {
+    programarPaso(musica.paso, musica.siguiente, dur);
+    musica.siguiente += dur;
+    musica.paso = (musica.paso + 1) % MUSICA_LOOP;
+  }
+}
+function musicaArrancar() {
+  if (musica.activa || !ajustes.musica || !gestoAudio) return;
+  if (!asegurarAudio()) return;
+  musica.activa = true;
+  musica.paso = 0;
+  musica.siguiente = audioCtx.currentTime + 0.05;
+  planificar();
+  musica.timer = setInterval(planificar, 25);
+}
+function musicaParar() {
+  if (!musica.activa) return;
+  musica.activa = false;
+  clearInterval(musica.timer);
+}
+// Suena en el título, el mapa y el nivel; se calla en pausa, al final y si se apaga en ajustes
+function musicaSegunEstado() {
+  const callada = !ajustes.musica || game.estado === "pausa" || game.estado === "final";
+  if (callada) musicaParar(); else musicaArrancar();
+}
+
+/* =====================================================================
    12. CÁMARA CON SUAVIZADO Y LÍMITES
    ===================================================================== */
 class Camera {
@@ -7323,6 +7483,7 @@ function bucle(t) {
   ultimo = t;
   try {
     leerMando();                             // el mando se lee en cada frame
+    musicaSegunEstado();                     // la música sigue al estado del juego
     if (!hojaAbierta) actualizarJuego(dt);   // con la hoja de ajustes abierta el juego se detiene
     ctx.setTransform(U, 0, 0, U, 0, 0);   // dibujo en coordenadas lógicas
     dibujarJuego(game);
