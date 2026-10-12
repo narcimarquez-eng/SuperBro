@@ -5578,6 +5578,72 @@ function parsearMapa(strs) {
   return { cols, rows: ROWS, tiles, ents, plats: [], decor: [], canones: [], start, goalX, theme: null, boss: false, arenaX0: 0 };
 }
 
+// Salas de las zonas secretas: mapas bajo tierra escritos a mano. Tienen monedas y una tubería de salida (la de la derecha)
+const SALAS = [
+  { tiempo: 120, sala: true, mapa: [
+    "SSSSSSSSSSSSSSSSSSSSSSSS",
+    "S......................S",
+    "S......................S",
+    "S..cccccccc............S",
+    "S......................S",
+    "S......................S",
+    "S...BBBB....QBBBB......S",
+    "S......................S",
+    "S......................S",
+    "S..................TT..S",
+    "S.@................TT..S",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+  ] },
+  { tiempo: 120, sala: true, mapa: [
+    "SSSSSSSSSSSSSSSSSSSSSSSS",
+    "S......................S",
+    "S..cc..cc..cc..cc..cc..S",
+    "S......................S",
+    "S...BBBB.........BBBB..S",
+    "S......................S",
+    "S..cccccccc............S",
+    "S......................S",
+    "S......................S",
+    "S....................TTS",
+    "S.@..................TTS",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+  ] },
+];
+
+// Tuberías de un nivel: la boca de cada tubo de dos bloques (esquina superior izquierda)
+function encontrarTuberias(tiles) {
+  const out = [];
+  for (let r = 1; r < tiles.length; r++) for (let c = 0; c < tiles[r].length - 1; c++) {
+    if (tiles[r][c] === "T" && tiles[r][c + 1] === "T" && tiles[r - 1][c] !== "T" && tiles[r - 1][c + 1] !== "T") out.push({ col: c, row: r });
+  }
+  return out;
+}
+
+// Pone una tubería extra en un tramo de suelo libre (sin enemigos ni plataformas cerca) y devuelve su boca
+function colocarTuberiaSecreta(lv, sala) {
+  const libre = (x) => {
+    for (let dx = 0; dx < 2; dx++) {
+      if (lv.tiles[GY][x + dx] !== "G") return false;
+      for (let r = GY - 4; r < GY; r++) if (lv.tiles[r][x + dx] !== ".") return false;
+    }
+    const cerca = (px) => Math.abs(px - (x + 1) * TILE) < 4 * TILE;
+    if (lv.ents.some((e) => e.t !== "coin" && e.t !== "qitem" && cerca(e.x))) return false;
+    if ((lv.plats || []).some((pl) => cerca(pl.x))) return false;
+    return !(lv.canones || []).some((c) => Math.abs(c.col - x) < 5);
+  };
+  for (let x = 14; x < lv.cols - 16; x++) {
+    if (!libre(x)) continue;
+    lv.tiles[GY - 1][x] = "T"; lv.tiles[GY - 1][x + 1] = "T";
+    lv.tiles[GY - 2][x] = "T"; lv.tiles[GY - 2][x + 1] = "T";
+    return { col: x, row: GY - 2, sala };
+  }
+  return null;
+}
+
 /* Punto de entrada: usa el mapa escrito a mano si existe, si no genera */
 function construirNivel(def, tema) {
   // Los niveles de castillo no llevan decoración de su mundo (usan su propio escenario)
@@ -5585,6 +5651,8 @@ function construirNivel(def, tema) {
   const lv = def.mapa ? parsearMapa(def.mapa) : generarNivel(gen, def.mecanicas || []);
   lv.nombre = def.nombre;
   lv.tiempo = def.tiempo || 300;
+  if (def.sala) lv.goalX = 1e9;                       // las salas secretas no tienen meta: se sale por su tubería
+  if (def.secreta !== undefined) lv.entradaSecreta = colocarTuberiaSecreta(lv, def.secreta);
   return lv;
 }
 
@@ -6590,6 +6658,9 @@ class Level {
     this.goalX = data.goalX;
     this.boss = data.boss;
     this.tiempo = data.tiempo;
+    this.entradaSecreta = data.entradaSecreta || null;   // boca de la zona secreta: { col, row, sala }
+    this.esSala = !!def.sala;                              // las salas secretas no tienen meta: se sale por su tubería
+    this.tuberias = encontrarTuberias(this.tiles);
     // Los niveles marcados como castillo usan piedra y atardecer en vez del tema del mundo
     this.castillo = !!def.castillo;
     this.pal = this.castillo ? PALETA_CASTILLO : mundo.paleta;
@@ -6754,6 +6825,18 @@ class Level {
         this.dibujarTile(t, x, y, c, r);
       }
     }
+    // Pista de la zona secreta: una flecha amarilla que flota sobre la boca cuando el jugador está cerca
+    {
+      // En las salas, todas las tuberías son salidas; en los niveles, solo la boca secreta
+      const marcas = this.esSala ? this.tuberias : this.entradaSecreta ? [this.entradaSecreta] : [];
+      const pj = this.player;
+      for (const e of marcas) {
+        if (Math.abs(pj.x + pj.w / 2 - (e.col + 1) * TILE) >= 3 * TILE) continue;
+        const fx = (e.col + 1) * TILE - cam.x, fy = e.row * TILE - cam.y - 10 + Math.round(Math.sin(performance.now() / 180) * 2);
+        ctx.fillStyle = PAL.y;
+        ctx.beginPath(); ctx.moveTo(fx - 4, fy - 4); ctx.lineTo(fx + 4, fy - 4); ctx.lineTo(fx, fy); ctx.closePath(); ctx.fill();
+      }
+    }
     // Plataformas móviles (tablones) y que caen (piedra): tres bloques de ancho
     for (const pl of this.plats) {
       if (!pl.vivo) continue;
@@ -6780,6 +6863,13 @@ class Level {
     this.dibujarJugador(game, cam);
     dibujarParticulas(cam);
     ctx.restore();
+  }
+
+  // Tubería cuya boca pisa el jugador (o null): la boca es la fila de arriba de cada tubo
+  tuberiaBajo(p) {
+    if (!p.onGround) return null;
+    const fila = Math.round((p.y + p.h) / TILE), mitad = Math.floor((p.x + p.w / 2) / TILE);
+    return this.tuberias.find((t) => t.row === fila && (mitad === t.col || mitad === t.col + 1)) || null;
   }
 
   // Bloques con el arte de bloques.js. El borde de un terreno depende de los vecinos que dan al aire
@@ -6972,6 +7062,11 @@ class Game {
     this.reserva = { seta: 0, estrella: 0, flor: 0, pluma: 0 };   // potenciadores guardados (tecla Q)
     this.pruebaTodo = false;  // modo prueba: todos los mundos y fases abiertos (ITEM en la selección de mundo)
     this.mini = null;         // minijuego en curso
+    this.secreta = null;      // zona secreta en curso: { lvl: nivel de origen, tuberia, sala }
+    this.transicion = null;   // entrada o salida de una tubería: { tipo, t, dur, y0, tuberia }
+    this.esperarSoltar = false;   // tras cambiar de sitio por una tubería, hay que soltar ↓ antes de volver a usarla
+    this.avisoSecretaT = 0;   // tiempo que se muestra el aviso "zona secreta"
+    this.secretosHallados = new Set();   // zonas ya halladas: la primera salida da premio
     this.cargarProgreso();
   }
 
@@ -7248,6 +7343,8 @@ class Game {
     this.nivelIdx = nIdx;
     const mundo = MUNDOS[mIdx];
     this.lvl = new Level(mundo.niveles[nIdx], mundo);
+    this.secreta = null;
+    this.transicion = null;
     this.estado = "nivel";
   }
 
@@ -7266,6 +7363,8 @@ class Game {
 
   // Llamado por el bucle: termina nivel, muerte o pantallas
   actualizarEstado(dt) {
+    if (this.avisoSecretaT > 0) this.avisoSecretaT -= dt;
+    if (this.estado === "tuberia") { this.actualizarTransicion(dt); return; }
     if (this.estado === "nivel") {
       const lvl = this.lvl;
       lvl.actualizar(dt, this);
@@ -7278,6 +7377,14 @@ class Game {
         this.timerEstado = 1.6;
         this.estado = "nivelOK";
         this.sfx("meta");
+        return;
+      }
+      // Tuberías: de pie sobre una boca y con ↓, se entra en la zona secreta o se sale de ella
+      if (this.esperarSoltar) { if (!held.down) this.esperarSoltar = false; return; }
+      if (held.down) {
+        const t = lvl.tuberiaBajo(lvl.player);
+        if (t && lvl.esSala) this.iniciarTransicion("salir", t);
+        else if (t && lvl.entradaSecreta && t.col === lvl.entradaSecreta.col && t.row === lvl.entradaSecreta.row) this.iniciarTransicion("entrar", t);
       }
       return;
     }
@@ -7311,6 +7418,60 @@ class Game {
     }
   }
 
+  // ---------- Zonas secretas ----------
+  // Bajar por una tubería: el jugador se hunde en ella y, al terminar, cambia de nivel (entrar o salir)
+  iniciarTransicion(tipo, t) {
+    const p = this.lvl.player;
+    p.vx = 0; p.vy = 0;
+    this.transicion = { tipo, t: 0, dur: 0.6, y0: p.y, tuberia: t };
+    this.estado = "tuberia";
+    this.sfx("pisar");
+  }
+
+  actualizarTransicion(dt) {
+    const tr = this.transicion, p = this.lvl.player;
+    tr.t += dt;
+    const f = Math.min(1, tr.t / tr.dur);
+    p.y = tr.tipo === "subir" ? tr.y0 - f * TILE : tr.y0 + f * TILE;   // "subir" sale del tubo; los demás se hunden
+    if (f < 1) return;
+    if (tr.tipo === "entrar") this.entrarSala(tr.tuberia);
+    else if (tr.tipo === "salir") this.salirSala();
+    else { this.transicion = null; this.estado = "nivel"; this.esperarSoltar = true; }
+  }
+
+  entrarSala(t) {
+    const padre = this.lvl;
+    const k = padre.entradaSecreta.sala;
+    this.secreta = { lvl: padre, tuberia: t, sala: k };
+    this.lvl = new Level(SALAS[k], MUNDOS[3]);
+    this.transicion = null;
+    this.estado = "nivel";
+    this.esperarSoltar = true;
+    this.avisoSecretaT = 1.8;
+    this.sfx("estrella");
+  }
+
+  salirSala() {
+    const { lvl: padre, tuberia: e } = this.secreta;
+    const id = this.mundoIdx + ":" + this.nivelIdx;
+    // Premio: la primera vez que se sale de cada zona, +1 vida y puntos
+    if (!this.secretosHallados.has(id)) {
+      this.secretosHallados.add(id);
+      this.vidas++;
+      this.score += 1000;
+      this.sfx("vida");
+    }
+    this.secreta = null;
+    this.lvl = padre;
+    const p = padre.player;
+    p.x = e.col * TILE + (2 * TILE - p.w) / 2;   // centrado sobre la boca (dos bloques)
+    p.y = e.row * TILE + TILE - p.h;             // dentro del tubo: sale hacia arriba
+    p.vx = 0; p.vy = 0;
+    this.transicion = { tipo: "subir", t: 0, dur: 0.6, y0: p.y, tuberia: e };
+    this.estado = "tuberia";
+    this.sfx("pisar");
+  }
+
   // Marca el nivel como completado y decide el siguiente paso
   completarNivel() {
     const mundo = MUNDOS[this.mundoIdx];
@@ -7332,6 +7493,8 @@ class Game {
   // Vuelve al mapa del mundo actual (overworld); cursor: nodo donde queda el jugador
   volverAlMapa(cursor) {
     this.lvl = null;
+    this.secreta = null;
+    this.transicion = null;
     this.ov = new Overworld(this, this.mundoIdx, cursor);
     this.estado = "overworld";
   }
@@ -7865,6 +8028,7 @@ function dibujarHUD(game) {
 function dibujarNivelYHUD(game) {
   game.lvl.dibujar(game);
   dibujarHUD(game);
+  if (game.avisoSecretaT > 0) txtHud("ZONA SECRETA", W / 2, 22, PAL.y, "center", 2);
   if (game.lvl.avisoT > 0) txtHud("DERROTA AL JEFE", W / 2, 22, PAL.y, "center", 2);
   if (game.lvl.bossRef && game.lvl.introJefeT > 0) txtHud(game.lvl.bossRef.nombre, W / 2, 60, PAL.r, "center", 2);
 }
@@ -7957,6 +8121,8 @@ function dibujarJuego(game) {
 /* =====================================================================
    18. BUCLE PRINCIPAL (requestAnimationFrame + delta time)
    ===================================================================== */
+// Zonas secretas: [mundo, fase, sala]. Esas fases tienen una tubería extra que lleva a una sala bajo tierra
+for (const [m, f, s] of [[0, 1, 0], [0, 4, 1], [2, 1, 0], [4, 2, 1]]) MUNDOS[m].niveles[f].secreta = s;
 const game = new Game();
 KEYMAP.Backspace = "reset";  // para borrar el progreso desde el título
 
