@@ -2633,6 +2633,10 @@ function consume(action) {
     murcielago      vuela en zigzag rápido. Se pisa desde arriba.
     arana           espera quieta y salta sobre ti cuando pasas por debajo. Se pisa.
     fantasma        te persigue volando y atraviesa las paredes. No se puede pisar.
+    nubarron        nube con jinete que te sigue por el cielo y lanza erizos (e.lanza = true el frame
+                    en que lanza; el nivel crea el erizo). Se pisa desde arriba.
+    pez_saltarin    salta desde un hueco en un arco y vuelve a caer (el nivel lo crea con su vx y vy). Se pisa.
+    bola_lava       salta desde la lava y vuelve a caer en ella. No se puede pisar.
 */
 (function (global) {
   'use strict';
@@ -2660,7 +2664,10 @@ function consume(action) {
     jabali:         { w: 30, h: 20, vel: 40, pisable: true },
     murcielago:     { w: 20, h: 12, vel: 60, pisable: true, vuela: true },
     arana:          { w: 20, h: 16, vel: 0,  pisable: true, colgada: true },
-    fantasma:       { w: 22, h: 24, vel: 26, pisable: false, vuela: true }
+    fantasma:       { w: 22, h: 24, vel: 26, pisable: false, vuela: true },
+    nubarron:       { w: 26, h: 18, vel: 0,  pisable: true, vuela: true, nube: true },
+    pez_saltarin:   { w: 20, h: 12, vel: 0,  pisable: true, salta: true },
+    bola_lava:      { w: 12, h: 12, vel: 0,  pisable: false, salta: true }
   };
 
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
@@ -2952,12 +2959,50 @@ function consume(action) {
     e.homeY = e.base;
   }
 
+  // Saltarines (pez y bola de lava): tiro parabólico sin chocar con nada; desaparecen al volver a su altura de salida
+  function updSaltarin(e, dt) {
+    e.vy = Math.min(e.vy + 700 * dt, MAX_CAIDA);
+    e.x += e.vx * dt;
+    e.y += e.vy * dt;
+    if (e.vx) e.dir = e.vx > 0 ? 1 : -1;
+    if (e.vy > 0 && e.y > e.homeY + 4) e.remove = true;
+  }
+
+  // Nubarrón: te sigue desde arriba, meciéndose por delante y por detrás de ti, y cada pocos segundos lanza un erizo
+  function updNubarron(e, dt, j) {
+    e.lanza = false;
+    if (e.dead) {
+      e.vy += GRAV * 0.6 * dt;
+      e.y += e.vy * dt;
+      if (e.y > 420) e.remove = true;
+      return;
+    }
+    const objetivo = j ? j.x + Math.sin(e.t * 0.7) * 70 : e.x;
+    e.vx += (clamp((objetivo - e.x) * 1.6, -120, 120) - e.vx) * Math.min(1, dt * 2);
+    e.x += e.vx * dt;
+    e.y = e.base + Math.sin(e.t * 2) * 4;
+    e.dir = j && j.x < e.x ? -1 : 1;
+    e.cool -= dt;
+    if (e.brazo > 0) e.brazo -= dt;
+    if (j && e.cool <= 0 && Math.abs(j.x - e.x) < 180) {
+      e.lanza = true;
+      e.cool = 3 + Math.random() * 1.5;
+      e.brazo = 0.35;
+    }
+  }
+
   function update(e, dt, mundo) {
     if (e.remove) return;
     e.t += dt;
     const j = mundo.jugador || null;
     const d = DEFS[e.type];
 
+    if (d.salta) {
+      if (e.dead) { e.vy += GRAV * 0.6 * dt; e.y += e.vy * dt; if (e.y > 420) e.remove = true; return; }
+      updSaltarin(e, dt);
+      return;
+    }
+    if (d.nube) { updNubarron(e, dt, j); return; }
     if (d.planta) { updPlanta(e, dt, j); return; }
     if (e.type === 'abeja') { updAbeja(e, dt, mundo, j); return; }
     if (d.vuela) { updVolador(e, dt, mundo, j); return; }
@@ -3457,6 +3502,54 @@ function consume(action) {
     c.beginPath(); c.moveTo(9, 1); c.lineTo(10, 1.5); c.stroke();
   }
 
+  // Nubarrón: nube con cara y un jinete amarillo encima que levanta el brazo con un erizo al lanzarlo
+  function dibujarNubarron(c, e, t) {
+    c.translate(e.x, e.y);
+    const blanca = ['#ffffff', '#eef4ff', '#9fb0d0'];
+    esfera(c, 0, -8, 5.5, 5.5, ['#fff4c0', '#f2c040', '#9a6a10']);       // jinete
+    contorno(c, 0, -8, 5.5, 5.5, 0.9);
+    for (const ox of [-2, 2]) {
+      esfera(c, ox + e.dir * 0.8, -9, 1.6, 1.8, ['#ffffff', '#f2f2f2', '#b8b8c4']);
+      c.fillStyle = '#111';
+      c.beginPath(); c.arc(ox + e.dir * 1.3, -8.8, 0.8, 0, Math.PI * 2); c.fill();
+    }
+    if (e.brazo > 0) {                                                  // erizo en alto, a punto de lanzarlo
+      c.fillStyle = '#b8302a';
+      for (let k = 0; k < 8; k++) {
+        const a = (k * Math.PI) / 4;
+        c.beginPath(); c.moveTo(e.dir * 5 + Math.cos(a) * 5.5, -17 + Math.sin(a) * 5.5);
+        c.lineTo(e.dir * 5 + Math.cos(a + 0.3) * 3, -17 + Math.sin(a + 0.3) * 3);
+        c.lineTo(e.dir * 5 + Math.cos(a - 0.3) * 3, -17 + Math.sin(a - 0.3) * 3); c.fill();
+      }
+      esfera(c, e.dir * 5, -17, 3.5, 3.5, ['#ff9a8a', '#e04a3a', '#801810']);
+    }
+    esfera(c, -9, 2, 7, 5.5, blanca);
+    esfera(c, 9, 2, 7, 5.5, blanca);
+    esfera(c, 0, 0, 10, 7, blanca);
+    c.fillStyle = '#2a2a40';
+    c.beginPath(); c.arc(-3, 0, 1.1, 0, Math.PI * 2); c.arc(3, 0, 1.1, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#2a2a40'; c.lineWidth = 0.8;
+    c.beginPath(); c.arc(0, 2, 2.2, 0.2, Math.PI - 0.2); c.stroke();
+  }
+
+  // Bola de lava: brasa con halo, ojos y una estela de llamas en sentido contrario al movimiento
+  function dibujarBolaLava(c, e, t) {
+    c.translate(e.x, e.y);
+    const halo = c.createRadialGradient(0, 0, 2, 0, 0, 12);
+    halo.addColorStop(0, 'rgba(255,170,60,0.55)');
+    halo.addColorStop(1, 'rgba(255,170,60,0)');
+    c.fillStyle = halo;
+    c.beginPath(); c.arc(0, 0, 12, 0, Math.PI * 2); c.fill();
+    const sentido = e.vy > 0 ? -1 : 1;
+    for (let k = 1; k <= 3; k++) {
+      c.fillStyle = k === 1 ? '#ffb030' : k === 2 ? '#ff7a1a' : '#d03a10';
+      c.beginPath(); c.ellipse(Math.sin(t * 20 + k) * 0.8, sentido * (4 + k * 2.5), 4 - k, 3 - k * 0.6, 0, 0, Math.PI * 2); c.fill();
+    }
+    esfera(c, 0, 0, 6, 6, ['#fff3a0', '#ff8a1a', '#a01800']);
+    c.fillStyle = '#3a0800';
+    c.beginPath(); c.arc(-2, -0.5, 1, 0, Math.PI * 2); c.arc(2, -0.5, 1, 0, Math.PI * 2); c.fill();
+  }
+
   // Escorpión (desierto): cola curvada que se lanza hacia ti cuando estás cerca
   function dibujarEscorpion(c, e, t) {
     const pinza = Math.sin(t * 6);
@@ -3547,6 +3640,9 @@ function consume(action) {
       case 'murcielago':     return dibujarMurcielago(c, e, t);
       case 'arana':          return dibujarArana(c, e, t);
       case 'fantasma':       return dibujarFantasma(c, e, t);
+      case 'nubarron':       return dibujarNubarron(c, e, t);
+      case 'pez_saltarin':   return dibujarPez(c, e, t);
+      case 'bola_lava':      return dibujarBolaLava(c, e, t);
     }
   }
 
@@ -3554,13 +3650,13 @@ function consume(action) {
   function sombraDe(c, e) {
     const d = DEFS[e.type];
     if (d.planta) sombraSuelo(c, e.x, e.y + 18, 12, 3, 0.3);
-    else if (d.vuela || e.type === 'abeja' || e.type === 'pez') return;
+    else if (d.vuela || d.salta || e.type === 'abeja' || e.type === 'pez') return;
     else sombraSuelo(c, e.x, e.y + e.h / 2 + 1, e.w * 0.5, 3.5, 0.32);
   }
 
   function draw(ctx, e) {
     if (e.remove) return;
-    const vuela = DEFS[e.type].vuela || e.type === 'abeja' || e.type === 'pez';
+    const vuela = DEFS[e.type].vuela || DEFS[e.type].salta || e.type === 'abeja' || e.type === 'pez';
     ctx.save();
     if (!e.dead) sombraDe(ctx, e);
     if (e.dead && !vuela) {
@@ -5280,7 +5376,7 @@ const PIEZAS = [
   { id: "isla", tipo: "reto", min: 2, mapa: [
     "......g.......",
     "......cc......",
-    "..............",
+    "......E.......",
     ".....SSSS.....",
     "..............",
     "..............",
@@ -5289,7 +5385,7 @@ const PIEZAS = [
   ] },
   // Ruta alta opcional con monedas sobre una calle con enemigos. Bajo la ruta hay un bloque oculto con vida
   { id: "ruta_alta", tipo: "reto", min: 2, mapa: [
-    ".....cccccccc.g..",
+    ".....cccEcccc.g..",
     ".....SSSSSSSS....",
     ".................",
     ".................",
@@ -5303,7 +5399,7 @@ const PIEZAS = [
   // ----- Puertas: un muro de 8 bloques que no se salta; hay que subir para seguir -----
   // Escalones de piedra hasta lo alto de la meseta
   { id: "muro_escalones", tipo: "puerta", mapa: [
-    "..........cccc%...",
+    "..........cEcc%...",
     ".........GGGGGG...",
     "......c..GGGGGG...",
     ".....SSS.GGGGGG...",
@@ -5316,7 +5412,7 @@ const PIEZAS = [
   ] },
   // Muelle: solo su impulso llega arriba del muro
   { id: "muro_muelle", tipo: "puerta", req: "muelle", mapa: [
-    "......cccc%.",
+    "......ccEc%.",
     "......GGGGGG",
     "....c.GGGGGG",
     "......GGGGGG",
@@ -5330,7 +5426,7 @@ const PIEZAS = [
   // Escalera de mano hasta lo alto del muro
   { id: "muro_escalera", tipo: "puerta", req: "escalera", mapa: [
     "...S........",
-    "...L.cccc%..",
+    "...L.ccEc%..",
     "...LDGGGGG..",
     "...L.GGGGG..",
     "...L.GGGGG..",
@@ -5343,7 +5439,7 @@ const PIEZAS = [
   ] },
   // Plataformas de una dirección: se atraviesan desde abajo, piso a piso
   { id: "muro_direccional", tipo: "puerta", req: "una_direccion", mapa: [
-    "......cc..cccc%",
+    "......cc..ccEc%",
     ".....DDDDGGGGGG",
     ".........GGGGGG",
     "....cc...GGGGGG",
@@ -5356,7 +5452,7 @@ const PIEZAS = [
   ] },
   // Ascensor: sube y baja junto al muro; hay que subirse y pasar arriba
   { id: "ascensor", tipo: "puerta", req: "plataforma_movil", mapa: [
-    "......cccc%..",
+    "......ccEc%..",
     "..^..GGGGGG..",
     "..^..GGGGGG..",
     "..^..GGGGGG..",
@@ -5658,8 +5754,9 @@ function barajar(lista, rnd) {
 /* Elige las piezas de una fase: la mecánica nueva de la fase sale al menos dos veces, hay una o más
    puertas (muros que obligan a subir) según la dificultad, y el resto se reparte entre las demás
    mecánicas y los retos básicos. Ninguna pieza sale más de dos veces. */
-function elegirPiezas(rnd, dif, mecanicas, secreta, jefe) {
-  const vale = (p) => (!p.req || mecanicas.includes(p.req)) && dif >= (p.min || 1) && dif <= (p.max || 8);
+function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance) {
+  // Con avance automático no hay ascensor: esperarlo con la pantalla empujando sería una trampa
+  const vale = (p) => (!p.req || mecanicas.includes(p.req)) && dif >= (p.min || 1) && dif <= (p.max || 8) && !(avance && p.id === "ascensor");
   const pool = PIEZAS.filter((p) => (p.tipo === "reto" || p.tipo === "puerta") && vale(p));
   const puertas = pool.filter((p) => p.tipo === "puerta");
   const n = 6 + Math.ceil(dif / 2);
@@ -5727,6 +5824,25 @@ function ponerGrandes(N, rnd) {
   sitios.forEach((st, i) => N.ents.push({ t: "grande", x: st.c * TILE, y: st.r * TILE, idx: i }));
 }
 
+/* Surtidores de saltarines: peces que saltan desde los huecos sin fondo (en las fases con peces)
+   y bolas de lava que saltan desde la lava. Cada uno es un tramo de columnas { tipo, x0, x1 } en píxeles */
+function surtidores(tiles, cols, peces, hm) {
+  const out = [];
+  const hueco = (c) => hm ? hm[c] === Infinity : tiles[GY][c] === "." && tiles[ROWS - 1][c] === ".";
+  const lava = (c) => !hm && tiles[ROWS - 1][c] === "V";
+  for (const [tipo, es, minimo] of [["pez_saltarin", hueco, 2], ["bola_lava", lava, 2]]) {
+    if (tipo === "pez_saltarin" && !peces) continue;
+    for (let c = 0; c < cols; c++) {
+      if (!es(c)) continue;
+      let fin = c;
+      while (fin + 1 < cols && es(fin + 1)) fin++;
+      if (fin - c + 1 >= minimo) out.push({ tipo, x0: c * TILE, x1: (fin + 1) * TILE });
+      c = fin;
+    }
+  }
+  return out;
+}
+
 // Tramo llano entre dos piezas: a veces un enemigo, un grupo de bloques o un volador.
 // El tramo del punto de control queda sin enemigos
 function ponerTramo(N, x, w, tranquilo) {
@@ -5760,7 +5876,7 @@ function generarNivel(gen, mecanicas = []) {
   const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
   const dif = clamp(gen.dif || 1, 1, 8);
   const tipos = gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"];
-  const piezas = elegirPiezas(rnd, dif, mecanicas, gen.secreta, gen.jefe);
+  const piezas = elegirPiezas(rnd, dif, mecanicas, gen.secreta, gen.jefe, gen.avance);
   const separaciones = piezas.map(() => ri(3, 6));
   const INICIO = 12, ARENA = gen.jefe ? 34 : 0, FINAL = 22;
   const anchoPiezas = piezas.reduce((s, p, i) => s + separaciones[i] + Math.max(...p.mapa.map((f) => f.length)), 0);
@@ -5799,6 +5915,7 @@ function generarNivel(gen, mecanicas = []) {
   for (let r = 4; r < GY; r++) N.tiles[r][goalX] = "F";
   decorarSuelo(N, gen.theme, 4, cols - 4);
   ponerGrandes(N, rnd);
+  if (gen.nubarron) N.ents.push({ t: "nubarron", x: 30 * TILE, y: 2 * TILE });   // te sigue toda la fase
 
   if (gen.jefe) N.ents = N.ents.filter((e) => e.t === "boss" || e.x < arenaX0 * TILE);   // la arena queda libre
   return {
@@ -5813,6 +5930,7 @@ function generarNivel(gen, mecanicas = []) {
     entradaSecreta: N.entrada ? Object.assign({ sala: gen.secreta }, N.entrada) : null,
     salidaSecreta: N.salida,
     control,
+    fuentes: surtidores(N.tiles, cols, gen.peces, null),
   };
 }
 
@@ -6060,6 +6178,7 @@ function generarColinas(gen) {
   }
   N.candidatas = N.candidatas.filter((st) => st.r >= 2 && !ocupado.has(st.c));
   ponerGrandes(N, rnd);
+  if (gen.nubarron) N.ents.push({ t: "nubarron", x: 30 * TILE, y: 2 * TILE });
   // Punto de control hacia la mitad, en suelo casi llano, lejos de huecos y de las tuberías
   let control = null;
   for (let x = Math.floor(META / 2); x < META - 20 && !control; x++) {
@@ -6098,6 +6217,7 @@ function generarColinas(gen) {
     entradaSecreta: N.entrada ? Object.assign({ sala: gen.secreta }, N.entrada) : null,
     salidaSecreta: N.salida,
     control,
+    fuentes: surtidores(tiles, cols, gen.peces, hm),
   };
 }
 
@@ -6138,7 +6258,9 @@ function sanearNivel(lv) {
 /* Punto de entrada: usa el mapa escrito a mano si existe, si no genera */
 function construirNivel(def, tema) {
   // Los niveles de castillo no llevan decoración de su mundo (usan su propio escenario)
-  const gen = Object.assign({ theme: def.castillo ? "castillo" : tema }, def.gen, { jefe: def.jefe, secreta: def.secreta });
+  const gen = Object.assign({ theme: def.castillo ? "castillo" : tema }, def.gen, {
+    jefe: def.jefe, secreta: def.secreta, avance: !!def.avance, nubarron: !!def.nubarron, peces: tema === "agua" || !!def.peces,
+  });
   const lv = def.mapa ? parsearMapa(def.mapa, gen) : def.colinas ? generarColinas(gen) : generarNivel(gen, def.mecanicas || []);
   lv.nombre = def.nombre;
   lv.tiempo = def.tiempo || 300;
@@ -7186,6 +7308,7 @@ const TIPO_ENEMIGO = {
   // Enemigos de mundo: el nombre del juego es el mismo que el de enemigos.js
   pinguino: "pinguino", cangrejo: "cangrejo", pez: "pez", medusa: "medusa", escorpion: "escorpion",
   seta: "seta", jabali: "jabali", murcielago: "murcielago", arana: "arana", fantasma: "fantasma",
+  nubarron: "nubarron",
 };
 
 // Crea el enemigo de enemigos.js sobre la entidad (e.x, e.y = esquina superior izquierda)
@@ -7292,6 +7415,10 @@ class Level {
     this.control = data.control || null;   // punto de control: { x, pie } (columna del banderín y altura del suelo)
     this.controlActivo = false;
     this.bonusBandera = null;  // premio según la altura a la que se toca el poste: puntos o "1UP"
+    // Surtidores de peces y bolas de lava: cada uno lanza un saltarín cada poco cuando el jugador está cerca
+    this.fuentes = (data.fuentes || []).map((f) => Object.assign({ t: 1 + Math.random() * 2, vivos: [] }, f));
+    this.avance = def.avance || 0;   // px/s de avance automático de la cámara (0: la cámara sigue al jugador)
+    this.avanceT = 0;
     this.metaInicio = 0;       // momento en que se tocó el poste: la bandera baja desde entonces
     this.bossRef = null;
     this.bolas = [];           // bolas de fuego del jugador (flor de fuego)
@@ -7382,6 +7509,47 @@ class Level {
     return false;
   }
 
+  // Surtidores: con el jugador cerca, cada uno lanza un pez (desde debajo del hueco, hacia el jugador)
+  // o una bola de lava (desde la lava, en vertical); como mucho dos vivos por surtidor
+  actualizarFuentes(dt, p) {
+    const cx = p.x + p.w / 2;
+    for (const f of this.fuentes) {
+      f.vivos = f.vivos.filter((e) => !e.remove);
+      if (cx < f.x0 - 10 * TILE || cx > f.x1 + 10 * TILE) continue;
+      f.t -= dt;
+      if (f.t > 0 || f.vivos.length >= 2) continue;
+      const x = f.x0 + 6 + Math.random() * (f.x1 - f.x0 - 12);
+      let e;
+      if (f.tipo === "pez_saltarin") {
+        e = Enemigos.create("pez_saltarin", x, this.rows * TILE + 6);
+        e.vy = -(390 + Math.random() * 70);
+        e.vx = (cx < x ? -1 : 1) * (20 + Math.random() * 35);
+        f.t = 1.4 + Math.random() * 1.4;
+      } else {
+        e = Enemigos.create("bola_lava", Math.floor(x / TILE) * TILE + TILE / 2, (GY + 1) * TILE + 8);
+        e.vy = -(330 + Math.random() * 80);
+        e.vx = 0;
+        f.t = 1.8 + Math.random() * 1.6;
+      }
+      f.vivos.push(e);
+      this.enemigos.push({ e, llevado: false });
+    }
+  }
+
+  // Avance automático: la cámara avanza sola (tras un respiro al empezar) y empuja al jugador por la izquierda;
+  // si lo aplasta contra una pared, muere. Por la derecha no puede salir de la pantalla
+  avanceAutomatico(p, dt) {
+    const cam = this.cam;
+    this.avanceT += dt;
+    if (this.avanceT > 1.5) cam.x = Math.min(cam.x + this.avance * dt, this.cols * TILE - W);
+    if (p.x < cam.x) {
+      p.x = cam.x;
+      if (p.vx < 0) p.vx = 0;
+      if (tocaSolido(this, p.x, p.y, p.w, p.h)) p.dead = true;
+    }
+    if (p.x > cam.x + W - p.w) { p.x = cam.x + W - p.w; if (p.vx > 0) p.vx = 0; }
+  }
+
   // Texto que sube y se desvanece sobre el nivel (por ejemplo "1UP")
   textoFlotante(s, x, y) { this.textos.push({ s, x, y, t: 1.2 }); }
   actualizarTextos(dt) {
@@ -7415,6 +7583,7 @@ class Level {
     for (const pl of this.plats) pl.update(dt, this);
     if (p.plat) { p.x += p.plat.dx; p.y += p.plat.dy; }
     p.update(dt, this, game);
+    if (this.avance) this.avanceAutomatico(p, dt);
     let sobre = null;
     for (const pl of this.plats) if (pl.pisa(p, p.prevBottom)) { sobre = pl; break; }
     if (sobre) sobre.pisada = true;
@@ -7428,12 +7597,21 @@ class Level {
 
     // Enemigos (enemigos.js) y jefe
     this.mundo.jugador = { x: p.x + p.w / 2, y: p.y + p.h / 2 };
+    const lanzados = [];
     for (const w of this.enemigos) {
       if (w.llevado) continue;                     // el caparazón que lleva el jugador se mueve con él
       Enemigos.update(w.e, dt, this.mundo);
       if (w.e.y > this.rows * TILE + 60) w.e.remove = true;   // se cayó del nivel
+      // El nubarrón lanza un erizo hacia el jugador (como mucho tres a la vez)
+      if (w.e.lanza && this.enemigos.filter((o) => o.e.padre === w.e && !o.e.remove).length < 3) {
+        const erizo = Enemigos.create("erizo", w.e.x, w.e.y - 10, { dir: p.x + p.w / 2 < w.e.x ? -1 : 1 });
+        erizo.vy = -220;
+        erizo.padre = w.e;
+        lanzados.push({ e: erizo, llevado: false });
+      }
     }
-    this.enemigos = this.enemigos.filter((w) => !w.e.remove);
+    this.enemigos = this.enemigos.filter((w) => !w.e.remove).concat(lanzados);
+    this.actualizarFuentes(dt, p);
     if (this.bossRef) this.bossRef.update(dt, this, game, p);
     this.actualizarBolas(dt, game);
     for (const c of this.coins) c.update(dt);
@@ -7444,7 +7622,8 @@ class Level {
 
     this.actualizarCanones(dt, game);
     game.colisionesJugador(this);
-    this.cam.seguir(p, this, dt);
+    if (this.avance) this.cam.y = 0;
+    else this.cam.seguir(p, this, dt);
 
     // Punto de control: se activa al pasar junto al banderín (también al salir de la zona secreta por delante)
     if (this.control && !this.controlActivo && p.x + p.w / 2 >= this.control.x + 8) {
@@ -8268,6 +8447,7 @@ class Game {
     p.x = e.col * TILE + (2 * TILE - p.w) / 2;   // centrado sobre la boca (dos bloques)
     p.y = e.row * TILE + TILE - p.h;             // dentro del tubo: sale hacia arriba
     p.vx = 0; p.vy = 0;
+    padre.cam.centrar(p, padre);
     this.transicion = { tipo: "subir", t: 0, dur: 0.6, y0: p.y, tuberia: e };
     this.estado = "tuberia";
     this.sfx("pisar");
@@ -8860,6 +9040,7 @@ function dibujarNivelYHUD(game) {
   dibujarHUD(game);
   if (game.avisoSecretaT > 0) txtHud("ZONA SECRETA", W / 2, 22, PAL.y, "center", 2);
   if (game.lvl.avisoT > 0) txtHud("DERROTA AL JEFE", W / 2, 22, PAL.y, "center", 2);
+  if (game.lvl.avance && game.lvl.avanceT < 2) txtHud("AVANCE AUTOMATICO", W / 2, 36, PAL.y, "center");
   if (game.lvl.bossRef && game.lvl.introJefeT > 0) txtHud(game.lvl.bossRef.nombre, W / 2, 60, PAL.r, "center", 2);
 }
 
@@ -8959,6 +9140,11 @@ function dibujarJuego(game) {
 MUNDOS.forEach((m, mi) => m.niveles.forEach((nv, f) => { if (!nv.jefe) nv.secreta = (mi * 7 + f) % SALAS.length; }));
 // Fases de relieve suave (estilo Super Mario Bros. 3): dos por mundo, en lugar de las del generador normal
 for (const [m, f] of [[0, 1], [0, 2], [1, 0], [1, 6], [2, 0], [2, 1], [3, 0], [3, 4], [4, 0], [4, 3], [5, 0], [5, 2], [6, 0], [6, 3], [7, 0], [7, 1]]) MUNDOS[m].niveles[f].colinas = true;
+// Fases con avance automático (la pantalla avanza sola), con nubarrón (te sigue y lanza erizos) y con peces
+// que saltan desde los huecos (además de todo el mundo del agua): [mundo, fase]
+for (const [m, f] of [[2, 4], [5, 5], [6, 5], [7, 3]]) MUNDOS[m].niveles[f].avance = 36;
+for (const [m, f] of [[0, 4], [7, 2], [7, 5], [7, 6]]) MUNDOS[m].niveles[f].nubarron = true;
+for (const [m, f] of [[2, 3], [3, 3]]) MUNDOS[m].niveles[f].peces = true;
 const game = new Game();
 KEYMAP.Backspace = "reset";  // para borrar el progreso desde el título
 
