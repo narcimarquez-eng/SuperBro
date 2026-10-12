@@ -5644,11 +5644,104 @@ function colocarTuberiaSecreta(lv, sala) {
   return null;
 }
 
+// Niveles de relieve suave (al estilo de Super Mario Bros. 3): colinas con pendientes, huecos saltables y bloques flotantes.
+// El suelo es una superficie continua por columna (lvl.hm), así que las pendientes son reales (ver superficieEn)
+function generarColinas(gen) {
+  const rnd = prng(gen.seed * 7 + 3);
+  const cols = 230, base = GY * TILE, META = cols - 6;
+  // Puntos de control: colinas suaves cada 10-16 columnas (hasta 5 bloques de alto) y escalones de 2-3 bloques
+  // en 3 columnas, que hay que saltar. Entre medias, tramos llanos
+  const puntos = [{ c: 0, y: base }];
+  let c = 0, y = base;
+  while (c < cols) {
+    if (c >= 18 && c < META - 16 && rnd() < 0.3) {
+      c = Math.min(cols, c + 3);
+      const salto = (2 + Math.floor(rnd() * 2)) * TILE;
+      y = Math.min(base, Math.max(base - 5 * TILE, y + (rnd() < 0.5 ? -salto : salto)));
+    } else {
+      c = Math.min(cols, c + 10 + Math.floor(rnd() * 7));
+      const llano = c >= cols || c < 18 || c > META - 14 || rnd() < 0.35;
+      y = llano ? base : base - (1 + Math.floor(rnd() * 5)) * TILE;
+    }
+    puntos.push({ c, y });
+  }
+  puntos[puntos.length - 1].y = base;
+  const hm = new Array(cols + 1);
+  for (let i = 0; i + 1 < puntos.length; i++) {
+    const a = puntos[i], b = puntos[i + 1];
+    for (let x = a.c; x < b.c; x++) {
+      const t = (x - a.c) / (b.c - a.c);
+      hm[x] = a.y + (b.y - a.y) * (1 - Math.cos(Math.PI * t)) / 2;
+    }
+  }
+  hm[cols] = base;
+  // Huecos saltables (2-3 columnas) en el tramo central, unos cuantos por nivel. Ni cerca de un escalón:
+  // un hueco junto a un escalón obligaría a dos saltos seguidos
+  const sinEscalonCerca = (x0, w) => {
+    for (let k = x0 - 6; k <= x0 + w + 6; k++) if (k > 0 && k < cols - 1 && Math.abs(hm[k + 1] - hm[k]) > 9) return false;
+    return true;
+  };
+  for (let x = 20; x < META - 12; x++) {
+    if (rnd() > 0.07) continue;
+    const w = rnd() < 0.7 ? 2 : 3;
+    if (!sinEscalonCerca(x, w)) continue;
+    for (let k = 0; k < w; k++) hm[x + k] = Infinity;
+    x += w + 6;
+  }
+  const tiles = gridVacia(cols), ents = [], decor = [];
+  const tmp = { hm, cols };   // superficieMin sin crear un nivel entero
+  // Monedas: guías sobre los huecos y arcos sobre las colinas
+  for (let x = 18; x < META - 14; x++) {
+    if (hm[x] === Infinity) ents.push({ t: "coin", x: x * TILE + 4, y: base - 3 * TILE });
+    else if (x % 9 === 0 && rnd() < 0.4) {
+      for (let k = -1; k <= 1; k++) if (hm[x + k] !== Infinity) ents.push({ t: "coin", x: (x + k) * TILE + 4, y: Math.round(hm[x + k] - 26) });
+    }
+  }
+  // Bloques flotantes ('?' con objetos y ladrillos) con dos bloques de aire sobre el suelo más bajo que cubren.
+  // Nunca junto a un hueco: un bloque sobre la entrada del salto golpea la cabeza, el salto se corta y se cae
+  const hoyoCerca = (a, b) => { for (let k = a - 14; k <= b + 14; k++) if (hm[k] === Infinity) return true; return false; };
+  for (let x = 22; x < META - 16; x++) {
+    if (rnd() > 0.07) continue;
+    const sup = superficieMin(tmp, x * TILE, 3 * TILE);
+    if (!isFinite(sup) || hoyoCerca(x, x + 3)) continue;
+    const fila = Math.floor((sup - 2 * TILE) / TILE) - 1;
+    if (fila < 3) continue;
+    const n = 1 + Math.floor(rnd() * 3);
+    for (let k = 0; k < n; k++) {
+      const q = k === 0 && rnd() < 0.6;
+      tiles[fila][x + k] = q ? "Q" : "B";
+      if (q) ents.push({ t: "qitem", x: (x + k) * TILE, y: fila * TILE, item: ITEMS_Q[Math.floor(rnd() * ITEMS_Q.length)] });
+    }
+    x += n + 4;
+  }
+  // Enemigos del mundo que caminan (o vuelan) sobre los tramos llanos
+  const tipos = (gen.enemigos || []).filter((t) => t !== "plant" && t !== "planta_zombie");
+  for (let x = 18; x < META - 16 && tipos.length; x++) {
+    if (rnd() > 0.045 + 0.01 * (gen.dif || 1)) continue;
+    if (hm[x] === Infinity || hm[x + 4] === Infinity || Math.abs(hm[x + 4] - hm[x]) > 6) continue;
+    const t = tipos[Math.floor(rnd() * tipos.length)];
+    if (VOLADORES.includes(t)) ents.push({ t, x: x * TILE, y: Math.max(2, Math.floor(hm[x] / TILE) - 4) * TILE });
+    else ents.push({ t, x: x * TILE, y: Math.round(hm[x]) - TILE });
+    x += 6;
+  }
+  // Arbustos y flores sobre el suelo llano
+  for (let x = 4; x < META - 8; x++) {
+    if (hm[x] === Infinity || rnd() > 0.1 || Math.abs(hm[x + 2] - hm[x]) > 4) continue;
+    decor.push({ c: x, r: Math.floor(hm[x] / TILE) - 1, ch: rnd() < 0.7 ? "b" : "f" });
+  }
+  for (let r = 4; r < GY; r++) tiles[r][META] = "F";   // poste de meta
+  return {
+    cols, rows: ROWS, tiles, ents, plats: [], decor, canones: [],
+    start: { x: 3 * TILE, y: Math.round(hm[3]) - TILE },
+    goalX: META * TILE, theme: gen.theme || null, boss: false, arenaX0: 0, hm,
+  };
+}
+
 /* Punto de entrada: usa el mapa escrito a mano si existe, si no genera */
 function construirNivel(def, tema) {
   // Los niveles de castillo no llevan decoración de su mundo (usan su propio escenario)
   const gen = Object.assign({ theme: def.castillo ? "castillo" : tema }, def.gen, { jefe: def.jefe });
-  const lv = def.mapa ? parsearMapa(def.mapa) : generarNivel(gen, def.mecanicas || []);
+  const lv = def.mapa ? parsearMapa(def.mapa) : def.colinas ? generarColinas(gen) : generarNivel(gen, def.mecanicas || []);
   lv.nombre = def.nombre;
   lv.tiempo = def.tiempo || 300;
   if (def.sala) lv.goalX = 1e9;                       // las salas secretas no tienen meta: se sale por su tubería
@@ -5671,7 +5764,45 @@ function tileAt(lvl, col, row) {
 }
 
 // Recorre los tiles que toca un rectángulo y devuelve true si alguno es sólido
+// ----- Pendientes y colinas: en un nivel de colinas, lvl.hm guarda la altura del suelo en cada columna (px) -----
+const CLIMB_MAX = 9;   // escalón que la caja sube sin chocar, en píxeles
+const SNAP_MAX = 9;    // hueco bajo los pies que se cierra al bajar una pendiente
+
+// Altura de la superficie en x (px, hacia abajo); Infinity si no hay suelo (un hueco)
+function superficieEn(lvl, x) {
+  const c = Math.floor(x / TILE);
+  if (c < 0 || c >= lvl.cols) return Infinity;
+  const a = lvl.hm[c];
+  if (a === Infinity) return Infinity;
+  const b = lvl.hm[c + 1];
+  if (b === Infinity) return a;
+  return a + (b - a) * ((x - c * TILE) / TILE);
+}
+
+// La superficie más alta bajo el ancho de una caja: es la que sostiene la caja
+function superficieMin(lvl, x, w) {
+  let m = Infinity;
+  for (let i = 0; i <= 4; i++) m = Math.min(m, superficieEn(lvl, x + (w * i) / 4));
+  return m;
+}
+
+// Caja que choca de lado con una pendiente: si la superficie sube poco, la caja sube por ella
+function subirPendiente(lvl, e) {
+  // También al saltar: un salto que nace junto a una pendiente que sube no debe frenar la caja
+  const sup = superficieMin(lvl, e.x, e.w), base = e.y + e.h;
+  if (!(sup < base) || base - sup > CLIMB_MAX) return false;
+  const y0 = e.y;
+  e.y = sup - e.h;
+  if (tocaTiles(lvl, e.x, e.y, e.w, e.h)) { e.y = y0; return false; }
+  return true;
+}
+
 function tocaSolido(lvl, x, y, w, h) {
+  if (tocaTiles(lvl, x, y, w, h)) return true;
+  return !!lvl.hm && y + h > superficieMin(lvl, x, w);
+}
+
+function tocaTiles(lvl, x, y, w, h) {
   const c0 = Math.floor(x / TILE), c1 = Math.floor((x + w - 0.01) / TILE);
   const r0 = Math.floor(y / TILE), r1 = Math.floor((y + h - 0.01) / TILE);
   for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
@@ -5685,24 +5816,40 @@ function tocaSolido(lvl, x, y, w, h) {
 function moverEntidad(lvl, e, dt) {
   const res = { pared: false, techo: false, suelo: false };
   // --- Eje X ---
+  const xAntes = e.x;
   e.x += e.vx * dt;
   if (tocaSolido(lvl, e.x, e.y, e.w, e.h)) {
-    res.pared = true;
-    if (e.vx > 0) e.x = Math.floor((e.x + e.w) / TILE) * TILE - e.w;
-    else e.x = Math.floor(e.x / TILE + 1) * TILE;
-    e.vx = 0;
+    if (lvl.hm && !tocaTiles(lvl, e.x, e.y, e.w, e.h)) {
+      // Solo la superficie de colinas: o sube la pendiente, o es un muro y se vuelve atrás
+      if (!subirPendiente(lvl, e)) { e.x = xAntes; res.pared = true; e.vx = 0; }
+    } else {
+      res.pared = true;
+      if (e.vx > 0) e.x = Math.floor((e.x + e.w) / TILE) * TILE - e.w;
+      else e.x = Math.floor(e.x / TILE + 1) * TILE;
+      e.vx = 0;
+    }
   }
   // --- Eje Y ---
   e.y += e.vy * dt;
   if (tocaSolido(lvl, e.x, e.y, e.w, e.h)) {
+    const enTiles = tocaTiles(lvl, e.x, e.y, e.w, e.h);
     if (e.vy > 0) {
-      e.y = Math.floor((e.y + e.h) / TILE) * TILE - e.h;
+      if (!enTiles && lvl.hm) e.y = superficieMin(lvl, e.x, e.w) - e.h;   // aterriza en la pendiente
+      else e.y = Math.floor((e.y + e.h) / TILE) * TILE - e.h;
+      res.suelo = true;
+    } else if (!enTiles && lvl.hm) {
+      e.y = superficieMin(lvl, e.x, e.w) - e.h;   // dentro de una pendiente: se saca fuera, sin techo
       res.suelo = true;
     } else {
       e.y = Math.floor(e.y / TILE + 1) * TILE;
       res.techo = true;
     }
     e.vy = 0;
+  }
+  // Pegarse a la superficie al bajar una pendiente: si iba en el suelo y queda un hueco pequeño, se baja
+  if (lvl.hm && e.onGround && e.vy >= 0 && !res.suelo) {
+    const sup = superficieMin(lvl, e.x, e.w), hueco = sup - (e.y + e.h);
+    if (hueco >= -0.5 && hueco <= SNAP_MAX) { e.y = sup - e.h; e.vy = 0; res.suelo = true; }
   }
   return res;
 }
@@ -6661,6 +6808,7 @@ class Level {
     this.entradaSecreta = data.entradaSecreta || null;   // boca de la zona secreta: { col, row, sala }
     this.esSala = !!def.sala;                              // las salas secretas no tienen meta: se sale por su tubería
     this.tuberias = encontrarTuberias(this.tiles);
+    this.hm = data.hm || null;   // colinas: altura del suelo por columna (px); Infinity en los huecos
     // Los niveles marcados como castillo usan piedra y atardecer en vez del tema del mundo
     this.castillo = !!def.castillo;
     this.pal = this.castillo ? PALETA_CASTILLO : mundo.paleta;
@@ -6706,6 +6854,7 @@ class Level {
   solidoEn(x, y) {
     const c = Math.floor(x / TILE), r = Math.floor(y / TILE);
     if (c < 0 || c >= this.cols) return true;
+    if (this.hm && y >= superficieEn(this, x)) return true;   // colinas: bajo la superficie hay tierra
     if (r < 0 || r >= this.rows) return false;
     return !!SOLIDOS[this.tiles[r][c]];
   }
@@ -6808,6 +6957,7 @@ class Level {
     // El área de diseño se desplaza según la pantalla (OY); el HUD se dibuja aparte, arriba
     ctx.save();
     ctx.translate(0, OY);
+    if (this.hm) this.dibujarColinas(cam);
     // Decoración de bloques.js (arbustos, flores, árboles, rocas): detrás de los bloques y de los personajes
     for (const d of this.decor) {
       const x = d.c * TILE - cam.x;
@@ -6863,6 +7013,49 @@ class Level {
     this.dibujarJugador(game, cam);
     dibujarParticulas(cam);
     ctx.restore();
+  }
+
+  // Terreno de colinas: una superficie continua (pendientes sin escalones) con tierra, hierba y la textura de los bloques
+  dibujarColinas(cam) {
+    const hm = this.hm, fondo = this.rows * TILE - cam.y;
+    const tierra = this.pal.G || PAL.br, hierba = this.pal.g || PAL.g;
+    const cIni = Math.max(0, Math.floor(cam.x / TILE) - 2), cFin = Math.min(this.cols - 1, Math.floor((cam.x + W) / TILE) + 2);
+    const x = (k) => k * TILE - cam.x;
+    // Tramos de suelo continuo: entre dos huecos la superficie es una sola línea
+    for (let c = cIni; c <= cFin; ) {
+      if (hm[c] === Infinity) { c++; continue; }
+      let b = c;
+      while (b + 1 < this.cols && hm[b + 1] !== Infinity && b + 1 <= cFin) b++;
+      const linea = [];
+      for (let k = c; k <= b; k++) linea.push([x(k), hm[k] - cam.y]);
+      linea.push([x(b + 1), hm[b] - cam.y]);   // borde vertical al final del tramo
+      // Tierra bajo la superficie
+      ctx.beginPath();
+      ctx.moveTo(x(c), fondo);
+      for (const [px, py] of linea) ctx.lineTo(px, py);
+      ctx.lineTo(x(b + 1), fondo);
+      ctx.closePath();
+      ctx.fillStyle = tierra; ctx.fill();
+      // Textura de bloques (interior), recortada a la tierra
+      ctx.save(); ctx.clip();
+      for (let k = c; k <= b; k++) {
+        for (let y = Math.floor((hm[k] - cam.y - TILE) / TILE) * TILE; y < fondo; y += TILE) {
+          drawSprite(Bloques.sprite(this.terreno + "|0000"), Math.round(x(k)), Math.round(y));
+        }
+      }
+      ctx.restore();
+      // Banda de hierba de 5 px bajo la superficie
+      ctx.beginPath();
+      linea.forEach(([px, py], i) => { if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); });
+      for (let i = linea.length - 1; i >= 0; i--) ctx.lineTo(linea[i][0], linea[i][1] + 5);
+      ctx.closePath();
+      ctx.fillStyle = hierba; ctx.fill();
+      // Borde oscuro de la superficie
+      ctx.beginPath();
+      linea.forEach(([px, py], i) => { if (i === 0) ctx.moveTo(px, py); else ctx.lineTo(px, py); });
+      ctx.strokeStyle = PAL.k; ctx.lineWidth = 1; ctx.stroke();
+      c = b + 1;
+    }
   }
 
   // Tubería cuya boca pisa el jugador (o null): la boca es la fila de arriba de cada tubo
@@ -8122,7 +8315,9 @@ function dibujarJuego(game) {
    18. BUCLE PRINCIPAL (requestAnimationFrame + delta time)
    ===================================================================== */
 // Zonas secretas: [mundo, fase, sala]. Esas fases tienen una tubería extra que lleva a una sala bajo tierra
-for (const [m, f, s] of [[0, 1, 0], [0, 4, 1], [2, 1, 0], [4, 2, 1]]) MUNDOS[m].niveles[f].secreta = s;
+for (const [m, f, s] of [[0, 3, 0], [0, 5, 1], [2, 2, 0], [4, 2, 1]]) MUNDOS[m].niveles[f].secreta = s;
+// Fases de relieve suave (estilo Super Mario Bros. 3): dos por mundo, en lugar de las del generador normal
+for (const [m, f] of [[0, 1], [0, 2], [1, 0], [1, 6], [2, 0], [2, 1], [3, 0], [3, 4], [4, 0], [4, 3], [5, 0], [5, 2], [6, 0], [6, 3], [7, 0], [7, 1]]) MUNDOS[m].niveles[f].colinas = true;
 const game = new Game();
 KEYMAP.Backspace = "reset";  // para borrar el progreso desde el título
 
