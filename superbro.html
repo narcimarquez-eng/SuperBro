@@ -833,7 +833,15 @@ function consume(action) {
     'N': { cap: ['#ffffff', '#eaf6ff', '#a9d4ee'], cuerpo: ['#bfe6fb', '#73b6e0', '#2f6fa0'], detalle: '#9fd0f0', tipo: 'nieve' },
     'R': { cap: ['#d9dde6', '#9aa2b0', '#5c6474'], cuerpo: ['#b4bac6', '#7d8594', '#424a5a'], detalle: '#5c6474', tipo: 'roca' },
     'W': { cap: ['#ffd49a', '#e09a50', '#8a4f20'], cuerpo: ['#e8a866', '#b8703a', '#6a3a16'], detalle: '#7a4420', tipo: 'madera' },
-    'I': { cap: ['#ffffff', '#b8f0ff', '#5cc0e6'], cuerpo: ['#e2fbff', '#86dcf2', '#2f8fc0'], detalle: '#ffffff', tipo: 'hielo' }
+    'I': { cap: ['#ffffff', '#b8f0ff', '#5cc0e6'], cuerpo: ['#e2fbff', '#86dcf2', '#2f8fc0'], detalle: '#ffffff', tipo: 'hielo' },
+    // Van Gogh: campo de trigo (espigas sobre la cima y pinceladas en la tierra)
+    'V': { cap: ['#fff3a6', '#f5c53a', '#b9801c'], cuerpo: ['#f0c04a', '#b8741f', '#6e4312'], detalle: '#e0a52a', tipo: 'trigo' },
+    // Dalí: arena rosada del desierto
+    'D': { cap: ['#ffe3d6', '#f2a690', '#b8604c'], cuerpo: ['#f9cfb8', '#e08f73', '#8a4636'], detalle: '#c8705a', tipo: 'arena' },
+    // Miró: fondo blanco crema con motas de color
+    'O': { cap: ['#ffffff', '#fbf3dc', '#e8d9a8'], cuerpo: ['#fffaf0', '#f2e6c8', '#c9b07a'], detalle: '#2f58b8', tipo: 'miro' },
+    // Gaudí: trencadís, teselas de colores rotos
+    'G': { cap: ['#e9fbff', '#7fd3e8', '#2f9fc8'], cuerpo: ['#ffd27a', '#ec6a4a', '#5a3a8a'], detalle: '#ffffff', tipo: 'mosaico' }
   };
 
   // Contorno de la capa de arriba con gotas en el borde inferior
@@ -889,6 +897,29 @@ function consume(action) {
     } else if (P.tipo === 'arena') {
       g.fillStyle = 'rgba(160,100,40,0.35)';
       [[4, 9], [11, 12], [7, 13]].forEach(function (p) { g.beginPath(); g.arc(p[0], p[1], 0.8, 0, Math.PI * 2); g.fill(); });
+    } else if (P.tipo === 'trigo') {
+      // Pinceladas diagonales de la tierra, como las de los campos de Van Gogh
+      g.save(); g.globalAlpha = 0.5; g.strokeStyle = cu[2]; g.lineWidth = 0.8; g.lineCap = 'round';
+      for (let x = 1; x < 16; x += 4) {
+        const y = capH + 4 + (ruido(x, 7) % 6);
+        g.beginPath(); g.moveTo(x, y + 2); g.quadraticCurveTo(x + 2, y - 1, x + 4, y - 2); g.stroke();
+      }
+      g.restore();
+    } else if (P.tipo === 'miro') {
+      // Motas de color y una línea negra, como en las pinturas de Miró
+      const colores = ['#2f58b8', '#e0432f', '#f2c12e'];
+      [[3, 9], [11, 12], [7, 6]].forEach(function (p, i) { g.fillStyle = colores[i]; g.beginPath(); g.arc(p[0], p[1], 1.3, 0, Math.PI * 2); g.fill(); });
+      g.strokeStyle = '#1b1b1b'; g.lineWidth = 0.5;
+      g.beginPath(); g.moveTo(9, 13); g.quadraticCurveTo(12, 11, 14, 14); g.stroke();
+    } else if (P.tipo === 'mosaico') {
+      // Teselas de colores rotos (trencadís) en una cuadrícula irregular
+      const teselas = ['#ffd27a', '#ec6a4a', '#2f9fc8', '#7fd3e8', '#5a3a8a', '#ffffff'];
+      for (let y = 4; y < 16; y += 4) for (let x = 0; x < 16; x += 4) {
+        g.fillStyle = teselas[(ruido(x, y) + x) % teselas.length];
+        g.globalAlpha = 0.9;
+        g.fillRect(x + 0.6, y + 0.6, 3, 3);
+      }
+      g.globalAlpha = 1;
     }
 
     // Bisel: luz arriba, sombra abajo
@@ -918,6 +949,21 @@ function consume(action) {
         g.fillStyle = cap[2];
         g.fillRect(0, 2.6, 16, 0.5);
         [3, 13].forEach(function (x) { g.beginPath(); g.arc(x, 1.2, 0.6, 0, Math.PI * 2); g.fill(); });
+      } else if (P.tipo === 'trigo') {
+        // Espigas: tallitos que asoman sobre la cima, con su grano arriba
+        g.strokeStyle = '#c98a1e'; g.lineWidth = 0.7;
+        for (let x = 1; x < 16; x += 2) {
+          const alto = 1 + (ruido(x, 5) % 3);
+          g.beginPath(); g.moveTo(x, capH); g.lineTo(x + 0.6, capH - alto); g.stroke();
+          g.fillStyle = '#f7d24a';
+          g.beginPath(); g.ellipse(x + 0.6, capH - alto - 0.6, 0.6, 1.1, 0, 0, Math.PI * 2); g.fill();
+        }
+      } else if (P.tipo === 'mosaico') {
+        // Brillo de cerámica vidriada sobre la cima
+        g.fillStyle = 'rgba(255,255,255,0.45)';
+        for (let x = 1; x < 16; x += 4) g.fillRect(x, 1.2, 2, 0.8);
+      } else if (P.tipo === 'miro') {
+        g.fillStyle = '#2f58b8'; g.fillRect(0, 1.5, 16, 0.6);
       }
       g.restore();
       brillo(g, 8, 1.2, 5.5, 0.9, 0.6);
@@ -1968,6 +2014,33 @@ function consume(action) {
     'M': function (g) { dibujarMuelle(g, false); },
     'M+': function (g) { dibujarMuelle(g, true); }
   };
+  /* Bloques con estilo de mundo (claves con prefijo, ver PREFIJO_BLOQUE en el juego). Van Gogh: ladrillo de
+     pinceladas amarillas y azules, y un bloque ? con pétalos de girasol */
+  function dibujarLadrilloVG(g) {
+    g.fillStyle = grad(g, 0, 0, 0, 16, ['#ffe27a', '#e6a232', '#a86418']);
+    rr(g, 0, 0, 16, 16, 2); g.fill();
+    g.save(); g.lineCap = 'round'; g.lineWidth = 2.2; g.globalAlpha = 0.6; g.strokeStyle = '#2f58b8';
+    g.beginPath(); g.moveTo(-1, 5); g.quadraticCurveTo(8, 2, 17, 6); g.stroke();
+    g.beginPath(); g.moveTo(-1, 12); g.quadraticCurveTo(7, 9, 17, 13); g.stroke();
+    g.restore();
+    brillo(g, 6, 2.5, 4.5, 1, 0.45);
+    rr(g, 0, 0, 16, 16, 2); trazar(g, OUT, 0.9);
+  }
+
+  function dibujarPreguntaVG(g) {
+    g.fillStyle = grad(g, 0, 0, 0, 16, ['#fff0a0', '#f2b53a', '#b07418']);
+    rr(g, 0, 0, 16, 16, 2); g.fill();
+    g.fillStyle = '#ffd23f';
+    for (let k = 0; k < 8; k++) {
+      const a = k * Math.PI / 4;
+      g.beginPath(); g.ellipse(8 + Math.cos(a) * 5.4, 8 + Math.sin(a) * 5.4, 2.2, 1.3, a, 0, Math.PI * 2); g.fill();
+    }
+    g.fillStyle = '#5a3a14'; g.beginPath(); g.arc(8, 8, 3.6, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#ffffff'; g.font = 'bold 6px monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('?', 8, 8.4);
+    rr(g, 0, 0, 16, 16, 2); trazar(g, OUT, 0.9);
+  }
+  Object.assign(DIBUJOS, { 'vg=': dibujarLadrilloVG, 'vg?': dibujarPreguntaVG });
   Object.assign(DIBUJOS, DECOR);
 
   // Clave de sprite: 'o0'..'o7' para monedas; 'T|1010' para terrenos (T = tipo; cada cifra: 1 = lado al aire,
@@ -2669,7 +2742,12 @@ function consume(action) {
     nubarron:       { w: 26, h: 18, vel: 0,  pisable: true, vuela: true, nube: true },
     pez_saltarin:   { w: 20, h: 12, vel: 0,  pisable: true, salta: true },
     bola_lava:      { w: 12, h: 12, vel: 0,  pisable: false, salta: true },
-    pez_nadador:    { w: 20, h: 12, vel: 34, pisable: false, vuela: true }
+    pez_nadador:    { w: 20, h: 12, vel: 34, pisable: false, vuela: true },
+    // Van Gogh: cuervo (vuela en zigzag), girasol (planta que sube del trigo), ciprés y espiral (caminan)
+    cuervo:         { w: 20, h: 12, vel: 58, pisable: false, vuela: true },
+    girasol:        { w: 18, h: 40, vel: 0,  pisable: false, planta: true },
+    cipres:         { w: 16, h: 34, vel: 22, pisable: true },
+    espiral:        { w: 20, h: 20, vel: 40, pisable: true }
   };
 
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
@@ -2947,7 +3025,7 @@ function consume(action) {
       e.dir = dx >= 0 ? 1 : -1;
       return;
     }
-    if (e.type === 'murcielago') {
+    if (e.type === 'murcielago' || e.type === 'cuervo') {
       e.timer -= dt;
       if (e.timer <= 0) { e.vx = -e.vx * (0.6 + Math.random() * 0.8); e.timer = 0.6 + Math.random() * 0.8; }
       e.y = e.base + Math.sin(e.t * 7) * 16;
@@ -3624,6 +3702,87 @@ function consume(action) {
     c.globalAlpha = 1;
   }
 
+  // Cuervo (Van Gogh, "Campo de trigo con cuervos"): negro azulado; bate las alas al volar en zigzag
+  function dibujarCuervo(c, e, t) {
+    const ala = e.dead ? 0 : Math.sin(t * 16);
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    if (e.dead) c.rotate(1.2);
+    c.fillStyle = '#1d2030';
+    c.beginPath(); c.moveTo(-3, -1); c.quadraticCurveTo(-11, -9 + ala * 4, -15, -4 + ala * 2); c.lineTo(-9, 1); c.quadraticCurveTo(-6, 1, -3, 2); c.fill();
+    c.beginPath(); c.moveTo(-4, 0); c.lineTo(-11, -1 + ala); c.lineTo(-10, 2); c.lineTo(-4, 2); c.fill();   // cola
+    esfera(c, 0, 0, 6, 4.2, ['#4a5a8a', '#252a40', '#0c0e18']);
+    contorno(c, 0, 0, 6, 4.2, 1);
+    esfera(c, 5, -2.5, 3, 2.8, ['#56659a', '#2a3050', '#0c0e18']);
+    c.fillStyle = '#e89a2a';   // pico
+    c.beginPath(); c.moveTo(7.5, -3); c.lineTo(11, -2); c.lineTo(7.5, -1); c.fill();
+    esfera(c, 6, -3.2, 1.2, 1.2, ['#ffffff', '#ffffff', '#dddddd']);   // ojo
+    c.fillStyle = '#111'; c.beginPath(); c.arc(6.4, -3.1, 0.6, 0, Math.PI * 2); c.fill();
+  }
+
+  // Girasol (Van Gogh): planta que sube del trigo; la cabeza es un disco de pétalos con sus semillas
+  function dibujarGirasol(c, e, t) {
+    const hd = headOffset(e);
+    c.translate(e.x, e.y);
+    if (e.up > 0.02) {
+      c.strokeStyle = '#3f8a3a'; c.lineWidth = 3; c.lineCap = 'round';
+      c.beginPath(); c.moveTo(0, 0); c.quadraticCurveTo(1.5, hd.y * 0.5, hd.x, hd.y); c.stroke();
+      c.fillStyle = '#4fa84a';
+      c.beginPath(); c.ellipse(-3.5, -9 * e.up - 2, 4.2, 1.6, -0.5, 0, Math.PI * 2); c.fill();
+      c.beginPath(); c.ellipse(3.5, -6 * e.up - 4, 4.2, 1.6, 0.5, 0, Math.PI * 2); c.fill();
+    }
+    c.save();
+    c.translate(hd.x, hd.y);
+    c.rotate(Math.sin(t * 2) * 0.15);
+    c.fillStyle = '#ffd23f';
+    for (let k = 0; k < 10; k++) {
+      const a = k * Math.PI / 5;
+      c.beginPath(); c.ellipse(Math.cos(a) * 7, Math.sin(a) * 7, 3.6, 1.8, a, 0, Math.PI * 2); c.fill();
+    }
+    esfera(c, 0, 0, 5, 5, ['#8a5a1e', '#5a3a14', '#2a1a08']);
+    c.fillStyle = '#ffe9a0';
+    [[-1.6, -1.4], [1.6, -1], [0, 1.6], [-2.2, 0.8], [2, 1.5]].forEach(function (p) { c.beginPath(); c.arc(p[0], p[1], 0.6, 0, Math.PI * 2); c.fill(); });
+    c.restore();
+  }
+
+  // Ciprés (Van Gogh): una llama oscura que se mece; trazos de remolino y dos ojos amarillos
+  function dibujarCipres(c, e, t) {
+    const mece = Math.sin(t * 3) * 1.2;
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    const cuerpo = c.createLinearGradient(0, -17, 0, 13);
+    cuerpo.addColorStop(0, '#3e8a4e'); cuerpo.addColorStop(0.6, '#1d5a30'); cuerpo.addColorStop(1, '#0c2a18');
+    c.fillStyle = cuerpo;
+    c.beginPath(); c.moveTo(mece * 0.3, -17);
+    c.bezierCurveTo(6, -10, 7, 6, 5, 13); c.lineTo(-5, 13);
+    c.bezierCurveTo(-7, 6, -6, -10, mece * 0.3, -17);
+    c.fill();
+    c.strokeStyle = '#0a2014'; c.lineWidth = 1; c.stroke();
+    c.strokeStyle = 'rgba(170,230,130,0.7)'; c.lineWidth = 1;
+    c.beginPath(); c.arc(-1 + mece * 0.2, -4, 2.2, 0.5, 4.2); c.stroke();
+    c.beginPath(); c.arc(1.5, 4, 1.8, 0, 4.5); c.stroke();
+    c.fillStyle = '#ffe066';
+    c.beginPath(); c.arc(-1.8 + mece * 0.3, -2, 0.9, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(1.8 + mece * 0.3, -2, 0.9, 0, Math.PI * 2); c.fill();
+  }
+
+  // Espiral (Van Gogh, "Noche estrellada"): un remolino que rueda por el suelo
+  function dibujarEspiral(c, e, t) {
+    c.translate(e.x, e.y);
+    c.rotate(t * 3 * e.dir);
+    const luz = c.createRadialGradient(-2, -2, 1, 0, 0, 9);
+    luz.addColorStop(0, '#fff7a0'); luz.addColorStop(0.5, '#f2c230'); luz.addColorStop(1, '#2f58b8');
+    c.fillStyle = luz;
+    c.beginPath(); c.arc(0, 0, 9, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#14286b'; c.lineWidth = 1; c.stroke();
+    c.beginPath();
+    for (let a = 0; a < Math.PI * 5; a += 0.3) {
+      const r = 1 + a * 0.55;
+      if (a === 0) c.moveTo(Math.cos(a) * r, Math.sin(a) * r); else c.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    c.lineWidth = 1.2; c.stroke();
+  }
+
   function dibujarTipo(c, e) {
     const t = e.t;
     switch (e.type) {
@@ -3650,6 +3809,10 @@ function consume(action) {
       case 'pez_saltarin':   return dibujarPez(c, e, t);
       case 'pez_nadador':    return dibujarPez(c, e, t);
       case 'bola_lava':      return dibujarBolaLava(c, e, t);
+      case 'cuervo':         return dibujarCuervo(c, e, t);
+      case 'girasol':        return dibujarGirasol(c, e, t);
+      case 'cipres':         return dibujarCipres(c, e, t);
+      case 'espiral':        return dibujarEspiral(c, e, t);
     }
   }
 
@@ -3739,7 +3902,11 @@ function consume(action) {
     { id: 'oscuro', nombre: 'Rey Oscuro', forma: 'dragon', hp: 6, vel: 28, w: 40, h: 44, flota: true,
       ataques: ['aliento', 'carga', 'bolas', 'piedras', 'aliento'], aliento: 'oscura', corona: false,
       cielo: ['#120a22', '#3a1a4a'], suelo: '#2a1a3a',
-      c: ['#6a5a8a', '#2a2040', '#0f0a18'], acento: '#ff4fd8', melena: '#ff2a6a', ojos: '#ff4fd8', sombra: '#0f0a18' }
+      c: ['#6a5a8a', '#2a2040', '#0f0a18'], acento: '#ff4fd8', melena: '#ff2a6a', ojos: '#ff4fd8', sombra: '#0f0a18' },
+    { id: 'girasol', nombre: 'Girasol gigante', forma: 'girasol', hp: 4, vel: 14, w: 40, h: 50, flota: false,
+      ataques: ['semillas', 'carga', 'salto', 'semillas'], aliento: 'semilla', corona: false,
+      cielo: ['#ffd98a', '#e8a030'], suelo: '#c48a2c',
+      c: ['#fff3a0', '#f5c53a', '#b9801c'], acento: '#5a3a14', melena: '#ffd23f', ojos: '#2f58b8', sombra: '#8a5a1a' }
   ];
 
   /* ---------- Utilidades de dibujo ---------- */
@@ -4201,9 +4368,45 @@ function consume(action) {
     alaOscura(g, d, -aleteo, 4, c[1]);
   }
 
+  // Girasol gigante (castillo de Van Gogh): cabeza de pétalos con cara; abre la boca para soltar semillas
+  function cuerpoGirasol(g, d, o) {
+    const t = o.tiempo || 0;
+    g.strokeStyle = '#3f8a3a'; g.lineWidth = 5; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(0, -6); g.quadraticCurveTo(o.paso * 2, 8, 0, 20); g.stroke();
+    g.fillStyle = '#4fa84a';
+    g.beginPath(); g.ellipse(-9, 8 + o.paso, 8, 3, -0.4, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.ellipse(9, 4 - o.paso, 8, 3, 0.4, 0, Math.PI * 2); g.fill();
+    g.save();
+    g.translate(0, -22);
+    g.rotate(Math.sin(t * 1.5) * 0.12);
+    g.fillStyle = '#ffd23f'; g.strokeStyle = '#b8801a'; g.lineWidth = 1.2;
+    for (let k = 0; k < 14; k++) {
+      const a = k * Math.PI * 2 / 14;
+      g.beginPath(); g.ellipse(Math.cos(a) * 17, Math.sin(a) * 17, 7, 3.6, a, 0, Math.PI * 2); g.fill(); g.stroke();
+    }
+    g.fillStyle = '#6b4216'; g.beginPath(); g.arc(0, 0, 14, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#3a2208';
+    for (let r = 4; r < 13; r += 3.5) for (let a = 0; a < 12; a++) {
+      const aa = a * Math.PI / 6 + r;
+      g.beginPath(); g.arc(Math.cos(aa) * r, Math.sin(aa) * r, 0.8, 0, Math.PI * 2); g.fill();
+    }
+    g.fillStyle = '#ffffff';
+    g.beginPath(); g.arc(-4.5, -3, 2.4, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(4.5, -3, 2.4, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#111';
+    g.beginPath(); g.arc(-4.2, -2.6, 1.1, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.arc(4.8, -2.6, 1.1, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#2a0a06';
+    g.beginPath();
+    if (o.abierta) g.ellipse(0, 5, 4, 3, 0, 0, Math.PI * 2); else g.ellipse(0, 5, 4, 1.2, 0, 0, Math.PI * 2);
+    g.fill();
+    g.restore();
+  }
+
   const DIBUJA = {
     koopa: cuerpoKoopa, magma: cuerpoMagma, helado: cuerpoHelado, arena: cuerpoArena,
-    golem: cuerpoGolem, selva: cuerpoSelva, abisal: cuerpoAbisal, oscuro: cuerpoOscuro
+    golem: cuerpoGolem, selva: cuerpoSelva, abisal: cuerpoAbisal, oscuro: cuerpoOscuro,
+    girasol: cuerpoGirasol
   };
 
   /* ---------- Proyectiles ---------- */
@@ -5209,6 +5412,24 @@ const MUNDOS = [
     niveles: fases(8, ["Nubes", "Islas", "Viento", "Arcoíris", "Escalera", "Tormenta", "Nube oscura", "Torre final"],
       ["flyer", "walker", "shell"]),
   },
+  // Mundo 9: Van Gogh. Trigales con cuervos, girasoles, cipreses en llama y noches estrelladas
+  {
+    id: 9,
+    nombre: "Van Gogh",
+    tema: "vangogh",
+    jefeTipo: "girasol",
+    climas: { 6: "tormenta" },
+    particulas: false,
+    hora: 0.75,
+    paleta: {
+      cielo: "#1d3b8a", lejos: "#2f5fb3", cerca: "#e2a830", arbusto: "#1f5a36",
+      G: "#c48a2c", g: "#f7d24a", O: "#8a5a1a", Y: "#ffe066", U: "#3b5fa8", tubo: "#1f5a36", sol: "#ffe98a",
+    },
+    ruta: [[22, 150], [58, 124], [94, 146], [132, 104], [170, 124], [206, 84], [236, 58]],
+    bonus: [2, 6],
+    niveles: fases(9, ["Trigal", "Girasoles", "Cipreses", "Noche estrellada", "Café nocturno", "Cuervos", "Remolinos", "Casa amarilla"],
+      ["cuervo", "girasol", "cipres", "espiral"], { horas: [0.5, 0.5, 0.25, 0.75, 0.75, 0.5, 0.75] }),
+  },
 ];
 
 /* Nodos del mapa de un mundo: las fases y las casas de minijuegos en orden,
@@ -5252,7 +5473,10 @@ const PALETA_CASTILLO = {
 };
 
 /* Carácter de bloques.js para el suelo de cada tema (ver LEYENDA en bloques.js) */
-const TERRENO_DE_TEMA = { pradera: "#", desierto: "A", bosque: "#", cueva: "R", hielo: "I", agua: "W", castillo: "R", cielo: "N" };
+const TERRENO_DE_TEMA = { pradera: "#", desierto: "A", bosque: "#", cueva: "R", hielo: "I", agua: "W", castillo: "R", cielo: "N", vangogh: "V", dali: "D", miro: "O", gaudi: "G" };
+// Estilos de los mundos de arte: paleta propia (los niveles de estilo la usan en vez de la del mundo) y prefijo de sus bloques
+const PALETA_ESTILO = {};
+const PREFIJO_BLOQUE = { vangogh: "vg" };
 
 /* Decoración de bloques.js sobre el suelo abierto de cada tema (no es sólida).
    Cada pieza lista sus caracteres de abajo arriba: ["k", "T"] es un árbol de dos bloques. */
@@ -5281,7 +5505,7 @@ const POTENCIADORES = ["hongo", "hongo", "flor", "pluma"];
 // Monedas que da un ladrillo multimoneda (K) antes de quedarse vacío
 const MONEDAS_MULTI = 8;
 // Enemigos que vuelan: se colocan en el aire, no en el suelo
-const VOLADORES = ["flyer", "murcielago", "medusa", "fantasma", "pez_nadador"];
+const VOLADORES = ["flyer", "murcielago", "medusa", "fantasma", "pez_nadador", "cuervo"];
 
 // Generador pseudoaleatorio determinista (mulberry32): misma semilla = mismo nivel
 function prng(seed) {
@@ -6533,7 +6757,7 @@ function sanearNivel(lv) {
 /* Punto de entrada: usa el mapa escrito a mano si existe, si no genera */
 function construirNivel(def, tema) {
   // Los niveles de castillo no llevan decoración de su mundo (usan su propio escenario)
-  const gen = Object.assign({ theme: def.castillo ? "castillo" : tema }, def.gen, {
+  const gen = Object.assign({ theme: def.castillo ? "castillo" : (def.estilo || tema) }, def.gen, {
     jefe: def.jefe, secreta: def.secreta, avance: !!def.avance, nubarron: !!def.nubarron, peces: tema === "agua" || !!def.peces,
     agua: !!def.agua, alto: def.alto, bajada: !!def.bajada,
   });
@@ -7265,6 +7489,220 @@ function pintarExtension(pal, tema) {
 // Escala del fondo de bloques.js: su horizonte (144 unidades) cae sobre el suelo del nivel
 const ESC_FONDO = (GY * TILE) / 144;
 
+/* =====================================================================
+   13d. ESCENARIO DE VAN GOGH: cielo en remolinos de pinceladas, sol o luna con estrellas,
+   pueblo con su iglesia, cipreses en llama y un campo de trigo al pie del horizonte
+   ===================================================================== */
+// Colores de cada momento: de día (azul con sol y trigo dorado) o de noche (la noche estrellada)
+const COLORES_VG = {
+  dia: {
+    cielo: ["#2f5fb3", "#f2d27a"],                 // de arriba abajo: azul intenso hasta el amarillo del horizonte
+    remolino: ["#8fb3e0", "#4a7fc4", "#2f5fb3"],   // pinceladas claras, medias y oscuras
+    trigo: ["#ffe066", "#f2c14e", "#c48a2c"],
+    cipres: ["#2e6b4f", "#1f4d3a", "#153629"],     // luz, cuerpo y sombra
+    casa: ["#f2c14e", "#c98f3a", "#3d4f8a"],       // pared iluminada, pared en sombra y tejado azul
+  },
+  noche: {
+    cielo: ["#13245e", "#24489a"],
+    remolino: ["#5f8fd6", "#2f5fb3", "#1d3b8a"],
+    trigo: ["#9a7a2a", "#6e5520", "#4a3a18"],
+    cipres: ["#2a5a48", "#173a2e", "#0d2219"],
+    casa: ["#9a7a2a", "#6e5520", "#243163"],
+  },
+};
+
+// Remolinos del cielo: anillos ondulados alrededor de unos centros, con pinceladas sueltas entre ellos.
+// Es periódica en X (512 de ancho) y sus ondas dan un número entero de vueltas para que no se note la unión
+function texRemolinosVG(modo) {
+  return textura("vg-remolinos-" + modo, () => {
+    const ancho = 512, alto = 176;
+    const [claro, medio, oscuro] = COLORES_VG[modo].remolino;
+    const centros = [[84, 58, 52], [228, 92, 40], [360, 56, 52], [462, 112, 34]];   // [x, y, radio]
+    const rows = [];
+    for (let y = 0; y < alto; y++) {
+      let f = "";
+      for (let x = 0; x < ancho; x++) {
+        let ch = ".";
+        for (const [cx, cy, R] of centros) {
+          const dx = x - cx, dy = y - cy, d = Math.hypot(dx, dy);
+          if (d > R) continue;
+          // El ángulo tuerce los anillos: se leen como remolinos y no como círculos perfectos
+          const anillo = Math.floor((d + 2.5 * Math.sin(2 * Math.atan2(dy, dx) + d * 0.25)) / 4);
+          ch = ["c", "m", "o"][mod(anillo, 3)];
+        }
+        // Pinceladas cortas y onduladas: bandas que siguen la ola y tramos de 11 px
+        const ola = Math.round(2 * Math.sin((x / ancho) * Math.PI * 8 + y * 0.2));
+        const banda = Math.floor((y + ola) / 23);
+        if (ch === "." && mod(y + ola, 23) < 2 && mod(Math.floor(x / 16) * 3 + banda, 4) !== 0 && x % 16 < 11) ch = "c";
+        f += ch;
+      }
+      rows.push(f);
+    }
+    const sp = spriteFromRows(expandir(rows), { c: claro, m: medio, o: oscuro }, false, true, false);
+    sp.tw = ancho;
+    return sp;
+  });
+}
+
+// Cipreses en llama recortados contra el cielo, con la base en el horizonte (periódicos en X)
+function texCipresesVG(modo) {
+  return textura("vg-cipreses-" + modo, () => {
+    const ancho = 512, base = 176;
+    const [luz, cuerpo, sombra] = COLORES_VG[modo].cipres;
+    const cipreses = [[44, 14, 118], [150, 10, 92], [292, 12, 126], [410, 11, 98]];   // [x, ancho máximo, alto]
+    const rows = [];
+    for (let y = 0; y < base; y++) {
+      let f = "";
+      for (let x = 0; x < ancho; x++) {
+        let ch = ".";
+        for (const [cx, wmax, alto] of cipreses) {
+          const arriba = base - alto;
+          if (y < arriba) continue;
+          const t = (y - arriba) / alto;                                        // 0 en la punta, 1 en la base
+          const hw = wmax * Math.min(1, t / 0.15) * (0.35 + 0.65 * t ** 0.8);    // punta fina que se ensancha
+          const dx = x - cx - 1.5 * Math.sin(y * 0.2 + cx);                     // la llama ondula
+          if (Math.abs(dx) > hw) continue;
+          ch = dx < -hw * 0.3 ? "h" : dx > hw * 0.6 ? "k" : "g";
+          if ((x + 2 * y) % 11 === 0) ch = "h";                                 // pinceladas claras
+        }
+        f += ch;
+      }
+      rows.push(f);
+    }
+    const sp = spriteFromRows(expandir(rows), { h: luz, g: cuerpo, k: sombra }, false, true, false);
+    sp.tw = ancho;
+    return sp;
+  });
+}
+
+// Pueblo al fondo, como el de Auvers: casas con tejado a dos aguas, ventanas encendidas y una iglesia de torre alta
+function texPuebloVG(modo) {
+  return textura("vg-pueblo-" + modo, () => {
+    const ancho = 512, base = 176;
+    const [pared, sombra, tejado] = COLORES_VG[modo].casa;
+    const grid = Array.from({ length: base }, () => Array(ancho).fill("."));
+    const poner = (x, y, ch) => { if (x >= 0 && x < ancho && y >= 0 && y < base) grid[y][x] = ch; };
+    // Un edificio: [x, ancho, alto del muro, alto del tejado]
+    const edificio = (x0, w, muro, techo) => {
+      for (let x = x0; x < x0 + w; x++) {
+        for (let y = base - muro; y < base; y++) poner(x, y, x - x0 < w / 2 ? "a" : "s");
+        for (let y = base - muro - techo; y < base - muro; y++) {
+          const k = (y - (base - muro - techo)) / techo;                 // 0 en la cumbre, 1 en el alero
+          if (Math.abs(x + 0.5 - (x0 + w / 2)) <= (w / 2 + 1) * k) poner(x, y, "t");
+        }
+      }
+      for (const vx of [x0 + 3, x0 + w - 6]) for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) poner(vx + dx, base - muro + 3 + dy, "w");
+      for (let y = base - 4; y < base; y++) for (let dx = -1; dx <= 1; dx++) poner(x0 + Math.floor(w / 2) + dx, y, "d");   // puerta
+    };
+    [[16, 24, 16, 11], [52, 18, 12, 9], [88, 28, 22, 13], [126, 20, 14, 10],
+     [330, 24, 18, 12], [362, 30, 24, 14], [404, 18, 13, 9]].forEach((e) => edificio(...e));
+    // Iglesia: torre con reloj y una aguja que acaba en punta
+    const tx = 226, tw = 12, tAlto = 56, agujaAlto = 20;
+    for (let x = tx; x < tx + tw; x++) {
+      for (let y = base - tAlto; y < base; y++) poner(x, y, x - tx < tw / 2 ? "a" : "s");
+      for (let y = base - tAlto - agujaAlto; y < base - tAlto; y++) {
+        const k = (y - (base - tAlto - agujaAlto)) / agujaAlto;          // 0 en la punta, 1 en la base de la aguja
+        if (Math.abs(x + 0.5 - (tx + tw / 2)) <= (tw / 2) * k) poner(x, y, "t");
+      }
+    }
+    poner(tx + 5, base - tAlto + 8, "w");
+    poner(tx + 6, base - tAlto + 8, "w");
+    const sp = spriteFromRows(expandir(grid.map((r) => r.join(""))), { a: pared, s: sombra, t: tejado, w: "#ffe066", d: "#2a1f1a" }, false, true, false);
+    sp.tw = ancho;
+    return sp;
+  });
+}
+
+// Trigo al pie del horizonte: espigas de alturas distintas que se mecen (periódico en X)
+function texTrigoVG(modo) {
+  return textura("vg-trigo-" + modo, () => {
+    const ancho = 512, alto = 26;
+    const [claro, medio, oscuro] = COLORES_VG[modo].trigo;
+    const grid = Array.from({ length: alto }, () => Array(ancho).fill("."));
+    for (let x = 0; x < ancho; x += 3) {
+      // Una espiga cada 3 px: su altura ondula con la onda de periodo entero, y alterna dos tonos
+      const espiga = Math.round(10 + 5 * Math.sin((x / ancho) * Math.PI * 12) + 3 * Math.sin((x / ancho) * Math.PI * 28));
+      for (let y = alto - espiga; y < alto; y++) grid[y][x] = (x / 3) % 2 ? medio : claro;
+    }
+    for (let y = alto - 3; y < alto; y++) for (let x = 0; x < ancho; x++) if (grid[y][x] === ".") grid[y][x] = "o";   // base oscura
+    const sp = spriteFromRows(expandir(grid.map((r) => r.join(""))), { c: claro, m: medio, o: oscuro }, false, true, false);
+    sp.tw = ancho;
+    return sp;
+  });
+}
+
+// Sol de los días de trigo: disco amarillo con un halo ancho que tiñe el cielo alrededor
+function dibujarSolVG(pal) {
+  const cx = W - 58, cy = 52;
+  const halo = ctx.createRadialGradient(cx, cy, 10, cx, cy, 56);
+  halo.addColorStop(0, "rgba(255,233,138,0.55)");
+  halo.addColorStop(1, "rgba(255,233,138,0)");
+  ctx.fillStyle = halo;
+  ctx.beginPath(); ctx.arc(cx, cy, 56, 0, Math.PI * 2); ctx.fill();
+  dibujarSol(pal, cx - 11, cy - 11);
+}
+
+// Luna creciente de la noche estrellada: un disco amarillo al que otro disco le quita el lado izquierdo
+function lunaVG() {
+  return textura("vg-luna", () => {
+    const R = 9, rows = [];
+    for (let y = -R; y <= R; y++) {
+      let f = "";
+      for (let x = -R; x <= R; x++) {
+        const dentro = x * x + y * y <= R * R;
+        const quitada = (x - 4) * (x - 4) + (y + 2) * (y + 2) <= (R - 1) * (R - 1);
+        f += dentro && !quitada ? "y" : ".";
+      }
+      rows.push(f);
+    }
+    return spriteFromRows(expandir(rows), { y: "#ffe98a" }, false, false, false);
+  });
+}
+
+// Estrellas de la noche, repartidas por todo el cielo (también por encima del área de diseño):
+// puntos amarillos que parpadean, y destellos en cruz en una de cada cuatro
+function estrellasVG() {
+  const t = performance.now(), alto = OY + 102;   // del borde de la pantalla hasta la línea de los tejados
+  for (let i = 0; i < 26; i++) {
+    const x = (i * 67 + 23) % W, y = ((i * 37 + 9) % alto) - OY, f = 0.7 + (i % 4) * 0.45;
+    ctx.globalAlpha = 0.35 + 0.65 * Math.abs(Math.sin((t / 420) * f + i));
+    rect(x, y, 1, 1, "#fff3a0");
+    if (i % 4 === 0) {
+      rect(x - 2, y, 5, 1, "#ffe066");
+      rect(x, y - 2, 1, 5, "#ffe066");
+    }
+  }
+  ctx.globalAlpha = 1;
+}
+
+// Escenario de Van Gogh: capas con parallax. El trigo de primer plano casi se mueve con el suelo
+function escenaVanGogh(cam, pal, hora) {
+  const modo = hora >= 0.6 ? "noche" : "dia";
+  const [arriba, abajo] = COLORES_VG[modo].cielo;
+  const cielo = ctx.createLinearGradient(0, 0, 0, OY + 176);
+  cielo.addColorStop(0, arriba);
+  cielo.addColorStop(1, abajo);
+  ctx.fillStyle = cielo;
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(0, OY);
+  // El cielo de remolinos se repite hacia arriba hasta el borde de la pantalla (en los visores altos)
+  const remolinos = texRemolinosVG(modo);
+  for (let k = 0; k <= Math.ceil(OY / 176); k++) capaPeriodica(remolinos, cam.x + k * 97, 0.12, -176 * k);
+  if (modo === "dia") dibujarSolVG(pal);
+  else {
+    estrellasVG();
+    drawSprite(lunaVG(), W - 62, 22);
+  }
+  capaPeriodica(texPuebloVG(modo), cam.x, 0.3, 0);
+  capaPeriodica(texCipresesVG(modo), cam.x, 0.45, 0);
+  capaPeriodica(texTrigoVG(modo), cam.x, 0.9, 150);
+  ctx.restore();
+}
+
+// Escenarios de los mundos de arte, por el tema de su estilo (ver TERRENO_DE_TEMA)
+const ESCENAS_ESTILO = { vangogh: escenaVanGogh };
+
 // Fondo del escenario. El cielo, el sol o la luna, las nubes y las montañas vienen de bloques.js
 // y cambian con la hora (0 amanecer, 0.25 día, 0.5 atardecer, 0.75 noche); la cueva usa roca.
 // lv (opcional): el nivel, de donde salen su clima, su cascada y si hay hojas y luciérnagas
@@ -7273,6 +7711,13 @@ function dibujarFondo(cam, pal, tema, hora, lv) {
   if (tema === "castillo") {
     escenaCastillo(cam, pal);
     if (clima) Bloques.clima(ctx, W, H, t, clima);   // niebla del foso: entre el castillo y las piezas
+    return;
+  }
+  // Mundos de arte (Van Gogh, Dalí, Miró y Gaudí): cada uno pinta su cielo y su paisaje
+  if (ESCENAS_ESTILO[tema]) {
+    ESCENAS_ESTILO[tema](cam, pal, hora);
+    if (clima) Bloques.clima(ctx, W, H, t, clima);   // lluvia o tormenta encima de la escena, bajo el suelo
+    pintarExtension(pal, tema);
     return;
   }
   // El cielo llega hasta arriba de la pantalla, también en las pantallas altas (OY > 0)
@@ -7538,6 +7983,13 @@ const TEMAS = {
     "F5:1", "D#5:1", "D5:1", "A#4:1", "C5:4",
   ], bajo: ["C2", "G#1", "C2", "G1"], ritmo: [1, 0, 2, 0, 1, 0, 2, 1] },
   // Jefe: mi menor, cromático y rápido
+  // Van Gogh: vals lento, en tres tiempos, con un bajo que se mece
+  vangogh: { bpm: 92, onda: "triangle", vol: 0.075, bateria: "nada", melodia: [
+    "E5:3", "G5:1", "A5:2", "G5:1", "F5:3", "E5:3",
+    "D5:2", "E5:1", "F5:3", "A5:2", "G5:1", "E5:3",
+    "C5:3", "E5:2", "G5:1", "A5:3", "G5:3",
+    "F5:2", "E5:1", "D5:3", "E5:3", "D5:2",
+  ], bajo: ["C3", "G2", "A2", "E2", "F2", "C3"], ritmo: [1, 0, 0, 1, 1, 0, 2, 0] },
   jefe: { bpm: 176, onda: "square", vol: 0.032, bateria: "rapida", melodia: [
     "E5:1", "G5:1", "E5:1", "A#5:1", "B5:2", "A#5:1", "G5:1",
     "E5:1", "G5:1", "E5:1", "D5:1", "E5:4",
@@ -7758,6 +8210,7 @@ const TIPO_ENEMIGO = {
   pinguino: "pinguino", cangrejo: "cangrejo", pez: "pez", medusa: "medusa", escorpion: "escorpion",
   seta: "seta", jabali: "jabali", murcielago: "murcielago", arana: "arana", fantasma: "fantasma",
   nubarron: "nubarron", pez_nadador: "pez_nadador",
+  cuervo: "cuervo", girasol: "girasol", cipres: "cipres", espiral: "espiral",
 };
 
 // Crea el enemigo de enemigos.js sobre la entidad (e.x, e.y = esquina superior izquierda)
@@ -7765,6 +8218,8 @@ function crearEnemigo(e) {
   const tipo = TIPO_ENEMIGO[e.t] || "erizo";
   // La planta sale de la tubería: su maceta queda dentro del tubo (centro de los dos bloques)
   if (tipo === "planta" || tipo === "planta_zombie") return Enemigos.create(tipo, e.x + TILE - 1, e.y + 8);
+  // El girasol nace del trigo: su base es el suelo, no una maceta
+  if (tipo === "girasol") return Enemigos.create(tipo, e.x + TILE / 2, e.y + TILE);
   return Enemigos.create(tipo, e.x + TILE / 2, e.y + TILE / 2);
 }
 
@@ -7890,8 +8345,9 @@ class Level {
     this.hm = data.hm || null;   // colinas: altura del suelo por columna (px); Infinity en los huecos
     // Los niveles marcados como castillo usan piedra y atardecer en vez del tema del mundo
     this.castillo = !!def.castillo;
-    this.pal = this.castillo ? PALETA_CASTILLO : mundo.paleta;
-    this.temaKey = this.castillo ? "castillo" : mundo.tema;   // separa la caché de sprites por tema
+    // Un estilo de mundo (los niveles de Dalí, Miró y Gaudí) pone su propio tema; si no, el del mundo
+    this.temaKey = this.castillo ? "castillo" : (def.estilo || mundo.tema);   // separa la caché de sprites por tema
+    this.pal = this.castillo ? PALETA_CASTILLO : (PALETA_ESTILO[this.temaKey] || mundo.paleta);
     this.hora = def.hora !== undefined ? def.hora : mundo.hora;   // momento del día del fondo
     this.clima = def.clima || null;          // lluvia, nieve, niebla... (bloques.js)
     this.cascada = !!def.cascada;            // cascada en el fondo (el río del bosque)
@@ -8335,7 +8791,8 @@ class Level {
     } else if (t === "M") {
       drawSprite(muelleSprite(), x, y);             // muelle
     } else {
-      drawSprite(Bloques.sprite({ B: "=", Q: "?", U: "x" }[t]), x, y);   // ladrillo, interrogación, usado
+      const pre = PREFIJO_BLOQUE[this.temaKey] || "";   // bloques con estilo del mundo: 'vg=' (ladrillo de Van Gogh), 'vg?'...
+      drawSprite(Bloques.sprite(t === "U" ? "x" : pre + { B: "=", Q: "?" }[t]), x, y);   // ladrillo, interrogación, usado
     }
   }
 
@@ -9578,7 +10035,8 @@ function candado(cx, cy) {
   rect(cx - 1, cy + 1, 2, 2, PAL.k);
 }
 
-/* Pantalla de selección de mundo: 8 tarjetas en 4x2, cada una con el paisaje de su mundo */
+/* Pantalla de selección de mundo: tarjetas en filas de COLUMNAS_MUNDO, cada una con el paisaje de su mundo */
+const COLUMNAS_MUNDO = 5;
 function dibujarSelMundo(game) {
   // Fondo nocturno con estrellas que parpadean
   const fondo = ctx.createLinearGradient(0, 0, 0, H);
@@ -9594,26 +10052,26 @@ function dibujarSelMundo(game) {
   ctx.globalAlpha = 1;
   txt("SELECCION DE MUNDO", W / 2, 10, PAL.y, "center");
   MUNDOS.forEach((m, i) => {
-    const col = i % 4, fila = Math.floor(i / 4);
-    const x = Math.max(0, Math.floor((W - W_MIN) / 2)) + 10 + col * 61, y = 40 + fila * 80;
+    const col = i % COLUMNAS_MUNDO, fila = Math.floor(i / COLUMNAS_MUNDO);
+    const x = Math.max(0, Math.floor((W - W_MIN) / 2)) + 5 + col * 50, y = 40 + fila * 72;
     const abierto = game.mundoDesbloqueado(i);
-    rect(x, y, 54, 64, PAL.k);
-    miniPaisaje(x + 2, y + 2, 50, 60, m.paleta);
+    rect(x, y, 46, 64, PAL.k);
+    miniPaisaje(x + 2, y + 2, 42, 60, m.paleta);
     if (!abierto) {
-      rect(x + 2, y + 2, 50, 60, "rgba(8,8,20,0.6)");
-      candado(x + 27, y + 26);
+      rect(x + 2, y + 2, 42, 60, "rgba(8,8,20,0.6)");
+      candado(x + 23, y + 26);
     }
     txt(String(m.id), x + 4, y + 5, PAL.w);
-    if (game.completados[i + ":" + (m.niveles.length - 1)]) txt("*", x + 46, y + 5, PAL.y);
-    rect(x + 2, y + 46, 50, 16, "rgba(0,0,0,0.35)");   // franja para leer el nombre sobre cualquier suelo
-    txt(abierto ? m.nombre : "???", x + 27, y + 50, PAL.w, "center");
+    if (game.completados[i + ":" + (m.niveles.length - 1)]) txt("*", x + 40, y + 5, PAL.y);
+    rect(x + 2, y + 46, 42, 16, "rgba(0,0,0,0.35)");   // franja para leer el nombre sobre cualquier suelo
+    txt(abierto ? m.nombre : "???", x + 23, y + 50, PAL.w, "center");
     if (i === game.selMundo) {
       // Anillo amarillo que pulsa alrededor de la tarjeta, sin tapar su contenido
       ctx.globalAlpha = 0.6 + 0.4 * Math.sin(t / 180);
-      rect(x - 2, y - 2, 58, 2, PAL.y);
-      rect(x - 2, y + 64, 58, 2, PAL.y);
+      rect(x - 2, y - 2, 50, 2, PAL.y);
+      rect(x - 2, y + 64, 50, 2, PAL.y);
       rect(x - 2, y, 2, 64, PAL.y);
-      rect(x + 54, y, 2, 64, PAL.y);
+      rect(x + 46, y, 2, 64, PAL.y);
       ctx.globalAlpha = 1;
     }
   });
@@ -9828,8 +10286,10 @@ function actualizarJuego(dt) {
   if (e === "selMundo") {
     const d = dirPulsada();
     if (d) {
-      const nuevo = game.selMundo + d.x + d.y * 4;
-      if (nuevo >= 0 && nuevo < MUNDOS.length) game.selMundo = nuevo;
+      const nuevo = game.selMundo + d.x + d.y * COLUMNAS_MUNDO;
+      // Las flechas laterales no saltan de una fila a la siguiente
+      const misma = Math.floor(nuevo / COLUMNAS_MUNDO) === Math.floor(game.selMundo / COLUMNAS_MUNDO);
+      if (nuevo >= 0 && nuevo < MUNDOS.length && (d.x === 0 || misma)) game.selMundo = nuevo;
     }
     if (consume("item")) game.pruebaTodo = !game.pruebaTodo;   // ITEM (Q): modo prueba
     if (consume("enter") && game.mundoDesbloqueado(game.selMundo)) {
