@@ -2868,7 +2868,7 @@ function consume(action) {
     if (e.dead) {
       e.vy += GRAV * 0.6 * dt;
       e.y += e.vy * dt;
-      if (e.y > 420) e.remove = true;
+      if (e.y > mundo.abismo) e.remove = true;
       return;
     }
     if (e.state === 'dive') {
@@ -2876,7 +2876,7 @@ function consume(action) {
       e.x += e.dvx * dt;
       e.y += e.dvy * dt;
       e.dir = e.dvx >= 0 ? 1 : -1;
-      if (e.diveT <= 0 || e.y > 170) e.state = 'return';
+      if (e.diveT <= 0 || e.y > mundo.buceoMax) e.state = 'return';
       return;
     }
     if (e.state === 'return') {
@@ -2934,7 +2934,7 @@ function consume(action) {
     if (e.dead) {
       e.vy += GRAV * 0.6 * dt;
       e.y += e.vy * dt;
-      if (e.y > 420) e.remove = true;
+      if (e.y > mundo.abismo) e.remove = true;
       return;
     }
     const tile = mundo.tile || 16;
@@ -2975,12 +2975,12 @@ function consume(action) {
   }
 
   // Nubarrón: te sigue desde arriba, meciéndose por delante y por detrás de ti, y cada pocos segundos lanza un erizo
-  function updNubarron(e, dt, j) {
+  function updNubarron(e, dt, j, mundo) {
     e.lanza = false;
     if (e.dead) {
       e.vy += GRAV * 0.6 * dt;
       e.y += e.vy * dt;
-      if (e.y > 420) e.remove = true;
+      if (e.y > mundo.abismo) e.remove = true;
       return;
     }
     const objetivo = j ? j.x + Math.sin(e.t * 0.7) * 70 : e.x;
@@ -3004,11 +3004,11 @@ function consume(action) {
     const d = DEFS[e.type];
 
     if (d.salta) {
-      if (e.dead) { e.vy += GRAV * 0.6 * dt; e.y += e.vy * dt; if (e.y > 420) e.remove = true; return; }
+      if (e.dead) { e.vy += GRAV * 0.6 * dt; e.y += e.vy * dt; if (e.y > mundo.abismo) e.remove = true; return; }
       updSaltarin(e, dt);
       return;
     }
-    if (d.nube) { updNubarron(e, dt, j); return; }
+    if (d.nube) { updNubarron(e, dt, j, mundo); return; }
     if (d.planta) { updPlanta(e, dt, j); return; }
     if (e.type === 'abeja') { updAbeja(e, dt, mundo, j); return; }
     if (d.vuela) { updVolador(e, dt, mundo, j); return; }
@@ -5274,8 +5274,8 @@ const DECOR_DE_TEMA = {
           "Y" arena movediza (no es sólida: el jugador se hunde despacio y, si se hunde del todo, muere).
    Plataformas (plats): "movil" (va y viene, en horizontal o en vertical) y "caida" (se cae al pisarla).
    ===================================================================== */
-const ROWS = 14;           // 14 tiles * 16px = 224px de alto
-const GY = 11;             // fila del suelo (la superior)
+const ROWS = 14;           // 14 tiles * 16px = 224px de alto: la altura de una pantalla (las fases horizontales)
+const GY = 11;             // fila del suelo (la superior) de las fases horizontales; cada nivel lleva su gy
 // Potenciadores de los bloques P: casi siempre algo que hace crecer
 const POTENCIADORES = ["hongo", "hongo", "flor", "pluma"];
 // Monedas que da un ladrillo multimoneda (K) antes de quedarse vacío
@@ -5295,10 +5295,10 @@ function prng(seed) {
   };
 }
 
-// Crea una rejilla vacía
-function gridVacia(cols) {
+// Crea una rejilla vacía de `rows` filas (por defecto, la altura de una pantalla)
+function gridVacia(cols, rows = ROWS) {
   const t = [];
-  for (let r = 0; r < ROWS; r++) t.push(new Array(cols).fill("."));
+  for (let r = 0; r < rows; r++) t.push(new Array(cols).fill("."));
   return t;
 }
 
@@ -5728,13 +5728,13 @@ const PIEZAS = [
 ];
 
 /* ---------- Nivel en construcción ---------- */
-function nuevoNivel(cols, rnd, dif, tipos) {
+function nuevoNivel(cols, rnd, dif, tipos, rows = ROWS, gy = GY) {
   const planta = tipos.includes("planta_zombie") ? "planta_zombie" : tipos.includes("plant") ? "plant" : null;
   const sinPlantas = tipos.filter((t) => t !== "plant" && t !== "planta_zombie");
   const voladores = sinPlantas.filter((t) => VOLADORES.includes(t));
   const caminantes = sinPlantas.filter((t) => !VOLADORES.includes(t));
   return {
-    cols, tiles: gridVacia(cols), ents: [], plats: [], canones: [], decor: [], rnd, dif, planta,
+    cols, rows, gy, tiles: gridVacia(cols, rows), ents: [], plats: [], canones: [], decor: [], rnd, dif, planta,
     caminantes: caminantes.length ? caminantes : voladores, voladores,
     entrada: null, salida: null, start: null, puentes: 0,
     candidatas: null, reserva: null,   // sitios para monedas estrella (solo en las fases generadas)
@@ -5754,7 +5754,7 @@ function ponerBloque(N, tile, c, r, item) {
 
 // Una casilla de la leyenda (ver arriba)
 function ponerCelda(N, ch, c, r) {
-  if (c < 0 || c >= N.cols || r < 0 || r >= ROWS) return;
+  if (c < 0 || c >= N.cols || r < 0 || r >= N.rows) return;
   switch (ch) {
     case "G": case "S": case "B": case "D": case "L": case "M": case "H": case "V": case "U": case "T":
       N.tiles[r][c] = ch; break;
@@ -5789,14 +5789,14 @@ function ponerCelda(N, ch, c, r) {
   }
 }
 
-// Columna de suelo de una pieza (filas GY a ROWS-1) según el carácter de su última fila
+// Columna de suelo de una pieza (filas gy a rows-1) según el carácter de su última fila
 function ponerSuelo(N, ch, c) {
-  for (let r = GY; r < ROWS; r++) {
+  for (let r = N.gy; r < N.rows; r++) {
     let t = ".";
     if (ch === "G" || ch === "S") t = ch;
-    else if (ch === "v") t = r === GY ? "." : "V";                         // lava un bloque por debajo del suelo
+    else if (ch === "v") t = r === N.gy ? "." : "V";                         // lava un bloque por debajo del suelo
     else if (ch === "y") t = "Y";                                           // arenas movedizas
-    else if (ch === "h") t = r === GY ? "." : r === GY + 1 ? "H" : "G";   // hoyo de un bloque con pinchos al fondo
+    else if (ch === "h") t = r === N.gy ? "." : r === N.gy + 1 ? "H" : "G";   // hoyo de un bloque con pinchos al fondo
     N.tiles[r][c] = t;
   }
 }
@@ -5830,7 +5830,7 @@ function pegarMapa(N, filas, x0, f0, suelo) {
       for (const [a, b] of tramos("w", i)) {
         const grupo = "puente" + N.puentes++;
         for (let k = a; k <= b; k++) {
-          N.plats.push({ t: "caida", madera: true, x: (x0 + k) * TILE, y: GY * TILE, w: TILE, h: TILE, grupo, indice: k - a, tCaida: 0.6 });
+          N.plats.push({ t: "caida", madera: true, x: (x0 + k) * TILE, y: N.gy * TILE, w: TILE, h: TILE, grupo, indice: k - a, tCaida: 0.6 });
         }
       }
       continue;
@@ -5942,10 +5942,10 @@ function ponerGrandes(N, rnd) {
 
 /* Surtidores de saltarines: peces que saltan desde los huecos sin fondo (en las fases con peces)
    y bolas de lava que saltan desde la lava. Cada uno es un tramo de columnas { tipo, x0, x1 } en píxeles */
-function surtidores(tiles, cols, peces, hm) {
+function surtidores(tiles, cols, peces, hm, gy = GY, rows = ROWS) {
   const out = [];
-  const hueco = (c) => hm ? hm[c] === Infinity : tiles[GY][c] === "." && tiles[ROWS - 1][c] === ".";
-  const lava = (c) => !hm && tiles[ROWS - 1][c] === "V";
+  const hueco = (c) => hm ? hm[c] === Infinity : tiles[gy][c] === "." && tiles[rows - 1][c] === ".";
+  const lava = (c) => !hm && tiles[rows - 1][c] === "V";
   for (const [tipo, es, minimo] of [["pez_saltarin", hueco, 2], ["bola_lava", lava, 2]]) {
     if (tipo === "pez_saltarin" && !peces) continue;
     for (let c = 0; c < cols; c++) {
@@ -5985,11 +5985,11 @@ function ponerTramo(N, x, w, tranquilo) {
   const rnd = N.rnd;
   if (tranquilo) return;
   // Bajo el agua las piezas ya traen sus peces y medusas: en los tramos hay menos enemigos
-  if (rnd() < (0.3 + N.dif * 0.07) * (N.agua ? 0.4 : 1)) ponerEnemigo(N, x + 1 + Math.floor(rnd() * (w - 1)), GY - 1, false);
+  if (rnd() < (0.3 + N.dif * 0.07) * (N.agua ? 0.4 : 1)) ponerEnemigo(N, x + 1 + Math.floor(rnd() * (w - 1)), N.gy - 1, false);
   if (w >= 5 && rnd() < 0.35) {
     const forma = ["Q", "BQB", "QQ", "BPB", "BKB"][Math.floor(rnd() * 5)];
     const c0 = x + Math.floor((w - forma.length) / 2);
-    [...forma].forEach((ch, k) => ponerCelda(N, ch, c0 + k, GY - 4));
+    [...forma].forEach((ch, k) => ponerCelda(N, ch, c0 + k, N.gy - 4));
   } else if (N.dif >= 3 && N.voladores.length && !N.agua && rnd() < 0.25) {
     ponerEnemigo(N, x + Math.floor(w / 2), 5 + Math.floor(rnd() * 3), true);
   }
@@ -5999,10 +5999,10 @@ function ponerTramo(N, x, w, tranquilo) {
 function decorarSuelo(N, tema, desde, hasta) {
   const piezas = DECOR_DE_TEMA[tema] || [];
   for (let x = desde; x < hasta && piezas.length; x++) {
-    if (N.tiles[GY][x] !== "G" || N.rnd() > 0.14) continue;
+    if (N.tiles[N.gy][x] !== "G" || N.rnd() > 0.14) continue;
     const pieza = piezas[Math.floor(N.rnd() * piezas.length)];
-    if (pieza.some((_, k) => N.tiles[GY - 1 - k][x] !== ".")) continue;
-    pieza.forEach((ch, k) => N.decor.push({ ch, c: x, r: GY - 1 - k }));
+    if (pieza.some((_, k) => N.tiles[N.gy - 1 - k][x] !== ".")) continue;
+    pieza.forEach((ch, k) => N.decor.push({ ch, c: x, r: N.gy - 1 - k }));
     x++;   // deja al menos un tile libre entre dos piezas
   }
 }
@@ -6031,37 +6031,37 @@ function generarNivel(gen, mecanicas = []) {
   // Piezas, cada una tras un tramo llano
   let x = INICIO;
   piezas.forEach((p, i) => {
-    if (i === iControl) control = { x: (x + 1) * TILE, pie: GY * TILE };
+    if (i === iControl) control = { x: (x + 1) * TILE, pie: N.gy * TILE };
     ponerTramo(N, x, separaciones[i], i === iControl);
     x += separaciones[i];
-    x += pegarMapa(N, p.mapa, x, GY - p.mapa.length + 1, true);
+    x += pegarMapa(N, p.mapa, x, N.gy - p.mapa.length + 1, true);
   });
   x += 4;
   // Con lava en la fase, los huecos sin fondo son lagos de lava (bajo los puentes y las plataformas también)
   if (mecanicas.includes("lava")) {
-    for (let c = 0; c < cols; c++) if (N.tiles[GY][c] === "." && N.tiles[ROWS - 1][c] === ".") for (let r = GY + 1; r < ROWS; r++) N.tiles[r][c] = "V";
+    for (let c = 0; c < cols; c++) if (N.tiles[N.gy][c] === "." && N.tiles[N.rows - 1][c] === ".") for (let r = N.gy + 1; r < N.rows; r++) N.tiles[r][c] = "V";
   }
   // Castillo: la arena del jefe es el suelo llano antes de la escalinata final
   const arenaX0 = x;
   if (gen.jefe) {
-    N.ents.push({ t: "boss", x: (x + 20) * TILE, y: (GY - 1) * TILE - 16 });
+    N.ents.push({ t: "boss", x: (x + 20) * TILE, y: (N.gy - 1) * TILE - 16 });
     x += ARENA;
   }
   // Escalinata final de piedra (alturas 1 a 5, la cima de dos bloques) y, ocho bloques después, el poste de meta:
   // desde la cima, con un buen salto corriendo se toca alto (más puntos, o una vida por encima del poste)
-  for (let k = 0; k < 6; k++) for (let h = 0; h < Math.min(k + 1, 5); h++) N.tiles[GY - 1 - h][x + 2 + k] = "S";
+  for (let k = 0; k < 6; k++) for (let h = 0; h < Math.min(k + 1, 5); h++) N.tiles[N.gy - 1 - h][x + 2 + k] = "S";
   const goalX = x + 16;
-  for (let r = 4; r < GY; r++) N.tiles[r][goalX] = "F";
+  for (let r = 4; r < N.gy; r++) N.tiles[r][goalX] = "F";
   decorarSuelo(N, gen.theme, 4, cols - 4);
   ponerGrandes(N, rnd);
   if (gen.nubarron) N.ents.push({ t: "nubarron", x: 30 * TILE, y: 2 * TILE });   // te sigue toda la fase
 
   if (gen.jefe) N.ents = N.ents.filter((e) => e.t === "boss" || e.x < arenaX0 * TILE);   // la arena queda libre
   return {
-    cols, rows: ROWS, tiles: N.tiles,
+    cols, rows: N.rows, gy: N.gy, sueloMeta: N.gy * TILE, tiles: N.tiles,
     ents: N.ents.filter((e) => e.x >= 10 * TILE),   // el inicio siempre está libre de enemigos
     plats: N.plats, decor: N.decor, canones: N.canones,
-    start: { x: 3 * TILE, y: (GY - 2) * TILE },
+    start: { x: 3 * TILE, y: (N.gy - 2) * TILE },
     goalX: goalX * TILE,
     theme: gen.theme || null,
     boss: !!gen.jefe,
@@ -6069,7 +6069,7 @@ function generarNivel(gen, mecanicas = []) {
     entradaSecreta: N.entrada ? Object.assign({ sala: gen.secreta }, N.entrada) : null,
     salidaSecreta: N.salida,
     control,
-    fuentes: surtidores(N.tiles, cols, gen.peces && !gen.agua, null),
+    fuentes: surtidores(N.tiles, cols, gen.peces && !gen.agua, null, N.gy, N.rows),
     agua: !!gen.agua,
   };
 }
@@ -6078,12 +6078,12 @@ function generarNivel(gen, mecanicas = []) {
 function parsearMapa(strs, gen = {}) {
   const cols = Math.max(...strs.map((f) => f.length));
   const tipos = gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"];
-  const N = nuevoNivel(cols, prng(gen.seed || 1), gen.dif || 1, tipos);
+  const N = nuevoNivel(cols, prng(gen.seed || 1), gen.dif || 1, tipos, strs.length, GY);
   pegarMapa(N, strs, 0, 0, false);
   const meta = N.tiles.map((f) => f.indexOf("F")).find((c) => c >= 0);
   return {
-    cols, rows: ROWS, tiles: N.tiles, ents: N.ents, plats: N.plats, decor: [], canones: N.canones,
-    start: N.start || { x: 3 * TILE, y: (GY - 2) * TILE },
+    cols, rows: N.rows, gy: N.gy, sueloMeta: N.gy * TILE, tiles: N.tiles, ents: N.ents, plats: N.plats, decor: [], canones: N.canones,
+    start: N.start || { x: 3 * TILE, y: (N.gy - 2) * TILE },
     goalX: meta !== undefined ? meta * TILE : (cols - 4) * TILE, theme: null, boss: false, arenaX0: 0,
   };
 }
@@ -6365,7 +6365,7 @@ function generarColinas(gen) {
    una tubería, el terreno de las colinas o una plataforma, y los enemigos que nacerían dentro de un bloque */
 function sanearNivel(lv) {
   const ocupada = (c, r) => {
-    if (c < 0 || c >= lv.cols || r < 0 || r >= ROWS) return false;
+    if (c < 0 || c >= lv.cols || r < 0 || r >= lv.rows) return false;
     const t = lv.tiles[r][c];
     return t !== "." && t !== "L";
   };
@@ -7577,19 +7577,35 @@ function musicaSegunEstado() {
 /* =====================================================================
    12. CÁMARA CON SUAVIZADO Y LÍMITES
    ===================================================================== */
+// Torres (niveles más altos que la pantalla): zona muerta vertical en px y velocidad de seguimiento (1/s)
+const CAM_ZONA_Y = 20;
+const CAM_VEL_Y = 10;   // al subir a 500 px/s (un muelle) el jugador queda a unos 70 px del centro: sigue visible bajo el marcador
 class Camera {
   constructor() { this.x = 0; this.y = 0; }
+  // Límites de x: si el nivel es más estrecho que la pantalla, la cámara lo centra
+  rangoX(lvl) {
+    const ancho = lvl.cols * TILE;
+    return ancho > W ? [0, ancho - W] : [(ancho - W) / 2, (ancho - W) / 2];
+  }
   seguir(objetivo, lvl, dt) {
     const destino = objetivo.x + objetivo.w / 2 - W / 2;
     // Suavizado exponencial: se acerca rápido pero sin tirones
     this.x += (destino - this.x) * Math.min(1, dt * 7);
-    this.x = clamp(this.x, 0, lvl.cols * TILE - W);
-    this.y = clamp(this.y, 0, Math.max(0, lvl.rows * TILE - H));
+    const [min, max] = this.rangoX(lvl);
+    this.x = clamp(this.x, min, max);
+    this.seguirY(objetivo, lvl, dt);
+  }
+  // Vertical: la cámara solo se mueve cuando el jugador sale de la franja central del área de juego
+  seguirY(objetivo, lvl, dt) {
+    const fuera = objetivo.y + objetivo.h / 2 - this.y - H_MIN / 2;
+    if (Math.abs(fuera) > CAM_ZONA_Y) this.y += (fuera - Math.sign(fuera) * CAM_ZONA_Y) * Math.min(1, dt * CAM_VEL_Y);
+    this.y = clamp(this.y, 0, Math.max(0, lvl.rows * TILE - H_MIN));
   }
   // Fijar cámara de golpe (al empezar el nivel)
   centrar(objetivo, lvl) {
-    this.x = clamp(objetivo.x + objetivo.w / 2 - W / 2, 0, lvl.cols * TILE - W);
-    this.y = 0;
+    const [min, max] = this.rangoX(lvl);
+    this.x = clamp(objetivo.x + objetivo.w / 2 - W / 2, min, max);
+    this.y = clamp(objetivo.y + objetivo.h / 2 - H_MIN / 2, 0, Math.max(0, lvl.rows * TILE - H_MIN));
   }
 }
 
@@ -7723,6 +7739,9 @@ class Level {
     this.nombre = data.nombre;
     this.cols = data.cols;
     this.rows = data.rows;
+    this.gy = data.gy !== undefined ? data.gy : GY;                              // fila del suelo (la de salida)
+    this.sueloMeta = data.sueloMeta !== undefined ? data.sueloMeta : GY * TILE;  // y del suelo al pie del poste de meta
+    this.vertical = this.rows > ROWS;   // torre: más alta que la pantalla; la cámara sigue al jugador también en vertical
     this.tiles = data.tiles;
     this.decor = data.decor;
     this.goalX = data.goalX;
@@ -7745,7 +7764,9 @@ class Level {
     this.player = new Player(data.start.x, data.start.y);
     this.enemigos = [];   // { e: objeto de enemigos.js, llevado: true si el jugador lo lleva }
     this.plats = (data.plats || []).map((d) => new Plataforma(d));   // plataformas móviles y que caen
-    this.mundo = { tile: TILE, jugador: null, solid: (x, y) => this.solidoEn(x, y) };   // lo que usan los enemigos
+    // Lo que usan los enemigos. abismo: por debajo de esta y se borran; buceoMax: fondo al que pican las abejas
+    this.mundo = { tile: TILE, jugador: null, solid: (x, y) => this.solidoEn(x, y),
+                   abismo: this.rows * TILE + 60, buceoMax: this.vertical ? Infinity : GY * TILE - 6 };
     this.terreno = TERRENO_DE_TEMA[this.temaKey] || "#";   // carácter de bloques.js para el suelo
     this.tinte = null;                                      // color que tiñe el fondo (salas secretas)
     if (def.sala && origen) {
@@ -7891,7 +7912,7 @@ class Level {
         e.vx = (cx < x ? -1 : 1) * (20 + Math.random() * 35);
         f.t = 1.4 + Math.random() * 1.4;
       } else {
-        e = Enemigos.create("bola_lava", Math.floor(x / TILE) * TILE + TILE / 2, (GY + 1) * TILE + 8);
+        e = Enemigos.create("bola_lava", Math.floor(x / TILE) * TILE + TILE / 2, (this.gy + 1) * TILE + 8);
         e.vy = -(330 + Math.random() * 80);
         e.vx = 0;
         f.t = 1.8 + Math.random() * 1.6;
@@ -8017,6 +8038,8 @@ class Level {
     // El área de diseño se desplaza según la pantalla (OY); el HUD se dibuja aparte, arriba
     ctx.save();
     ctx.translate(0, OY);
+    // Las torres se recortan al área de juego: lo que queda por encima o por debajo de ella no se dibuja
+    if (this.vertical) { ctx.beginPath(); ctx.rect(0, 0, W, H_MIN); ctx.clip(); }
     if (this.hm) this.dibujarColinas(cam);
     // Decoración de bloques.js (arbustos, flores, árboles, rocas): detrás de los bloques y de los personajes
     for (const d of this.decor) {
@@ -8024,10 +8047,11 @@ class Level {
       if (x < -TILE || x > W) continue;
       drawSprite(Bloques.sprite(d.ch), x, d.r * TILE - cam.y);
     }
-    // Tiles visibles
+    // Tiles visibles: columnas y filas que caen en la pantalla (las torres tienen muchas más filas)
     const c0 = Math.max(0, Math.floor(cam.x / TILE));
     const c1 = Math.min(this.cols - 1, Math.floor((cam.x + W) / TILE) + 1);
-    for (let r = 0; r < this.rows; r++) {
+    const f0 = Math.max(0, Math.floor((cam.y - OY) / TILE) - 1), f1 = Math.min(this.rows - 1, Math.floor((cam.y - OY + H) / TILE) + 1);
+    for (let r = f0; r <= f1; r++) {
       for (let c = c0; c <= c1; c++) {
         const t = this.tiles[r][c];
         if (t === ".") continue;
@@ -8038,7 +8062,7 @@ class Level {
         const g = this.golpes.get(c + "," + r);
         if (g) y -= Math.round(Math.sin((1 - g / 0.16) * Math.PI) * 4);   // saltito del bloque golpeado
         this.dibujarTile(t, x, y, c, r);
-        if (t === "G" && r < GY) this.detalleTerreno(x, y, c, r);
+        if (t === "G" && r < this.gy) this.detalleTerreno(x, y, c, r);
       }
     }
     // Pista de la zona secreta: una flecha amarilla que flota sobre la boca cuando el jugador está cerca
@@ -8074,7 +8098,7 @@ class Level {
     }
     // Enemigos dibujados por enemigos.js, en coordenadas del mundo
     ctx.save();
-    ctx.translate(-cam.x, 0);
+    ctx.translate(-cam.x, -cam.y);
     for (const w of this.enemigos) Enemigos.draw(ctx, w.e);
     ctx.restore();
     if (this.bossRef) this.dibujarJefe(this.bossRef, cam);
@@ -8224,10 +8248,10 @@ class Level {
   dibujarArenas(cam) {
     const c0 = Math.max(0, Math.floor(cam.x / TILE)), c1 = Math.min(this.cols - 1, Math.floor((cam.x + W) / TILE) + 1);
     const t = performance.now() / 1000;
-    for (let r = GY; r < this.rows; r++) for (let c = c0; c <= c1; c++) {
+    for (let r = this.gy; r < this.rows; r++) for (let c = c0; c <= c1; c++) {
       if (this.tiles[r][c] !== "Y") continue;
       const x = c * TILE - cam.x, y = r * TILE - cam.y;
-      rect(x, y, TILE, TILE, r === GY ? "#c98a3e" : "#b07430");
+      rect(x, y, TILE, TILE, r === this.gy ? "#c98a3e" : "#b07430");
       for (let k = 0; k < 3; k++) {
         const ox = (c * 5 + k * 6 + Math.floor(t * 5 * (k % 2 ? 1 : -1) + 100)) % 13;
         rect(x + ox, y + 3 + k * 5, 3, 1, "rgba(255,226,160,0.55)");
@@ -8485,7 +8509,7 @@ class Game {
   premioBandera(lvl, p) {
     // Bajo el agua se llega nadando a cualquier altura: premio fijo
     if (lvl.agua) { this.puntos(2000); lvl.textoFlotante("2000", p.x, p.y - 8); return 2000; }
-    const altura = GY * TILE - (p.y + p.h);
+    const altura = lvl.sueloMeta - (p.y + p.h);
     const premio = [[112, "1UP"], [88, 5000], [64, 2000], [40, 800], [16, 400], [-Infinity, 100]].find(([h]) => altura >= h)[1];
     if (premio === "1UP") { this.puntos(5000); this.ganarVida(p.x, p.y); }
     else { this.puntos(premio); lvl.textoFlotante(String(premio), p.x, p.y - 8); }
@@ -8807,11 +8831,12 @@ class Game {
     // Fase superada: el jugador baja por el poste mientras baja la bandera
     if (this.estado === "nivelOK" && this.lvl) {
       const lvl = this.lvl, pl = lvl.player;
-      const suelo = lvl.hm ? superficieEn(lvl, lvl.goalX - 4) : GY * TILE;
+      const suelo = lvl.hm ? superficieEn(lvl, lvl.goalX - 4) : lvl.sueloMeta;
       pl.x = lvl.goalX - pl.w + 2;
       pl.vx = 0; pl.vy = 0;
       pl.y = Math.min(pl.y + 120 * dt, suelo - pl.h);
       pl.pose = pl.y + pl.h < suelo ? "caida" : "quieto";
+      if (lvl.vertical) lvl.cam.seguirY(pl, lvl, dt);   // en una torre la cámara sigue al jugador hasta el pie del poste
       lvl.actualizarTextos(dt);
     }
     if (this.estado === "muerte" && this.lvl) {
