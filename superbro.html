@@ -2818,14 +2818,14 @@ function consume(action) {
     bola_lava:      { w: 12, h: 12, vel: 0,  pisable: false, salta: true },
     pez_nadador:    { w: 20, h: 12, vel: 34, pisable: false, vuela: true },
     // Van Gogh: cuervo (vuela en zigzag), girasol (planta que sube del trigo), ciprés y espiral (caminan)
-    cuervo:         { w: 20, h: 12, vel: 58, pisable: false, vuela: true },
+    cuervo:         { w: 20, h: 12, vel: 58, pisable: true, vuela: true },
     girasol:        { w: 18, h: 40, vel: 0,  pisable: false, planta: true },
     cipres:         { w: 16, h: 34, vel: 22, pisable: true },
     espiral:        { w: 20, h: 20, vel: 40, pisable: true },
     // Dalí y Miró: relojes blandos y elefantes que caminan; el pájaro de Miró vuela en zigzag y la figura camina
     reloj_blando:   { w: 16, h: 14, vel: 24, pisable: true },
-    elefante:       { w: 24, h: 30, vel: 30, pisable: false },
-    pajaro_miro:    { w: 14, h: 12, vel: 54, pisable: false, vuela: true },
+    elefante:       { w: 24, h: 30, vel: 30, pisable: true },
+    pajaro_miro:    { w: 14, h: 12, vel: 54, pisable: true, vuela: true },
     personaje_miro: { w: 12, h: 22, vel: 36, pisable: true },
     // Gaudí: el lagarto de trencadís corre por el suelo de mosaico
     lagarto:        { w: 22, h: 12, vel: 46, pisable: true }
@@ -3991,6 +3991,8 @@ function consume(action) {
     if (e.remove) return;
     const vuela = DEFS[e.type].vuela || DEFS[e.type].salta || e.type === 'abeja' || e.type === 'pez';
     ctx.save();
+    // El girasol sale de un tubo: lo que queda bajo la boca del tubo (su base) no se ve
+    if (e.type === 'girasol') { ctx.beginPath(); ctx.rect(e.x - 40, e.y - 90, 80, 90); ctx.clip(); }
     if (!e.dead) sombraDe(ctx, e);
     if (e.dead && !vuela) {
       // aplastado contra el suelo (los zombis y los esqueletos se desmontan)
@@ -5443,20 +5445,19 @@ const MECANICAS_MUNDO = {
 };
 
 /* Crea las 8 fases de un mundo con sus nombres. w: número del mundo.
-   Las dos primeras fases usan solo dos tipos de enemigo; la 8 es el castillo.
+   Las dos primeras fases usan solo dos tipos de enemigo (salvo opc.tiposIniciales); la 8 es el castillo.
    opc.horas: momento del día de cada fase; opc.castillo: el castillo usa el escenario de piedra;
-   opc.estilos: estilo de arte de cada fase (def.estilo); opc.enemigosDeEstilo: enemigos de cada estilo. */
+   opc.estilos: estilo de arte de cada fase (def.estilo); opc.tiposIniciales: tipos de enemigo de las dos primeras fases (2 por defecto). */
 function fases(w, nombres, enemigos, opc = {}) {
   return nombres.map((nombre, i) => {
     const k = i + 1, castillo = k === 8;
-    const lista = opc.estilos && opc.enemigosDeEstilo ? opc.enemigosDeEstilo[opc.estilos[i]] : enemigos;
     const lv = {
       nombre: castillo ? w + "-C " + nombre : w + "-" + k + " " + nombre,
       tiempo: castillo ? 250 : 300,
       gen: {
         seed: w * 100 + k,
         dif: Math.min(8, w + Math.floor((k - 1) / 3) + (castillo ? 1 : 0)),
-        enemigos: k <= 2 ? lista.slice(0, 2) : lista,
+        enemigos: k <= 2 ? enemigos.slice(0, opc.tiposIniciales || 2) : enemigos,
       },
       mecanicas: (MECANICAS_MUNDO[w] || MECANICAS_POR_FASE)[i],
     };
@@ -5623,7 +5624,7 @@ const MUNDOS = [
     ruta: [[22, 150], [58, 124], [94, 146], [132, 104], [170, 124], [206, 84], [236, 58]],
     bonus: [2, 6],
     niveles: fases(9, ["Trigal", "Girasoles", "Cipreses", "Noche estrellada", "Café nocturno", "Cuervos", "Remolinos", "Casa amarilla"],
-      ["cuervo", "girasol", "cipres", "espiral"], { horas: [0.5, 0.5, 0.25, 0.75, 0.75, 0.5, 0.75] }),
+      ["cuervo", "girasol", "cipres", "espiral"], { horas: [0.5, 0.5, 0.25, 0.75, 0.75, 0.5, 0.75], tiposIniciales: 4 }),
   },
   // Mundo 10: Imaginario. Relojes blandos y elefantes de Dalí, estrellas y figuras de Miró, trencadís de Gaudí
   {
@@ -5644,11 +5645,7 @@ const MUNDOS = [
       ["reloj_blando", "elefante", "pajaro_miro", "personaje_miro", "lagarto"], {
         horas: [0.5, 0.5, 0.25, 0.25, 0.5, 0.5, 0.25, 0.5],
         estilos: ["dali", "dali", "miro", "miro", "gaudi", "gaudi", "dali", "gaudi"],
-        enemigosDeEstilo: {
-          dali: ["reloj_blando", "elefante"],
-          miro: ["pajaro_miro", "personaje_miro"],
-          gaudi: ["lagarto", "pajaro_miro"],
-        },
+        tiposIniciales: 5,
       }),
   },
 ];
@@ -6178,8 +6175,9 @@ const PIEZAS = [
 
 /* ---------- Nivel en construcción ---------- */
 function nuevoNivel(cols, rnd, dif, tipos, rows = ROWS, gy = GY) {
-  const planta = tipos.includes("planta_zombie") ? "planta_zombie" : tipos.includes("plant") ? "plant" : null;
-  const sinPlantas = tipos.filter((t) => t !== "plant" && t !== "planta_zombie");
+  // Las plantas de tubería (planta, planta zombi y girasol) salen de los tubos y no se ponen en el suelo
+  const planta = tipos.includes("planta_zombie") ? "planta_zombie" : tipos.includes("plant") ? "plant" : tipos.includes("girasol") ? "girasol" : null;
+  const sinPlantas = tipos.filter((t) => t !== "plant" && t !== "planta_zombie" && t !== "girasol");
   const voladores = sinPlantas.filter((t) => VOLADORES.includes(t));
   const caminantes = sinPlantas.filter((t) => !VOLADORES.includes(t));
   return {
@@ -6972,7 +6970,7 @@ function sanearNivel(lv) {
       return true;
     }
     if (e.t === "qitem") return "QZB".includes(lv.tiles[Math.floor(e.y / TILE)][Math.floor(e.x / TILE)]);
-    if (e.t === "boss" || e.t === "plant" || e.t === "planta_zombie") return true;
+    if (e.t === "boss" || e.t === "plant" || e.t === "planta_zombie" || e.t === "girasol") return true;
     if (junto(e)) return false;   // al volver al punto de control no hay un enemigo encima
     return !ocupada(Math.floor((e.x + TILE / 2) / TILE), Math.floor((e.y + TILE / 2) / TILE));
   });
@@ -8580,9 +8578,8 @@ const TIPO_ENEMIGO = {
 function crearEnemigo(e) {
   const tipo = TIPO_ENEMIGO[e.t] || "erizo";
   // La planta sale de la tubería: su maceta queda dentro del tubo (centro de los dos bloques)
-  if (tipo === "planta" || tipo === "planta_zombie") return Enemigos.create(tipo, e.x + TILE - 1, e.y + 8);
-  // El girasol nace del trigo: su base es el suelo, no una maceta
-  if (tipo === "girasol") return Enemigos.create(tipo, e.x + TILE / 2, e.y + TILE);
+  // El girasol sale del tubo igual que la planta
+  if (tipo === "planta" || tipo === "planta_zombie" || tipo === "girasol") return Enemigos.create(tipo, e.x + TILE - 1, e.y + 8);
   return Enemigos.create(tipo, e.x + TILE / 2, e.y + TILE / 2);
 }
 
