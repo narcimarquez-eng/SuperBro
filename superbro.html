@@ -4568,10 +4568,10 @@ const PAL_ENT = Object.assign(
 /* ---------- Monedas y objetos ---------- */
 
 // Hongo: sombrero rojo con manchas en relieve, tallo crema con ojos
-function setaFilas() {
+function setaFilas(sombrero = RK.rojo) {
   const L = new Lienzo(16, 16);
-  L.esfera(8, 6.8, 7.2, 6.4, RK.rojo, 9.4);
-  L.bordeOscuro(RK.rojo);
+  L.esfera(8, 6.8, 7.2, 6.4, sombrero, 9.4);
+  L.bordeOscuro(sombrero);
   for (const [x, y, r] of [[5, 4.4, 1.7], [11, 4.2, 1.6], [8, 1.8, 1.0]]) L.esfera(x, y, r, r, RK.blanco);
   L.esfera(8, 12.2, 3.6, 3.2, RK.crema, 15);
   L.bordeOscuro(RK.crema);
@@ -4647,6 +4647,7 @@ function arte(key, filas, pal = PAL_ENT) {
 
 function objetoSprite(tipo) {
   if (tipo === "hongo") return arte("hongo", setaFilas());
+  if (tipo === "vida") return arte("vida", setaFilas(RK.verde));
   if (tipo === "flor") return arte("flor", florFilas());
   if (tipo === "pluma") return arte("pluma", plumaFilas());
   return arte("estrella", estrellaFilas());
@@ -5160,23 +5161,22 @@ const DECOR_DE_TEMA = {
 
 /* =====================================================================
    7. GENERADOR DE NIVELES
-   Convierte la especificación "gen" (o un "mapa" escrito a mano) en:
-     { cols, rows, tiles[][], ents[], plats[], decor[], goalX, theme, boss }
-   Tiles: "." vacío, "G" suelo, "B" ladrillo, "Q" bloque ?, "S" bloque
-          sólido, "T" tubería, "F" poste de meta,
-          "M" muelle (lanza alto al pisarlo, con una repisa), "H" pinchos (en el fondo de un hoyo), "V" lava,
-          "L" escalera, "D" plataforma de una dirección.
-   Entidades: "walker" "shell" "flyer" "plant" "coin" "boss".
-   Plataformas (plats): "movil" (va y viene) y "caida" (se cae al pisarla).
+   Cada fase se monta con PIEZAS diseñadas a mano (un reto con sentido cada una),
+   unidas por tramos llanos con enemigos. La semilla elige qué piezas salen y en qué orden.
+   Devuelve { cols, rows, tiles[][], ents[], plats[], decor[], canones[], start, goalX, ... }
+   Tiles: "." vacío, "G" suelo, "B" ladrillo, "Q" bloque ?, "U" bloque usado, "S" piedra,
+          "T" tubería, "F" poste de meta, "M" muelle, "H" pinchos, "V" lava, "L" escalera,
+          "D" plataforma de una dirección, "Z" bloque oculto (invisible hasta golpearlo desde abajo).
+   Plataformas (plats): "movil" (va y viene, en horizontal o en vertical) y "caida" (se cae al pisarla).
    ===================================================================== */
-const LEYENDA_MAPA = {
-  ".": null, G: "G", B: "B", Q: "Q", S: "S", T: "T", F: "F",
-  w: "walker", s: "shell", f: "flyer", p: "plant", c: "coin", J: "boss",
-};
 const ROWS = 14;           // 14 tiles * 16px = 224px de alto
 const GY = 11;             // fila del suelo (la superior)
-const FILA_PLAT = 8;       // fila de las plataformas sobre los huecos y de las escaleras
-const ITEMS_Q = ["moneda", "moneda", "hongo", "hongo", "flor", "pluma", "estrella"];
+// Potenciadores de los bloques P: casi siempre algo que hace crecer
+const POTENCIADORES = ["hongo", "hongo", "flor", "pluma"];
+// Monedas que da un ladrillo multimoneda (K) antes de quedarse vacío
+const MONEDAS_MULTI = 8;
+// Enemigos que vuelan: se colocan en el aire, no en el suelo
+const VOLADORES = ["flyer", "murcielago", "medusa", "fantasma"];
 
 // Generador pseudoaleatorio determinista (mulberry32): misma semilla = mismo nivel
 function prng(seed) {
@@ -5197,417 +5197,689 @@ function gridVacia(cols) {
   return t;
 }
 
-/* Genera un nivel a partir de gen = { seed, dif, enemigos } y de sus mecánicas.
-   Cada mecánica es un módulo con sentido. Los módulos reservan sus celdas antes que los bloques
-   sueltos, los enemigos y las monedas, así que no se pisan entre sí:
-     muelle                : lanza a una repisa alta que no se alcanza saltando (monedas y un bloque ?)
-     pinchos               : hoyos con pinchos en el fondo; se saltan, y las monedas marcan el salto
-     una_direccion         : escalinata de plataformas que se atraviesan desde abajo, hasta lo alto
-     escalera              : escalera a un mirador de piedra que no se alcanza saltando
-     plataforma_movil/caida: cruzan los huecos anchos (3 tiles o más)
-     lava                  : los huecos de la zona B son lava
-   Las monedas solo se crean en celdas de aire. */
-// Enemigos que vuelan: se colocan en el aire (filas 3 a 7), no en el suelo
-const VOLADORES = ["flyer", "murcielago", "medusa", "fantasma"];
+/* ---------------------------------------------------------------------
+   Leyenda de las piezas y de las salas secretas (un carácter por casilla)
+     .  aire            G  suelo / tierra     S  piedra          B  ladrillo
+     Q  ? con moneda    P  ? con potenciador  *  ? con estrella  K  ladrillo multimoneda
+     1  bloque oculto con vida (1UP)          $  bloque oculto con moneda
+     D  plataforma de una dirección           L  escalera        M  muelle
+     T  tubería         p  tubería con planta (esquina superior izquierda)
+     X  boca de la zona secreta               R  tubería por la que se sale de la zona secreta
+     (  cañón que dispara a la izquierda      )  cañón que dispara a la derecha
+     c  moneda          e  enemigo del mundo  E  enemigo solo con dificultad 4 o más
+     f  enemigo volador del mundo (si el mundo tiene)                @  inicio (salas)
+     =  recorrido de una plataforma móvil horizontal (de 3 bloques)
+     ^  recorrido de un ascensor (columna izquierda de la plataforma de 3 bloques)
+     _  plataforma que cae (cada tramo seguido es una plataforma)
+   En las piezas, la última fila es la del suelo y se extiende hacia abajo:
+     G suelo · S columna de piedra · h hoyo con pinchos · v lava · w puente de madera · "." hueco sin fondo
+     (con la mecánica "lava", los huecos sin fondo también son lava)
+   --------------------------------------------------------------------- */
 
-function generarNivel(gen, mecanicas = []) {
-  const rnd01 = prng(gen.seed);
-  const r = (a, b) => a + rnd01() * (b - a);
-  const ri = (a, b) => Math.floor(r(a, b + 1));
-  const dif = clamp(gen.dif || 1, 1, 8);
-  const tipos = gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"];
-  const usa = (m) => mecanicas.includes(m);
-  const cols = 188;                 // ~3000px de ancho
-  const tiles = gridVacia(cols);
-  const ents = [];
-  const plats = [];
-  const canones = [];
+/* Piezas. tipo: "reto" (obstáculo), "puerta" (muro de 8 bloques que no se salta: hay que subir con
+   lo que ofrece la pieza), "entrada" (boca de la zona secreta), "salida" (tubería de vuelta de la zona
+   secreta), "inicio" (primera pieza, sin peligro). req: mecánica que necesita. min/max: dificultad. */
+const PIEZAS = [
+  // Bloques al estilo clásico: una fila para golpear desde el suelo y un ? alto que se alcanza desde ella
+  { id: "clasico", tipo: "inicio", mapa: [
+    ".....Q.......",
+    ".............",
+    ".............",
+    ".............",
+    "...BQBPB.....",
+    ".............",
+    ".............",
+    "..........e..",
+    "GGGGGGGGGGGGG",
+  ] },
+  // Ladrillos con un bloque multimoneda y una fila de ? que solo se alcanza subido a los ladrillos
+  { id: "ladrillos", tipo: "inicio", mapa: [
+    ".......QPQ.....",
+    "...............",
+    "...............",
+    "...............",
+    "..BBKBB.BBBBB..",
+    "...............",
+    "...............",
+    ".....e.........",
+    "GGGGGGGGGGGGGGG",
+  ] },
+  // Tuberías cada vez más altas (con planta si el mundo la tiene); las monedas marcan los saltos
+  { id: "tubos", tipo: "reto", mapa: [
+    "....cc......cc......",
+    "...............pT...",
+    "........pT.....TT...",
+    "..pT....TT.....TT...",
+    "..TT....TT..e..TT...",
+    "GGGGGGGGGGGGGGGGGGGG",
+  ] },
+  // Escalinata de subida y bajada; con más dificultad, con hueco entre las dos
+  { id: "escalinata", tipo: "reto", max: 2, mapa: [
+    ".....cc.....",
+    "............",
+    "....S..S....",
+    "...SS..SS...",
+    "..SSS..SSS..",
+    ".SSSS..SSSS.",
+    "GGGGGGGGGGGG",
+  ] },
+  { id: "escalinata_hueco", tipo: "reto", min: 3, mapa: [
+    ".....cc.....",
+    "............",
+    "....S..S....",
+    "...SS..SS...",
+    "..SSS..SSS..",
+    ".SSSS..SSSS.",
+    "GGGGG..GGGGG",
+  ] },
+  // Isla de piedra en mitad de un hueco ancho
+  { id: "isla", tipo: "reto", min: 2, mapa: [
+    "......cc......",
+    "..............",
+    ".....SSSS.....",
+    "..............",
+    "..............",
+    "..............",
+    "GGG........GGG",
+  ] },
+  // Ruta alta opcional con monedas sobre una calle con enemigos. Bajo la ruta hay un bloque oculto con vida
+  { id: "ruta_alta", tipo: "reto", min: 2, mapa: [
+    ".....cccccccc....",
+    ".....SSSSSSSS....",
+    ".................",
+    ".................",
+    "..BQB......1..BPB",
+    ".................",
+    ".................",
+    ".......e....E....",
+    "GGGGGGGGGGGGGGGGG",
+  ] },
 
-  // Celdas reservadas por los módulos: ni bloques sueltos, ni enemigos, ni monedas ajenas
-  const reservado = new Set();
-  const clave = (c, rr) => c + "," + rr;
-  const libre = (c, rr) => c >= 0 && c < cols && rr >= 0 && rr < ROWS && tiles[rr][c] === "." && !reservado.has(clave(c, rr));
-  const reservar = (c0, c1, f0, f1) => {
-    for (let c = c0; c <= c1; c++) for (let rr = f0; rr <= f1; rr++) reservado.add(clave(c, rr));
+  // ----- Puertas: un muro de 8 bloques que no se salta; hay que subir para seguir -----
+  // Escalones de piedra hasta lo alto de la meseta
+  { id: "muro_escalones", tipo: "puerta", mapa: [
+    "..........cccc....",
+    ".........GGGGGG...",
+    "......c..GGGGGG...",
+    ".....SSS.GGGGGG...",
+    ".........GGGGGG...",
+    "..c......GGGGGG...",
+    ".SSS.....GGGGGG...",
+    ".........GGGGGG...",
+    "......e..GGGGGG...",
+    "GGGGGGGGGGGGGGGGGG",
+  ] },
+  // Muelle: solo su impulso llega arriba del muro
+  { id: "muro_muelle", tipo: "puerta", req: "muelle", mapa: [
+    "......cccc..",
+    "......GGGGGG",
+    "....c.GGGGGG",
+    "......GGGGGG",
+    "...c..GGGGGG",
+    "......GGGGGG",
+    "......GGGGGG",
+    "......GGGGGG",
+    "...M..GGGGGG",
+    "GGGGGGGGGGGG",
+  ] },
+  // Escalera de mano hasta lo alto del muro
+  { id: "muro_escalera", tipo: "puerta", req: "escalera", mapa: [
+    "...S........",
+    "...L.cccc...",
+    "...LDGGGGG..",
+    "...L.GGGGG..",
+    "...L.GGGGG..",
+    "...L.GGGGG..",
+    "...L.GGGGG..",
+    "...L.GGGGG..",
+    "...L.GGGGG..",
+    "...L.GGGGG..",
+    "GGGGGGGGGGGG",
+  ] },
+  // Plataformas de una dirección: se atraviesan desde abajo, piso a piso
+  { id: "muro_direccional", tipo: "puerta", req: "una_direccion", mapa: [
+    "......cc..cccc.",
+    ".....DDDDGGGGGG",
+    ".........GGGGGG",
+    "....cc...GGGGGG",
+    "...DDDD..GGGGGG",
+    ".........GGGGGG",
+    "..cc.....GGGGGG",
+    ".DDDD....GGGGGG",
+    ".........GGGGGG",
+    "GGGGGGGGGGGGGGG",
+  ] },
+  // Ascensor: sube y baja junto al muro; hay que subirse y pasar arriba
+  { id: "ascensor", tipo: "puerta", req: "plataforma_movil", mapa: [
+    "......cccc...",
+    "..^..GGGGGG..",
+    "..^..GGGGGG..",
+    "..^..GGGGGG..",
+    "..^..GGGGGG..",
+    "..^..GGGGGG..",
+    "..^..GGGGGG..",
+    "..^..GGGGGG..",
+    ".....GGGGGG..",
+    "GGGGGGGGGGGGG",
+  ] },
+
+  // ----- Retos con las mecánicas de cada fase -----
+  // Plataforma móvil sobre un foso; al otro lado, una meseta que solo se alcanza desde la plataforma
+  { id: "foso_movil", tipo: "reto", req: "plataforma_movil", mapa: [
+    "....cccc......",
+    "...........GGG",
+    "...........GGG",
+    ".=========.GGG",
+    "...........GGG",
+    "...........GGG",
+    "GG.........GGG",
+  ] },
+  // Dos plataformas que caen sobre un foso ancho: no hay que pararse
+  { id: "foso_caida", tipo: "reto", req: "plataforma_caida", mapa: [
+    "...cc.....cc...",
+    "...............",
+    ".........___...",
+    "..___..........",
+    "...............",
+    "...............",
+    "GG...........GG",
+  ] },
+  // Puente de madera que se derrumba en cascada al pisarlo
+  { id: "puente", tipo: "reto", req: "puente", mapa: [
+    "...cccccc...",
+    "............",
+    "............",
+    "............",
+    "GGwwwwwwwwGG",
+  ] },
+  // Dos hoyos de pinchos con una columna en medio; las monedas marcan los saltos
+  { id: "pinchos", tipo: "reto", req: "pinchos", mapa: [
+    "....c......c.....",
+    "...ccc....ccc....",
+    ".................",
+    ".......SS........",
+    ".......SS........",
+    "GGGhhhhSShhhhGGGG",
+  ] },
+  // Lecho de pinchos con dos piedras para pisar
+  { id: "pinchos_lecho", tipo: "reto", req: "pinchos", min: 4, mapa: [
+    ".....cc.....",
+    "............",
+    "............",
+    "...SS..SS...",
+    "............",
+    "GGhhhhhhhhGG",
+  ] },
+  // Escalinata de plataformas de una dirección sobre un hueco
+  { id: "foso_direccional", tipo: "reto", req: "una_direccion", mapa: [
+    "....ccc.....",
+    "....DDD.....",
+    "............",
+    "..DD....DD..",
+    "............",
+    "............",
+    "GG........GG",
+  ] },
+  // Muelle que lanza por encima de un hueco
+  { id: "muelle_hueco", tipo: "reto", req: "muelle", mapa: [
+    ".....ccc....",
+    "............",
+    "............",
+    "............",
+    "............",
+    "............",
+    "............",
+    "...M........",
+    "GGGG.....GGG",
+  ] },
+  // Columnas de piedra en un lago de lava
+  { id: "lava", tipo: "reto", req: "lava", mapa: [
+    "..c....ccc....cc..",
+    "..................",
+    "....SS.....SS.....",
+    "....SS.....SS.....",
+    "....SS.....SS.....",
+    "....SS.....SS.....",
+    "GGvvSSvvvvvSSvvvGG",
+  ] },
+  // Cañón al fondo de una calle: hay que saltar las balas
+  { id: "canon", tipo: "reto", req: "canon", mapa: [
+    "....ccc.......",
+    "..............",
+    "..............",
+    "..............",
+    ".....E.......(",
+    "GGGGGGGGGGGGGG",
+  ] },
+  // Cañón tras un hueco: saltar el hueco sin chocar con una bala
+  { id: "canon_hueco", tipo: "reto", req: "canon", min: 3, mapa: [
+    ".....ccc......",
+    "..............",
+    "..............",
+    ".............(",
+    "GGGGG...GGGGGG",
+  ] },
+
+  // ----- Entradas de la zona secreta (la boca X lleva la flecha amarilla cuando el jugador se acerca) -----
+  // Tubería en lo alto de una meseta
+  { id: "entrada_meseta", tipo: "entrada", mapa: [
+    ".......XT...",
+    ".......TT...",
+    ".....GGGGGG.",
+    ".....GGGGGG.",
+    "..SS.GGGGGG.",
+    ".....GGGGGG.",
+    ".....GGGGGG.",
+    "GGGGGGGGGGGG",
+  ] },
+  // Tubería en una isla alta: se llega por un bloque oculto (la moneda suelta lo delata)
+  { id: "entrada_oculta", tipo: "entrada", mapa: [
+    ".......XT...",
+    "......SSSSSS",
+    "............",
+    "............",
+    "...c........",
+    "...$........",
+    "............",
+    "............",
+    "GGGGGGGGGGGG",
+  ] },
+  // Tubería al fondo de un pozo entre dos columnas
+  { id: "entrada_pozo", tipo: "entrada", mapa: [
+    "....ccc....",
+    "...........",
+    "..SS....SS.",
+    "..SS....SS.",
+    "..SS.XT.SS.",
+    "..SS.TT.SS.",
+    "GGGGGGGGGGG",
+  ] },
+  // Tubería por la que se vuelve de la zona secreta, más adelante en la fase (un atajo)
+  { id: "salida", tipo: "salida", mapa: [
+    "...cc...",
+    "........",
+    "..RT....",
+    "..TT....",
+    "GGGGGGGG",
+  ] },
+];
+
+/* ---------- Nivel en construcción ---------- */
+function nuevoNivel(cols, rnd, dif, tipos) {
+  const planta = tipos.includes("planta_zombie") ? "planta_zombie" : tipos.includes("plant") ? "plant" : null;
+  const sinPlantas = tipos.filter((t) => t !== "plant" && t !== "planta_zombie");
+  const voladores = sinPlantas.filter((t) => VOLADORES.includes(t));
+  const caminantes = sinPlantas.filter((t) => !VOLADORES.includes(t));
+  return {
+    cols, tiles: gridVacia(cols), ents: [], plats: [], canones: [], decor: [], rnd, dif, planta,
+    caminantes: caminantes.length ? caminantes : voladores, voladores,
+    entrada: null, salida: null, start: null, puentes: 0,
   };
-  // Monedas que marcan cada módulo: se crean al final, solo si la celda sigue en el aire
-  const monedas = [];
-  const moneda = (c, rr) => monedas.push([c, rr]);
+}
 
-  // Límites de las 3 secciones: abierta, plataformas flotantes y meta
-  const A1 = 90, B1 = 146, C1 = 180;
-  // Huecos saltables caminando (2 tiles) en los primeros mundos; más anchos al subir la dificultad
-  const gapMax = dif <= 3 ? 2 : dif <= 5 ? 3 : 4;
-  // Las plataformas necesitan huecos de 3 tiles o más que cruzar: se garantizan dos en la zona B
-  let anchos = usa("plataforma_movil") || usa("plataforma_caida") ? 2 : 0;
+function ponerEnemigo(N, c, r, vuela) {
+  const lista = vuela ? N.voladores : N.caminantes;
+  if (!lista.length) return;
+  N.ents.push({ t: lista[Math.floor(N.rnd() * lista.length)], x: c * TILE, y: r * TILE });
+}
 
-  // Suelo base con huecos controlados (nunca dos huecos juntos)
-  const suelo = new Array(cols).fill(true);
-  let c = 6;
-  while (c < C1) {
-    const seccionB = c >= A1 && c < B1;
-    const ancho = seccionB && anchos > 0 && c >= A1 + 12 + (2 - anchos) * 30;
-    if (seccionB && (ancho || rnd01() < 0.25 + dif * 0.04)) {
-      const w = ancho ? 3 : ri(2, gapMax);
-      if (ancho) anchos--;
-      for (let k = 0; k < w && c + k < cols; k++) suelo[c + k] = false;
-      c += w + ri(3, 5);            // al menos 3 tiles de suelo entre huecos
-    } else {
-      c += ri(4, 9);
+function ponerBloque(N, tile, c, r, item) {
+  N.tiles[r][c] = tile;
+  N.ents.push({ t: "qitem", x: c * TILE, y: r * TILE, item });
+}
+
+// Una casilla de la leyenda (ver arriba)
+function ponerCelda(N, ch, c, r) {
+  if (c < 0 || c >= N.cols || r < 0 || r >= ROWS) return;
+  switch (ch) {
+    case "G": case "S": case "B": case "D": case "L": case "M": case "H": case "V": case "U": case "T":
+      N.tiles[r][c] = ch; break;
+    case "p":
+      N.tiles[r][c] = "T";
+      if (N.planta) N.ents.push({ t: N.planta, x: c * TILE + 1, y: r * TILE - 8 });
+      break;
+    case "X": N.tiles[r][c] = "T"; N.entrada = { col: c, row: r }; break;
+    case "R": N.tiles[r][c] = "T"; N.salida = { col: c, row: r }; break;
+    case "Q": ponerBloque(N, "Q", c, r, "moneda"); break;
+    case "P": ponerBloque(N, "Q", c, r, POTENCIADORES[Math.floor(N.rnd() * POTENCIADORES.length)]); break;
+    case "*": ponerBloque(N, "Q", c, r, "estrella"); break;
+    case "1": ponerBloque(N, "Z", c, r, "vida"); break;
+    case "$": ponerBloque(N, "Z", c, r, "moneda"); break;
+    case "K": ponerBloque(N, "B", c, r, "multi"); break;
+    case "c": N.ents.push({ t: "coin", x: c * TILE + 4, y: r * TILE + 4 }); break;
+    case "e": ponerEnemigo(N, c, r, false); break;
+    case "E": if (N.dif >= 4) ponerEnemigo(N, c, r, false); break;
+    case "f": ponerEnemigo(N, c, r, true); break;
+    case "(": case ")":
+      N.tiles[r][c] = "S";
+      // Dos cañones seguidos disparan a destiempo: nunca llegan dos balas a la vez
+      N.canones.push({ col: c, row: r, dir: ch === "(" ? -1 : 1, cada: 2.4, velocidad: 90, inicio: 1.2 + 1.2 * (N.canones.length % 2) });
+      break;
+    case "@": N.start = { x: c * TILE, y: r * TILE }; break;
+  }
+}
+
+// Columna de suelo de una pieza (filas GY a ROWS-1) según el carácter de su última fila
+function ponerSuelo(N, ch, c) {
+  for (let r = GY; r < ROWS; r++) {
+    let t = ".";
+    if (ch === "G" || ch === "S") t = ch;
+    else if (ch === "v") t = r === GY ? "." : "V";                         // lava un bloque por debajo del suelo
+    else if (ch === "h") t = r === GY ? "." : r === GY + 1 ? "H" : "G";   // hoyo de un bloque con pinchos al fondo
+    N.tiles[r][c] = t;
+  }
+}
+
+/* Pega un mapa (filas de arriba abajo) con su esquina superior izquierda en (x0, f0).
+   Con suelo = true, la última fila es la del suelo de la pieza. Devuelve el ancho. */
+function pegarMapa(N, filas, x0, f0, suelo) {
+  const ancho = Math.max(...filas.map((f) => f.length));
+  const ult = filas.length - 1;
+  const ch = (i, k) => filas[i][k] || (suelo && i === ult ? "G" : ".");
+  for (let i = 0; i <= ult; i++) for (let k = 0; k < ancho; k++) {
+    if (suelo && i === ult) ponerSuelo(N, ch(i, k), x0 + k);
+    else ponerCelda(N, ch(i, k), x0 + k, f0 + i);
+  }
+  // Tramos seguidos de un carácter en una fila: [fila, primera columna, última columna]
+  const tramos = (marca, i) => {
+    const out = [];
+    for (let k = 0; k < ancho; k++) {
+      if (ch(i, k) !== marca) continue;
+      let fin = k;
+      while (fin + 1 < ancho && ch(i, fin + 1) === marca) fin++;
+      out.push([k, fin]);
+      k = fin;
     }
-  }
-  for (let x = 0; x < cols; x++) {
-    if (!suelo[x]) continue;
-    for (let y = GY; y < ROWS; y++) tiles[y][x] = "G";
-  }
-
-  // Escalones y bloques sólidos en la zona de meta
-  for (let x = C1; x < cols - 4; x++) {
-    const alto = clamp(Math.floor((x - C1) / 2) + 1, 1, 6);
-    for (let k = 0; k < alto && GY - 1 - k >= 0; k++) {
-      if (suelo[x]) tiles[GY - 1 - k][x] = "S";
-    }
-  }
-  // Suelo final
-  for (let x = C1; x < cols; x++) if (suelo[x]) for (let y = GY; y < ROWS; y++) tiles[y][x] = "G";
-  const goalX = cols - 4;
-  for (let y = 4; y < GY; y++) tiles[y][goalX] = "F";
-
-  // Tuberías con plantas: la planta del mundo (planta normal en la pradera y el bosque,
-  // planta zombi en el castillo). Solo si el mundo permite alguna de las dos
-  const tipoPlanta = tipos.includes("planta_zombie") ? "planta_zombie" : tipos.includes("plant") ? "plant" : null;
-  if (tipoPlanta) {
-    for (let x = 30; x < B1; x += ri(22, 30)) {
-      if (!suelo[x] || !suelo[x + 1]) continue;
-      tiles[GY - 1][x] = "T"; tiles[GY - 2][x] = "T";
-      tiles[GY - 1][x + 1] = "T"; tiles[GY - 2][x + 1] = "T";
-      ents.push({ t: tipoPlanta, x: x * TILE + 1, y: (GY - 2) * TILE - 8 });
-      // Despeja el aire sobre la tubería: un bloque a esa altura deja un hueco de 16 px
-      // que el jugador (también de 16 px) no puede cruzar sin un salto perfecto
-      for (let cc = x - 2; cc <= x + 3; cc++) for (let rr = 4; rr <= GY - 3; rr++) if (cc >= 0 && cc < cols) tiles[rr][cc] = ".";
-      // Y que ningún módulo posterior (ladrillos, bloques ?, cañones...) tape la salida de la planta
-      reservar(Math.max(0, x - 2), x + 3, 4, GY - 3);
-    }
-  }
-
-  // Huecos de la zona B: [primera columna, última columna]
-  const huecos = [];
-  for (let x = A1; x < B1;) {
-    if (suelo[x]) { x++; continue; }
-    let fin = x;
-    while (fin + 1 < B1 && !suelo[fin + 1]) fin++;
-    huecos.push([x, fin]);
-    x = fin + 1;
-  }
-  // Aire libre sobre cada hueco: un bloque encima frena el salto (la cabeza choca) y el jugador cae
-  for (const [a, b] of huecos) {
-    for (let cc = a - 1; cc <= b + 1; cc++) for (let rr = 4; rr <= GY - 3; rr++) if (cc >= 0 && cc < cols) tiles[rr][cc] = ".";
-  }
-
-  /* ----- Módulos de las mecánicas de la fase ----- */
-  // Pinchos en hoyos: un hueco de 2 o 3 tiles con los pinchos en el fondo, rodeado de suelo.
-  // Se salta por encima; solo hace daño si se cae dentro. Las monedas sobre el hoyo marcan el salto
-  if (usa("pinchos")) {
-    const n = 2 + Math.floor(dif / 3);
-    for (let k = 0, hechos = 0; k < 80 && hechos < n; k++) {
-      const w = ri(2, 3), x = ri(14, A1 - 12);
-      let ok = true;
-      for (let cc = x - 1; cc <= x + w && ok; cc++) ok = libre(cc, GY - 1) && tiles[GY][cc] === "G";
-      if (!ok) continue;
-      for (let cc = x; cc < x + w; cc++) { tiles[GY][cc] = "."; tiles[GY + 1][cc] = "H"; }
-      reservar(x - 1, x + w, GY - 3, GY + 1);
-      for (let cc = x; cc < x + w; cc++) moneda(cc, GY - 2);
-      hechos++;
-    }
-  }
-
-  // Muelles con repisa: el muelle lanza a una repisa de piedra que no se alcanza saltando.
-  // Hay que pisar el muelle y avanzar hacia la repisa mientras se sube; arriba hay monedas y un bloque ?
-  if (usa("muelle")) {
-    const n = dif >= 5 ? 2 : 1;
-    for (let k = 0, hechos = 0; k < 80 && hechos < n; k++) {
-      const x = ri(14, A1 - 12);
-      let ok = true;
-      for (let cc = x - 1; cc <= x + 8 && ok; cc++) ok = suelo[cc] && tiles[GY][cc] === "G";
-      for (let cc = x; cc <= x + 8 && ok; cc++) for (let rr = 0; rr < GY && ok; rr++) ok = libre(cc, rr);
-      if (!ok) continue;
-      tiles[GY - 1][x] = "M";
-      for (let cc = x + 4; cc <= x + 7; cc++) tiles[3][cc] = "S";
-      tiles[1][x + 5] = "Q";
-      reservar(x - 1, x + 8, 0, GY - 1);
-      for (let cc = x + 4; cc <= x + 7; cc++) moneda(cc, 2);
-      hechos++;
-    }
-  }
-
-  // Plataformas sobre los huecos anchos: la móvil va y viene de un lado a otro del hueco;
-  // la que cae tiembla y se hunde al pisarla, así que hay que cruzarla sin pararse.
-  // Se colocan antes que las escaleras y escalinatas, que así no ocupan los huecos
-  const anchosHuecos = huecos.filter(([a, b]) => b - a >= 2);
-  const celdasLibres = (c0, c1) => {
-    for (let cc = c0; cc <= c1; cc++) for (let rr = FILA_PLAT - 1; rr <= FILA_PLAT; rr++) if (!libre(cc, rr)) return false;
-    return true;
+    return out;
   };
-  const usados = [];          // huecos que ya usa una plataforma o un puente
-  let cruzado = null;
-  if (usa("plataforma_movil")) {
-    const h = anchosHuecos.find(([a, b]) => celdasLibres(a - 2, b + 3));
-    if (h) {
-      const [a, b] = h;
-      reservar(a - 2, b + 3, FILA_PLAT - 1, FILA_PLAT);
-      plats.push({ t: "movil", x: (a - 2) * TILE, y: FILA_PLAT * TILE, w: 3 * TILE, h: TILE, x0: (a - 2) * TILE, x1: (b + 1) * TILE, vel: 36 });
-      cruzado = h;
-      usados.push(h);
-    }
-  }
-  if (usa("plataforma_caida")) {
-    const h = anchosHuecos.find((g) => g !== cruzado && celdasLibres(g[0], g[1]));
-    if (h) {
-      const [a, b] = h;
-      reservar(a, b, FILA_PLAT - 1, FILA_PLAT);
-      usados.push(h);
-      // Tres bloques centrados sobre el hueco
-      plats.push({ t: "caida", x: (Math.floor((a + b + 1) / 2) - 1) * TILE, y: FILA_PLAT * TILE, w: 3 * TILE, h: TILE });
-    }
-  }
-
-  // Escalinata de plataformas de una dirección: se sube atravesándolas desde abajo, escalón a escalón,
-  // hasta una zona alta con un bloque ? y monedas. Las monedas de cada escalón marcan el camino
-  if (usa("una_direccion")) {
-    const n = dif >= 6 ? 2 : 1;
-    for (let k = 0, hechos = 0; k < 80 && hechos < n; k++) {
-      const x = ri(A1 + 2, B1 - 14);
-      let ok = true;
-      for (let cc = x - 1; cc <= x + 9 && ok; cc++) ok = suelo[cc] && tiles[GY][cc] === "G";
-      for (let cc = x; cc <= x + 9 && ok; cc++) for (let rr = 1; rr < GY && ok; rr++) ok = libre(cc, rr);
-      if (!ok) continue;
-      for (let s = 0; s < 3; s++) for (let cc = x + 3 * s; cc <= x + 3 * s + 2; cc++) tiles[8 - 2 * s][cc] = "D";
-      tiles[1][x + 7] = "Q";
-      reservar(x - 1, x + 9, 1, GY - 1);
-      for (let cc = x; cc <= x + 2; cc++) moneda(cc, 7);
-      for (let cc = x + 3; cc <= x + 5; cc++) moneda(cc, 5);
-      for (let cc = x + 6; cc <= x + 8; cc++) moneda(cc, 3);
-      hechos++;
-    }
-  }
-
-  // Escalera a un mirador: una columna de escalera hasta una plataforma de piedra muy alta,
-  // que no se alcanza saltando. Arriba hay monedas
-  if (usa("escalera")) {
-    for (let k = 0, hecho = false; k < 80 && !hecho; k++) {
-      const x = ri(A1 + 2, B1 - 8);
-      let ok = suelo[x - 1] && suelo[x] && tiles[GY][x] === "G";
-      for (let rr = 1; rr < GY && ok; rr++) ok = libre(x, rr);
-      for (let cc = x + 1; cc <= x + 5 && ok; cc++) for (let rr = 2; rr <= 3 && ok; rr++) ok = libre(cc, rr);
-      if (!ok) continue;
-      for (let rr = 2; rr < GY; rr++) tiles[rr][x] = "L";
-      tiles[1][x] = "S";   // tope: al llegar arriba la cabeza para y se puede pasar al mirador
-      // Una columna de plataforma de una dirección junto a la escalera (se sube por debajo y se pisa desde arriba)
-      // y después la repisa de piedra: así la escalera no choca con el mirador al subir
-      tiles[3][x + 1] = "D";
-      for (let cc = x + 2; cc <= x + 5; cc++) { tiles[3][cc] = "S"; moneda(cc, 2); }
-      reservar(x - 1, x + 5, 1, GY - 1);
-      hecho = true;
-    }
-  }
-
-  // Puentes de madera sobre los huecos libres (de hasta 4 tiles): al pisar un tramo, el puente entero
-  // cae en cascada, así que hay que cruzarlo sin pararse. Se rehacen solos al cabo de unos segundos
-  if (usa("puente")) {
-    const n = dif >= 4 ? 2 : 1;
-    let hechos = 0;
-    huecos.forEach((g, gi) => {
-      if (hechos >= n || usados.includes(g) || g[1] - g[0] > 3) return;
-      const [a, b] = g;
-      for (let cc = a; cc <= b; cc++) {
-        plats.push({ t: "caida", madera: true, x: cc * TILE, y: GY * TILE, w: TILE, h: TILE,
-                     grupo: "puente" + gi, indice: cc - a, tCaida: 0.6 });
-      }
-      usados.push(g);
-      hechos++;
-    });
-  }
-
-  // Cañones de pared sobre un pilar de piedra junto al camino: disparan a la altura del cuerpo, así que
-  // hay que saltar la bala. Tienen ocho casillas de aire delante para que la bala llegue lejos
-  if (usa("canon")) {
-    const n = dif >= 6 ? 2 : 1;
-    for (let k = 0, hechos = 0; k < 120 && hechos < n; k++) {
-      const x = ri(16, B1 - 10);
-      let dir = rnd01() < 0.5 ? 1 : -1;
-      // Con jefe, una bala que va a la derecha desde cerca de la arena llegaría a ella (alcance ~39 casillas): dispara hacia atrás
-      if (gen.jefe && x > B1 - 42) dir = -1;
-      // Para esquivar la bala hay que saltar: la calle de disparo queda libre hasta arriba (filas 5 a 10, más que el salto)
-      const despejada = (cc) => { for (let rr = GY - 6; rr <= GY - 1; rr++) if (!libre(cc, rr)) return false; return true; };
-      let ok = suelo[x] && tiles[GY][x] === "G" && despejada(x);
-      for (let cc = x + dir; cc !== x + dir * 9 && ok; cc += dir) ok = despejada(cc);
-      if (!ok) continue;
-      tiles[GY - 1][x] = "S";
-      reservar(Math.min(x, x + dir * 8), Math.max(x, x + dir * 8), GY - 6, GY - 1);
-      // El segundo cañón de la fase dispara medio ciclo después: nunca llegan dos balas a la vez desde lados opuestos
-      canones.push({ col: x, row: GY - 1, dir, cada: 2.4, velocidad: 90, inicio: 1.2 + 1.2 * canones.length });
-      hechos++;
-    }
-  }
-
-  // Lava: los huecos de la zona B se llenan de lava (caer en ella es mortal)
-  if (usa("lava")) {
-    for (const [a, b] of huecos) for (let cc = a; cc <= b; cc++) for (let rr = GY; rr < ROWS; rr++) tiles[rr][cc] = "V";
-  }
-  // Monedas por encima de cada hueco: marcan el salto y quedan libres de bloques
-  for (const [a, b] of huecos) {
-    for (let cc = a; cc <= b; cc++) { moneda(cc, 6); reservado.add(clave(cc, 6)); }
-  }
-
-  /* ----- Bloques sueltos (solo en celdas libres), enemigos y monedas ----- */
-  // Bloques ? y ladrillos en la zona abierta
-  for (let x = 12; x < A1; x++) {
-    if (rnd01() < 0.06 + dif * 0.005) {
-      const row = 7;
-      if (libre(x, row)) {
-        if (rnd01() < 0.5) {
-          tiles[row][x] = "Q";
-        } else {
-          for (let k = 0; k < ri(1, 3) && x + k < A1; k++) if (libre(x + k, row)) tiles[row][x + k] = "B";
+  for (let i = 0; i <= ult; i++) {
+    const r = f0 + i;
+    if (suelo && i === ult) {
+      // Puente: cada tramo de madera cae al pisarlo y arrastra a los demás en cascada
+      for (const [a, b] of tramos("w", i)) {
+        const grupo = "puente" + N.puentes++;
+        for (let k = a; k <= b; k++) {
+          N.plats.push({ t: "caida", madera: true, x: (x0 + k) * TILE, y: GY * TILE, w: TILE, h: TILE, grupo, indice: k - a, tCaida: 0.6 });
         }
       }
-      x += 4;
+      continue;
+    }
+    // Plataforma móvil de 3 bloques: va y viene a lo largo del recorrido marcado
+    for (const [a, b] of tramos("=", i)) {
+      N.plats.push({ t: "movil", x: (x0 + a) * TILE, y: r * TILE, w: 3 * TILE, h: TILE, x0: (x0 + a) * TILE, x1: (x0 + Math.max(a, b - 2)) * TILE, vel: 36 });
+    }
+    // Plataformas que caen: una por tramo
+    for (const [a, b] of tramos("_", i)) {
+      N.plats.push({ t: "caida", x: (x0 + a) * TILE, y: r * TILE, w: (b - a + 1) * TILE, h: TILE });
     }
   }
-  // Sección de plataformas flotantes: ladrillos y ? en el aire, sin tapar huecos ni módulos
-  const cercaHueco = (cc) => huecos.some(([a, b]) => cc >= a - 1 && cc <= b + 1);
-  for (let x = A1; x < B1; x++) {
-    if (rnd01() < 0.1) {
-      const row = ri(6, 8);
-      const n = ri(2, 4);
-      for (let k = 0; k < n && x + k < B1; k++) {
-        if (libre(x + k, row) && !cercaHueco(x + k)) tiles[row][x + k] = k === 1 && rnd01() < 0.4 ? "Q" : "B";
-      }
-      x += n + 2;
+  // Ascensor: columna de "^"; la plataforma sube y baja entre la primera y la última fila
+  for (let k = 0; k < ancho; k++) {
+    for (let i = 0; i < ult; i++) {
+      if (ch(i, k) !== "^" || (i > 0 && ch(i - 1, k) === "^")) continue;
+      let fin = i;
+      while (fin + 1 < ult && ch(fin + 1, k) === "^") fin++;
+      N.plats.push({ t: "movil", eje: "y", x: (x0 + k) * TILE, y: (f0 + fin) * TILE, w: 3 * TILE, h: TILE,
+                     y0: (f0 + i) * TILE, y1: (f0 + fin) * TILE, vel: 30 });
     }
   }
+  return ancho;
+}
 
-  // Enemigos caminantes, caparazones y voladores sobre el suelo (nunca en un hoyo ni en un módulo)
-  const nEnem = 4 + dif * 2;
-  for (let i = 0; i < nEnem; i++) {
-    const x = ri(10, C1 - 4);
-    if (!suelo[x] || x < 12 || tiles[GY][x] !== "G" || !libre(x, GY - 1)) continue;
-    const t = tipos[ri(0, tipos.length - 1)];
-    if (t === "plant" || t === "planta_zombie") continue;   // las plantas van en las tuberías
-    if (VOLADORES.includes(t)) {
-      ents.push({ t, x: x * TILE, y: ri(3, 7) * TILE });
-    } else {
-      ents.push({ t, x: x * TILE, y: (GY - 1) * TILE });
-    }
+// Baraja una lista en su sitio (Fisher-Yates) con el generador de la fase
+function barajar(lista, rnd) {
+  for (let i = lista.length - 1; i > 0; i--) {
+    const j = Math.floor(rnd() * (i + 1));
+    [lista[i], lista[j]] = [lista[j], lista[i]];
   }
+  return lista;
+}
 
-  // Monedas: las de los módulos y los arcos sueltos de la zona abierta, solo en celdas de aire
-  // (así nunca aparecen dentro de un bloque ?, un ladrillo o una plataforma)
-  const conMoneda = new Set();
-  const ponerMoneda = (cc, rr) => {
-    const k = clave(cc, rr);
-    if (conMoneda.has(k) || tiles[rr][cc] !== ".") return;
-    conMoneda.add(k);
-    ents.push({ t: "coin", x: cc * TILE + 4, y: rr * TILE + 4 });
+/* Elige las piezas de una fase: la mecánica nueva de la fase sale al menos dos veces, hay una o más
+   puertas (muros que obligan a subir) según la dificultad, y el resto se reparte entre las demás
+   mecánicas y los retos básicos. Ninguna pieza sale más de dos veces. */
+function elegirPiezas(rnd, dif, mecanicas, secreta, jefe) {
+  const vale = (p) => (!p.req || mecanicas.includes(p.req)) && dif >= (p.min || 1) && dif <= (p.max || 8);
+  const pool = PIEZAS.filter((p) => (p.tipo === "reto" || p.tipo === "puerta") && vale(p));
+  const puertas = pool.filter((p) => p.tipo === "puerta");
+  const n = 6 + Math.ceil(dif / 2);
+  const nPuertas = Math.min(3, 1 + (dif >= 4) + (dif >= 7));
+  const usos = {};
+  const elegidas = [];
+  const azar = (lista) => lista[Math.floor(rnd() * lista.length)];
+  const tomar = (lista) => {
+    const libres = lista.filter((p) => (usos[p.id] || 0) < 2);
+    if (!libres.length) return null;
+    const menos = Math.min(...libres.map((p) => usos[p.id] || 0));   // primero las que menos han salido
+    const p = azar(libres.filter((q) => (usos[q.id] || 0) === menos));
+    usos[p.id] = (usos[p.id] || 0) + 1;
+    elegidas.push(p);
+    return p;
   };
-  for (const [cc, rr] of monedas) ponerMoneda(cc, rr);
-  for (let x = 16; x < A1; x += ri(10, 16)) {
-    const n = ri(3, 5);
-    for (let k = 0; k < n; k++) {
-      ponerMoneda(x + k, 9 - Math.round(Math.sin((k / (n - 1)) * Math.PI) * 2));
-    }
+  // La mecánica que presenta esta fase (la última de la lista)
+  const nueva = mecanicas[mecanicas.length - 1];
+  if (nueva) for (let k = 0; k < 2; k++) tomar(pool.filter((p) => p.req === nueva));
+  // Puertas: primero las de las mecánicas de la fase, que son más variadas
+  while (elegidas.filter((p) => p.tipo === "puerta").length < nPuertas) {
+    const conMecanica = puertas.filter((p) => p.req && (usos[p.id] || 0) === 0);
+    if (!tomar(conMecanica.length ? conMecanica : puertas)) break;
   }
-
-  // Bloques ? con contenido elegido por la semilla
-  for (let y = 0; y < ROWS; y++) for (let x = 0; x < cols; x++) {
-    if (tiles[y][x] === "Q") {
-      ents.push({ t: "qitem", x: x * TILE, y: y * TILE, item: ITEMS_Q[ri(0, ITEMS_Q.length - 1)] });
-    }
+  // Una pieza de cada una de las demás mecánicas, en orden al azar
+  const otras = barajar(mecanicas.filter((m) => m !== nueva), rnd);
+  for (const m of otras) if (elegidas.length < n) tomar(pool.filter((p) => p.req === m));
+  const retos = pool.filter((p) => p.tipo === "reto");
+  while (elegidas.length < n && tomar(retos));
+  // Orden al azar, sin dos puertas seguidas
+  barajar(elegidas, rnd);
+  for (let i = 1; i < elegidas.length; i++) {
+    if (elegidas[i].tipo !== "puerta" || elegidas[i - 1].tipo !== "puerta") continue;
+    const j = elegidas.findIndex((p, k) => k > i && p.tipo !== "puerta");
+    if (j > 0) [elegidas[i], elegidas[j]] = [elegidas[j], elegidas[i]];
   }
+  // La fase empieza con una pieza tranquila de bloques
+  elegidas.unshift(azar(PIEZAS.filter((p) => p.tipo === "inicio")));
+  // Zona secreta: la entrada hacia un tercio de la fase y la salida dos piezas después (es un atajo)
+  if (secreta !== undefined && !jefe) {
+    const i = Math.max(2, Math.floor(elegidas.length * 0.35));
+    elegidas.splice(i, 0, azar(PIEZAS.filter((p) => p.tipo === "entrada")));
+    elegidas.splice(Math.min(elegidas.length, i + 3), 0, PIEZAS.find((p) => p.tipo === "salida"));
+  }
+  return elegidas;
+}
 
-  // Decoración del suelo abierto (arbustos, árboles, rocas...): no es sólida y se dibuja detrás de todo
-  const decor = [];
-  const piezas = DECOR_DE_TEMA[gen.theme] || [];
-  for (let x = 12; x < A1 && piezas.length; x++) {
-    if (!suelo[x] || tiles[GY][x] !== "G" || rnd01() > 0.14) continue;
-    const pieza = piezas[ri(0, piezas.length - 1)];
-    if (pieza.some((_, k) => tiles[GY - 1 - k][x] !== "." || reservado.has(clave(x, GY - 1 - k)))) continue;
-    pieza.forEach((ch, k) => decor.push({ ch, c: x, r: GY - 1 - k }));
+// Tramo llano entre dos piezas: a veces un enemigo, un grupo de bloques o un volador
+function ponerTramo(N, x, w) {
+  const rnd = N.rnd;
+  if (rnd() < 0.3 + N.dif * 0.07) ponerEnemigo(N, x + 1 + Math.floor(rnd() * (w - 1)), GY - 1, false);
+  if (w >= 5 && rnd() < 0.35) {
+    const forma = ["Q", "BQB", "QQ", "BPB", "BKB"][Math.floor(rnd() * 5)];
+    const c0 = x + Math.floor((w - forma.length) / 2);
+    [...forma].forEach((ch, k) => ponerCelda(N, ch, c0 + k, GY - 4));
+  } else if (N.dif >= 3 && N.voladores.length && rnd() < 0.25) {
+    ponerEnemigo(N, x + Math.floor(w / 2), 5 + Math.floor(rnd() * 3), true);
+  }
+}
+
+// Decoración del suelo abierto (arbustos, árboles, rocas...): no es sólida y se dibuja detrás de todo
+function decorarSuelo(N, tema, desde, hasta) {
+  const piezas = DECOR_DE_TEMA[tema] || [];
+  for (let x = desde; x < hasta && piezas.length; x++) {
+    if (N.tiles[GY][x] !== "G" || N.rnd() > 0.14) continue;
+    const pieza = piezas[Math.floor(N.rnd() * piezas.length)];
+    if (pieza.some((_, k) => N.tiles[GY - 1 - k][x] !== ".")) continue;
+    pieza.forEach((ch, k) => N.decor.push({ ch, c: x, r: GY - 1 - k }));
     x++;   // deja al menos un tile libre entre dos piezas
   }
+}
 
-  // Jefe al final de la zona de escalones, si el nivel es de castillo
-  if (gen.jefe) {
-    ents.push({ t: "boss", x: (C1 - 16) * TILE, y: (GY - 1) * TILE - 16 });
+/* Genera una fase a partir de gen = { seed, dif, enemigos, theme, jefe, secreta } y de sus mecánicas */
+function generarNivel(gen, mecanicas = []) {
+  const rnd = prng(gen.seed);
+  const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+  const dif = clamp(gen.dif || 1, 1, 8);
+  const tipos = gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"];
+  const piezas = elegirPiezas(rnd, dif, mecanicas, gen.secreta, gen.jefe);
+  const separaciones = piezas.map(() => ri(3, 6));
+  const INICIO = 12, ARENA = gen.jefe ? 34 : 0, FINAL = 22;
+  const anchoPiezas = piezas.reduce((s, p, i) => s + separaciones[i] + Math.max(...p.mapa.map((f) => f.length)), 0);
+  const cols = INICIO + anchoPiezas + 4 + ARENA + FINAL;
+  const N = nuevoNivel(cols, rnd, dif, tipos);
+  for (let c = 0; c < cols; c++) ponerSuelo(N, "G", c);
+
+  // Piezas, cada una tras un tramo llano
+  let x = INICIO;
+  piezas.forEach((p, i) => {
+    ponerTramo(N, x, separaciones[i]);
+    x += separaciones[i];
+    x += pegarMapa(N, p.mapa, x, GY - p.mapa.length + 1, true);
+  });
+  x += 4;
+  // Con lava en la fase, los huecos sin fondo son lagos de lava (bajo los puentes y las plataformas también)
+  if (mecanicas.includes("lava")) {
+    for (let c = 0; c < cols; c++) if (N.tiles[GY][c] === "." && N.tiles[ROWS - 1][c] === ".") for (let r = GY + 1; r < ROWS; r++) N.tiles[r][c] = "V";
   }
+  // Castillo: la arena del jefe es el suelo llano antes de la escalinata final
+  const arenaX0 = x;
+  if (gen.jefe) {
+    N.ents.push({ t: "boss", x: (x + 20) * TILE, y: (GY - 1) * TILE - 16 });
+    x += ARENA;
+  }
+  // Escalinata final de piedra (alturas 1 a 7, la cima de dos bloques) y poste de meta
+  for (let k = 0; k < 8; k++) for (let h = 0; h < Math.min(k + 1, 7); h++) N.tiles[GY - 1 - h][x + 2 + k] = "S";
+  const goalX = x + 14;
+  for (let r = 4; r < GY; r++) N.tiles[r][goalX] = "F";
+  decorarSuelo(N, gen.theme, 4, cols - 4);
 
-  // El inicio siempre está libre de enemigos
+  if (gen.jefe) N.ents = N.ents.filter((e) => e.t === "boss" || e.x < arenaX0 * TILE);   // la arena queda libre
   return {
-    cols, rows: ROWS, tiles,
-    ents: ents.filter((e) => e.x >= 10 * TILE),
-    plats, decor, canones,
+    cols, rows: ROWS, tiles: N.tiles,
+    ents: N.ents.filter((e) => e.x >= 10 * TILE),   // el inicio siempre está libre de enemigos
+    plats: N.plats, decor: N.decor, canones: N.canones,
     start: { x: 3 * TILE, y: (GY - 2) * TILE },
     goalX: goalX * TILE,
     theme: gen.theme || null,
     boss: !!gen.jefe,
-    arenaX0: gen.jefe ? B1 * TILE : 0,   // la arena del jefe es el suelo llano desde B1
+    arenaX0: gen.jefe ? arenaX0 * TILE : 0,
+    entradaSecreta: N.entrada ? Object.assign({ sala: gen.secreta }, N.entrada) : null,
+    salidaSecreta: N.salida,
   };
 }
 
-/* Convierte un mapa escrito a mano (array de strings) en el mismo formato */
-function parsearMapa(strs) {
-  const cols = strs[0].length;
-  const tiles = gridVacia(cols);
-  const ents = [];
-  let start = { x: 3 * TILE, y: (GY - 2) * TILE };
-  let goalX = (cols - 4) * TILE;
-  for (let y = 0; y < ROWS; y++) for (let x = 0; x < cols; x++) {
-    const ch = strs[y] && strs[y][x] ? strs[y][x] : ".";
-    const tipo = LEYENDA_MAPA[ch];
-    if (ch === "@") { start = { x: x * TILE, y: y * TILE }; continue; }
-    if (tipo === undefined) continue;
-    if (tipo === null) continue;
-    if (["G", "B", "Q", "S", "T", "F"].includes(tipo)) {
-      tiles[y][x] = tipo;
-      if (tipo === "F") goalX = x * TILE;
-      if (tipo === "Q") ents.push({ t: "qitem", x: x * TILE, y: y * TILE, item: "moneda" });
-    } else {
-      ents.push({ t: tipo, x: x * TILE, y: y * TILE });
-    }
-  }
-  return { cols, rows: ROWS, tiles, ents, plats: [], decor: [], canones: [], start, goalX, theme: null, boss: false, arenaX0: 0 };
+/* Convierte un mapa escrito a mano (array de strings de 14 filas, leyenda de las piezas) en un nivel */
+function parsearMapa(strs, gen = {}) {
+  const cols = Math.max(...strs.map((f) => f.length));
+  const tipos = gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"];
+  const N = nuevoNivel(cols, prng(gen.seed || 1), gen.dif || 1, tipos);
+  pegarMapa(N, strs, 0, 0, false);
+  const meta = N.tiles.map((f) => f.indexOf("F")).find((c) => c >= 0);
+  return {
+    cols, rows: ROWS, tiles: N.tiles, ents: N.ents, plats: N.plats, decor: [], canones: N.canones,
+    start: N.start || { x: 3 * TILE, y: (GY - 2) * TILE },
+    goalX: meta !== undefined ? meta * TILE : (cols - 4) * TILE, theme: null, boss: false, arenaX0: 0,
+  };
 }
 
-// Salas de las zonas secretas: mapas bajo tierra escritos a mano. Tienen monedas y una tubería de salida (la de la derecha)
+/* Salas de las zonas secretas: bajo tierra, escritas a mano con la leyenda de las piezas.
+   Cada una es un pequeño reto con premio; se sale por la tubería de la derecha */
 const SALAS = [
+  // Tesoro: estantes de monedas y un ladrillo multimoneda
   { tiempo: 120, sala: true, mapa: [
     "SSSSSSSSSSSSSSSSSSSSSSSS",
     "S......................S",
     "S......................S",
-    "S..cccccccc............S",
+    "S..cccccc..............S",
+    "S..BBKBBB.....cccc.....S",
+    "S.............SSSS.....S",
     "S......................S",
-    "S......................S",
-    "S...BBBB....QBBBB......S",
-    "S......................S",
-    "S......................S",
+    "S..cccccc..............S",
+    "S..SSSSSS...SS.........S",
     "S..................TT..S",
     "S.@................TT..S",
     "SGGGGGGGGGGGGGGGGGGGGGGS",
     "SGGGGGGGGGGGGGGGGGGGGGGS",
     "SGGGGGGGGGGGGGGGGGGGGGGS",
   ] },
+  // Muelle: lanza a un altillo lleno de monedas; bajo el altillo hay una vida escondida
   { tiempo: 120, sala: true, mapa: [
     "SSSSSSSSSSSSSSSSSSSSSSSS",
     "S......................S",
-    "S..cc..cc..cc..cc..cc..S",
-    "S......................S",
-    "S...BBBB.........BBBB..S",
-    "S......................S",
-    "S..cccccccc............S",
+    "S.......cccccccc.......S",
+    "S.......SSSSSSSS.......S",
     "S......................S",
     "S......................S",
-    "S....................TTS",
-    "S.@..................TTS",
+    "S......................S",
+    "S...c........1.........S",
+    "S......................S",
+    "S..................TT..S",
+    "S.@.M..............TT..S",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+  ] },
+  // Pinchos: arcos de monedas sobre dos hoyos y una estrella al final
+  { tiempo: 120, sala: true, mapa: [
+    "SSSSSSSSSSSSSSSSSSSSSSSS",
+    "S......................S",
+    "S......................S",
+    "S......................S",
+    "S......................S",
+    "S....c......c.....*....S",
+    "S...ccc....ccc.........S",
+    "S......................S",
+    "S......................S",
+    "S..................TT..S",
+    "S.@................TT..S",
+    "SGGG....GG....GGGGGGGGGS",
+    "SGGGHHHHGGHHHHGGGGGGGGGS",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+  ] },
+  // Ladrillos: dos estantes con monedas encima, un escalón para subir y un multimoneda
+  { tiempo: 120, sala: true, mapa: [
+    "SSSSSSSSSSSSSSSSSSSSSSSS",
+    "S......................S",
+    "S......................S",
+    "S......................S",
+    "S...cccccc....cccccc...S",
+    "S...BBBBBB....BBBBBB...S",
+    "S......................S",
+    "S.....K................S",
+    "S.........SSS..........S",
+    "S..................TT..S",
+    "S.@................TT..S",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+  ] },
+  // Torre de plataformas de una dirección, con un potenciador arriba
+  { tiempo: 120, sala: true, mapa: [
+    "SSSSSSSSSSSSSSSSSSSSSSSS",
+    "S......................S",
+    "S......................S",
+    "S...cccc....P..........S",
+    "S...DDDD...............S",
+    "S......................S",
+    "S........DDDDDD.cccc...S",
+    "S......................S",
+    "S..DDDD................S",
+    "S..cccc............TT..S",
+    "S.@................TT..S",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+    "SGGGGGGGGGGGGGGGGGGGGGGS",
+  ] },
+  // Rombo de monedas, tres bloques ? y una vida escondida en la pared izquierda
+  { tiempo: 120, sala: true, mapa: [
+    "SSSSSSSSSSSSSSSSSSSSSSSS",
+    "S......................S",
+    "S......................S",
+    "S......................S",
+    "S.........c............S",
+    "S........ccc...........S",
+    "S..1....ccccc..........S",
+    "S......ccccccc.........S",
+    "S.......ccccc...QPQ....S",
+    "S........ccc.......TT..S",
+    "S.@.......c........TT..S",
     "SGGGGGGGGGGGGGGGGGGGGGGS",
     "SGGGGGGGGGGGGGGGGGGGGGGS",
     "SGGGGGGGGGGGGGGGGGGGGGGS",
@@ -5621,27 +5893,6 @@ function encontrarTuberias(tiles) {
     if (tiles[r][c] === "T" && tiles[r][c + 1] === "T" && tiles[r - 1][c] !== "T" && tiles[r - 1][c + 1] !== "T") out.push({ col: c, row: r });
   }
   return out;
-}
-
-// Pone una tubería extra en un tramo de suelo libre (sin enemigos ni plataformas cerca) y devuelve su boca
-function colocarTuberiaSecreta(lv, sala) {
-  const libre = (x) => {
-    for (let dx = 0; dx < 2; dx++) {
-      if (lv.tiles[GY][x + dx] !== "G") return false;
-      for (let r = GY - 4; r < GY; r++) if (lv.tiles[r][x + dx] !== ".") return false;
-    }
-    const cerca = (px) => Math.abs(px - (x + 1) * TILE) < 4 * TILE;
-    if (lv.ents.some((e) => e.t !== "coin" && e.t !== "qitem" && cerca(e.x))) return false;
-    if ((lv.plats || []).some((pl) => cerca(pl.x))) return false;
-    return !(lv.canones || []).some((c) => Math.abs(c.col - x) < 5);
-  };
-  for (let x = 14; x < lv.cols - 16; x++) {
-    if (!libre(x)) continue;
-    lv.tiles[GY - 1][x] = "T"; lv.tiles[GY - 1][x + 1] = "T";
-    lv.tiles[GY - 2][x] = "T"; lv.tiles[GY - 2][x + 1] = "T";
-    return { col: x, row: GY - 2, sala };
-  }
-  return null;
 }
 
 // Niveles de relieve suave (al estilo de Super Mario Bros. 3): colinas con pendientes, huecos saltables y bloques flotantes.
@@ -5688,37 +5939,79 @@ function generarColinas(gen) {
     for (let k = 0; k < w; k++) hm[x + k] = Infinity;
     x += w + 6;
   }
-  const tiles = gridVacia(cols), ents = [], decor = [];
-  const tmp = { hm, cols };   // superficieMin sin crear un nivel entero
-  // Monedas: guías sobre los huecos y arcos sobre las colinas
+  const N = nuevoNivel(cols, rnd, gen.dif || 1, gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"]);
+  const { tiles, ents, decor } = N;
+  const hoyoCerca = (a, b) => { for (let k = a - 6; k <= b + 6; k++) if (hm[k] === Infinity) return true; return false; };
+  // Tramo llano alineado con la rejilla (la superficie es el borde de un bloque) de x0 a x1
+  const llano = (x0, x1) => {
+    const s = hm[x0];
+    if (!isFinite(s) || s % TILE !== 0) return false;
+    for (let k = x0; k <= x1 + 1; k++) if (hm[k] !== s) return false;
+    return true;
+  };
+  // Zona secreta: la entrada hacia un tercio del nivel y la salida más adelante, sobre suelo llano
+  const ocupado = new Set();   // columnas de las tuberías: sin bloques ni enemigos encima
+  const tuberia = (desde, hasta, marca) => {
+    for (let x = desde; x < hasta; x++) {
+      if (!llano(x - 1, x + 2) || hoyoCerca(x, x + 1)) continue;
+      const r = hm[x] / TILE - 2;
+      ponerCelda(N, marca, x, r); ponerCelda(N, "T", x + 1, r);
+      ponerCelda(N, "T", x, r + 1); ponerCelda(N, "T", x + 1, r + 1);
+      for (let k = x - 3; k <= x + 4; k++) ocupado.add(k);
+      return true;
+    }
+    return false;
+  };
+  if (gen.secreta !== undefined && tuberia(Math.floor(META * 0.3), Math.floor(META * 0.55), "X")) {
+    if (!tuberia(Math.floor(META * 0.65), META - 14, "R")) tuberia(Math.floor(META * 0.58), META - 5, "R");
+  }
+  // Monedas: guías sobre los huecos (tres bloques por encima del borde más alto) y arcos sobre las colinas
+  const bordeHueco = (x) => {
+    let a = x, b = x;
+    while (a > 0 && hm[a] === Infinity) a--;
+    while (b < cols && hm[b] === Infinity) b++;
+    return Math.min(hm[a], hm[b]);
+  };
   for (let x = 18; x < META - 14; x++) {
-    if (hm[x] === Infinity) ents.push({ t: "coin", x: x * TILE + 4, y: base - 3 * TILE });
+    if (hm[x] === Infinity) ents.push({ t: "coin", x: x * TILE + 4, y: Math.floor(bordeHueco(x) / TILE) * TILE - 3 * TILE + 4 });
     else if (x % 9 === 0 && rnd() < 0.4) {
       for (let k = -1; k <= 1; k++) if (hm[x + k] !== Infinity) ents.push({ t: "coin", x: (x + k) * TILE + 4, y: Math.round(hm[x + k] - 26) });
     }
   }
-  // Bloques flotantes ('?' con objetos y ladrillos) con dos bloques de aire sobre el suelo más bajo que cubren.
-  // Nunca junto a un hueco: un bloque sobre la entrada del salto golpea la cabeza, el salto se corta y se cae
-  const hoyoCerca = (a, b) => { for (let k = a - 14; k <= b + 14; k++) if (hm[k] === Infinity) return true; return false; };
+  // Grupos de bloques sobre tramos llanos, a cuatro bloques del suelo (como en la pradera clásica):
+  // la fila se golpea desde el suelo y, en los grupos con un ? encima, ese ? se alcanza desde la fila.
+  // Nunca junto a un hueco: un bloque sobre la entrada del salto golpea la cabeza y se cae
+  const FORMAS = [["BQB"], ["QQQ"], ["BPB"], ["BKB"], ["..Q..", "BBPBB"], ["..P..", "BQBQB"]];
+  let ocultoPuesto = false;
+  // Bajo el grupo, el suelo apenas sube o baja (como mucho bloque y medio) y la fila queda a cuatro bloques
+  // de su punto más alto
   for (let x = 22; x < META - 16; x++) {
-    if (rnd() > 0.07) continue;
-    const sup = superficieMin(tmp, x * TILE, 3 * TILE);
-    if (!isFinite(sup) || hoyoCerca(x, x + 3)) continue;
-    const fila = Math.floor((sup - 2 * TILE) / TILE) - 1;
-    if (fila < 3) continue;
-    const n = 1 + Math.floor(rnd() * 3);
-    for (let k = 0; k < n; k++) {
-      const q = k === 0 && rnd() < 0.6;
-      tiles[fila][x + k] = q ? "Q" : "B";
-      if (q) ents.push({ t: "qitem", x: (x + k) * TILE, y: fila * TILE, item: ITEMS_Q[Math.floor(rnd() * ITEMS_Q.length)] });
-    }
-    x += n + 4;
+    if (rnd() > 0.12) continue;
+    const forma = FORMAS[Math.floor(rnd() * FORMAS.length)];
+    const w = forma[0].length;
+    const bajo = hm.slice(x - 1, x + w + 2);
+    if (bajo.some((v) => !isFinite(v)) || Math.max(...bajo) - Math.min(...bajo) > 24) continue;
+    if (hoyoCerca(x, x + w) || ocupado.has(x) || ocupado.has(x + w)) continue;
+    const fila = Math.floor(Math.min(...bajo) / TILE) - 4 - (forma.length - 1) * 4;
+    if (fila < 2) continue;
+    forma.forEach((linea, i) => [...linea].forEach((ch, k) => ponerCelda(N, ch, x + k, fila + i * 4)));
+    x += w + 8;
+  }
+  // Una vida escondida en un bloque oculto sobre un tramo llano sin nada encima
+  for (let x = 40; x < META - 30 && !ocultoPuesto; x++) {
+    if (rnd() > 0.05 || !llano(x - 1, x + 1) || hoyoCerca(x, x) || ocupado.has(x)) continue;
+    const fila = hm[x] / TILE - 4;
+    let libre = fila >= 2;
+    for (let r = 0; r < hm[x] / TILE && libre; r++) for (let k = x - 1; k <= x + 1; k++) if (tiles[r][k] !== ".") libre = false;
+    if (!libre) continue;
+    ponerCelda(N, "1", x, fila);
+    ocultoPuesto = true;
   }
   // Enemigos del mundo que caminan (o vuelan) sobre los tramos llanos
-  const tipos = (gen.enemigos || []).filter((t) => t !== "plant" && t !== "planta_zombie");
+  const tipos = N.caminantes.concat(N.voladores);
   for (let x = 18; x < META - 16 && tipos.length; x++) {
     if (rnd() > 0.045 + 0.01 * (gen.dif || 1)) continue;
-    if (hm[x] === Infinity || hm[x + 4] === Infinity || Math.abs(hm[x + 4] - hm[x]) > 6) continue;
+    if (hm[x] === Infinity || hm[x + 4] === Infinity || Math.abs(hm[x + 4] - hm[x]) > 6 || ocupado.has(x)) continue;
     const t = tipos[Math.floor(rnd() * tipos.length)];
     if (VOLADORES.includes(t)) ents.push({ t, x: x * TILE, y: Math.max(2, Math.floor(hm[x] / TILE) - 4) * TILE });
     else ents.push({ t, x: x * TILE, y: Math.round(hm[x]) - TILE });
@@ -5726,7 +6019,7 @@ function generarColinas(gen) {
   }
   // Arbustos y flores sobre el suelo llano
   for (let x = 4; x < META - 8; x++) {
-    if (hm[x] === Infinity || rnd() > 0.1 || Math.abs(hm[x + 2] - hm[x]) > 4) continue;
+    if (hm[x] === Infinity || rnd() > 0.1 || Math.abs(hm[x + 2] - hm[x]) > 4 || ocupado.has(x)) continue;
     decor.push({ c: x, r: Math.floor(hm[x] / TILE) - 1, ch: rnd() < 0.7 ? "b" : "f" });
   }
   for (let r = 4; r < GY; r++) tiles[r][META] = "F";   // poste de meta
@@ -5734,19 +6027,49 @@ function generarColinas(gen) {
     cols, rows: ROWS, tiles, ents, plats: [], decor, canones: [],
     start: { x: 3 * TILE, y: Math.round(hm[3]) - TILE },
     goalX: META * TILE, theme: gen.theme || null, boss: false, arenaX0: 0, hm,
+    entradaSecreta: N.entrada ? Object.assign({ sala: gen.secreta }, N.entrada) : null,
+    salidaSecreta: N.salida,
   };
+}
+
+/* Última pasada sobre cualquier nivel: nada fuera de sitio. Quita las monedas que tocan un bloque,
+   una tubería, el terreno de las colinas o una plataforma, y los enemigos que nacerían dentro de un bloque */
+function sanearNivel(lv) {
+  const ocupada = (c, r) => {
+    if (c < 0 || c >= lv.cols || r < 0 || r >= ROWS) return false;
+    const t = lv.tiles[r][c];
+    return t !== "." && t !== "L";
+  };
+  const tocaAlgo = (x, y, w, h) => {
+    for (let r = Math.floor(y / TILE); r <= Math.floor((y + h - 0.01) / TILE); r++)
+      for (let c = Math.floor(x / TILE); c <= Math.floor((x + w - 0.01) / TILE); c++) if (ocupada(c, r)) return true;
+    if (lv.hm && y + h > superficieMin(lv, x, w)) return true;
+    return (lv.plats || []).some((p) => x < p.x + p.w && x + w > p.x && y < p.y + p.h && y + h > p.y);
+  };
+  const monedas = new Set();
+  lv.ents = lv.ents.filter((e) => {
+    if (e.t === "coin") {
+      const k = e.x + "," + e.y;
+      if (monedas.has(k) || tocaAlgo(e.x, e.y, 8, 10)) return false;
+      monedas.add(k);
+      return true;
+    }
+    if (e.t === "qitem") return "QZB".includes(lv.tiles[Math.floor(e.y / TILE)][Math.floor(e.x / TILE)]);
+    if (e.t === "boss" || e.t === "plant" || e.t === "planta_zombie") return true;
+    return !ocupada(Math.floor((e.x + TILE / 2) / TILE), Math.floor((e.y + TILE / 2) / TILE));
+  });
+  return lv;
 }
 
 /* Punto de entrada: usa el mapa escrito a mano si existe, si no genera */
 function construirNivel(def, tema) {
   // Los niveles de castillo no llevan decoración de su mundo (usan su propio escenario)
-  const gen = Object.assign({ theme: def.castillo ? "castillo" : tema }, def.gen, { jefe: def.jefe });
-  const lv = def.mapa ? parsearMapa(def.mapa) : def.colinas ? generarColinas(gen) : generarNivel(gen, def.mecanicas || []);
+  const gen = Object.assign({ theme: def.castillo ? "castillo" : tema }, def.gen, { jefe: def.jefe, secreta: def.secreta });
+  const lv = def.mapa ? parsearMapa(def.mapa, gen) : def.colinas ? generarColinas(gen) : generarNivel(gen, def.mecanicas || []);
   lv.nombre = def.nombre;
   lv.tiempo = def.tiempo || 300;
   if (def.sala) lv.goalX = 1e9;                       // las salas secretas no tienen meta: se sale por su tubería
-  if (def.secreta !== undefined) lv.entradaSecreta = colocarTuberiaSecreta(lv, def.secreta);
-  return lv;
+  return sanearNivel(lv);
 }
 
 /* =====================================================================
@@ -6034,11 +6357,13 @@ class Player {
     if (!held.jump && this.vy < -120 && !this.rebotando) this.vy = -120; // corta el salto al soltar
 
     // --- Colisiones ---
-    const vyAntes = this.vy, enAireAntes = !this.onGround;
+    const vyAntes = this.vy, enAireAntes = !this.onGround, yAntes = this.y;
     const r = moverEntidad(lvl, this, dt);
     if (r.pared) this.vx = 0;
     if (r.techo) {
       game.golpearDesdeAbajo(this);
+    } else if (vyAntes < 0 && lvl.golpearOculto) {
+      lvl.golpearOculto(this, yAntes, game);
     }
     // Plataformas de una dirección: solo paran al caer desde arriba
     if (!r.suelo && this.vy >= 0 && aterrizaEnDireccional(lvl, this, this.prevBottom)) { r.suelo = true; this.vy = 0; }
@@ -6225,6 +6550,8 @@ class Plataforma {
     this.x = d.x; this.y = d.y;
     this.w = d.w; this.h = d.h;
     this.x0 = d.x0; this.x1 = d.x1;
+    this.eje = d.eje || "x";        // "y": ascensor que sube y baja entre y0 (arriba) e y1 (abajo)
+    this.y0 = d.y0; this.y1 = d.y1;
     this.vel = d.vel || 36;
     this.dir = 1;
     this.homeX = d.x; this.homeY = d.y;
@@ -6244,7 +6571,11 @@ class Plataforma {
 
   update(dt, lvl) {
     const x0 = this.x, y0 = this.y;
-    if (this.t === "movil") {
+    if (this.t === "movil" && this.eje === "y") {
+      this.y -= this.dir * this.vel * dt;
+      if (this.y <= this.y0) { this.y = this.y0; this.dir = -1; }
+      if (this.y >= this.y1) { this.y = this.y1; this.dir = 1; }
+    } else if (this.t === "movil") {
       this.x += this.dir * this.vel * dt;
       if (this.x >= this.x1) { this.x = this.x1; this.dir = -1; }
       if (this.x <= this.x0) { this.x = this.x0; this.dir = 1; }
@@ -6806,6 +7137,7 @@ class Level {
     this.boss = data.boss;
     this.tiempo = data.tiempo;
     this.entradaSecreta = data.entradaSecreta || null;   // boca de la zona secreta: { col, row, sala }
+    this.salidaSecreta = data.salidaSecreta || null;     // tubería por la que se vuelve de la zona secreta: { col, row }
     this.esSala = !!def.sala;                              // las salas secretas no tienen meta: se sale por su tubería
     this.tuberias = encontrarTuberias(this.tiles);
     this.hm = data.hm || null;   // colinas: altura del suelo por columna (px); Infinity en los huecos
@@ -6825,7 +7157,9 @@ class Level {
     this.terreno = TERRENO_DE_TEMA[this.temaKey] || "#";   // carácter de bloques.js para el suelo
     this.coins = [];
     this.items = [];
-    this.qItems = new Map();   // "col,fila" -> objeto del bloque ?
+    this.qItems = new Map();   // "col,fila" -> objeto del bloque ? (o del bloque oculto)
+    this.multi = new Map();    // "col,fila" -> monedas que quedan en un ladrillo multimoneda
+    this.textos = [];          // textos que suben y se desvanecen ("1UP"): { x, y, t, s }
     this.bossRef = null;
     this.bolas = [];           // bolas de fuego del jugador (flor de fuego)
     // Cañones de pared: disparan a su altura; la bala para en el primer bloque sólido
@@ -6845,6 +7179,7 @@ class Level {
 
   spawn(e) {
     if (e.t === "coin") this.coins.push(new Coin(e.x, e.y));
+    else if (e.t === "qitem" && e.item === "multi") this.multi.set(Math.floor(e.x / TILE) + "," + Math.floor(e.y / TILE), MONEDAS_MULTI);
     else if (e.t === "qitem") this.qItems.set(Math.floor(e.x / TILE) + "," + Math.floor(e.y / TILE), e.item);
     else if (e.t === "boss") this.bossRef = new Boss(e.x, e.y, this.jefeTipo);
     else this.enemigos.push({ e: crearEnemigo(e), llevado: false });
@@ -6862,19 +7197,29 @@ class Level {
   // Golpe desde abajo a un tile (el jugador salta contra él)
   golpearBloque(c, r, player, game) {
     const t = tileAt(this, c, r);
-    if (t === "Q") {
+    const k = c + "," + r;
+    if (t === "Q" || t === "Z") {
       this.tiles[r][c] = "U";
-      const item = this.qItems.get(c + "," + r) || "moneda";
-      this.qItems.delete(c + "," + r);
+      const item = this.qItems.get(k) || "moneda";
+      this.qItems.delete(k);
       if (item === "moneda") {
         this.coins.push(new Coin(c * TILE + 4, r * TILE - 8, true));
-        game.puntos(200); game.monedas++;
-        game.sfx("moneda");
+        game.puntos(200);
+        game.sumarMonedas(1, c * TILE, r * TILE);
       } else {
         this.items.push(new PowerUp(item, c * TILE + 2, r * TILE));
         game.sfx("hongo");
       }
       emitir(c * TILE + 8, r * TILE, 4, [PAL.y], { up: 60, life: 0.4 });
+    } else if (t === "B" && this.multi.has(k)) {
+      // Ladrillo multimoneda: da una moneda por golpe y, vacío, queda como bloque usado
+      const quedan = this.multi.get(k) - 1;
+      this.coins.push(new Coin(c * TILE + 4, r * TILE - 8, true));
+      game.puntos(200);
+      game.sumarMonedas(1, c * TILE, r * TILE);
+      emitir(c * TILE + 8, r * TILE, 3, [PAL.y], { up: 60, life: 0.3 });
+      if (quedan > 0) this.multi.set(k, quedan);
+      else { this.multi.delete(k); this.tiles[r][c] = "U"; }
     } else if (t === "B") {
       if (player.big) {
         this.tiles[r][c] = ".";
@@ -6887,12 +7232,31 @@ class Level {
     }
   }
 
+  // Bloque oculto ("Z"): no se ve ni se toca, salvo con la cabeza al subir desde debajo de él.
+  // Devuelve true si el jugador lo ha golpeado (y deja la cabeza justo debajo)
+  golpearOculto(p, yAntes, game) {
+    const r = Math.floor(p.y / TILE);
+    if (yAntes < (r + 1) * TILE - 0.01) return false;   // ya estaba a su altura: lo atraviesa
+    for (const c of [Math.floor((p.x + 2) / TILE), Math.floor((p.x + p.w - 2) / TILE)]) {
+      if (tileAt(this, c, r) !== "Z") continue;
+      p.y = (r + 1) * TILE;
+      p.vy = 0;
+      this.golpearBloque(c, r, p, game);
+      game.sfx("golpe");
+      return true;
+    }
+    return false;
+  }
+
+  // Texto que sube y se desvanece sobre el nivel (por ejemplo "1UP")
+  textoFlotante(s, x, y) { this.textos.push({ s, x, y, t: 1.2 }); }
+
   // Rompe ladrillos al pasar por encima con salto giratorio
   romperConGiro(player, game) {
     const c0 = Math.floor(player.x / TILE), c1 = Math.floor((player.x + player.w) / TILE);
     const r0 = Math.floor(player.y / TILE), r1 = Math.floor((player.y + player.h) / TILE);
     for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
-      if (tileAt(this, c, r) === "B") {
+      if (tileAt(this, c, r) === "B" && !this.multi.has(c + "," + r)) {
         this.tiles[r][c] = ".";
         emitir(c * TILE + 8, r * TILE + 8, 10, [this.pal.O, PAL.w], { up: 120, spread: 110, life: 0.6 });
         game.sfx("rompe");
@@ -6936,6 +7300,8 @@ class Level {
     this.actualizarBolas(dt, game);
     for (const c of this.coins) c.update(dt);
     this.coins = this.coins.filter((c) => c.alive);
+    for (const tx of this.textos) { tx.t -= dt; tx.y -= 24 * dt; }
+    this.textos = this.textos.filter((tx) => tx.t > 0);
     for (const it of this.items) it.update(dt, this);
     this.items = this.items.filter((it) => it.alive);
 
@@ -6970,7 +7336,7 @@ class Level {
     for (let r = 0; r < this.rows; r++) {
       for (let c = c0; c <= c1; c++) {
         const t = this.tiles[r][c];
-        if (t === ".") continue;
+        if (t === "." || t === "Z") continue;   // el bloque oculto no se ve
         const x = c * TILE - cam.x, y = r * TILE - cam.y;
         this.dibujarTile(t, x, y, c, r);
       }
@@ -7012,6 +7378,11 @@ class Level {
     this.dibujarCanones(cam);
     this.dibujarJugador(game, cam);
     dibujarParticulas(cam);
+    for (const tx of this.textos) {
+      ctx.globalAlpha = Math.min(1, tx.t * 2);
+      txt(tx.s, Math.round(tx.x + 8 - cam.x), Math.round(tx.y - cam.y), PAL.g, "center");
+      ctx.globalAlpha = 1;
+    }
     ctx.restore();
   }
 
@@ -7275,6 +7646,8 @@ class Game {
       this.mundoIdx = clamp(d.mundoIdx || 0, 0, MUNDOS.length - 1);
       this.vidas = clamp(d.vidas || 3, 1, 99);
       this.monedas = d.monedas || 0;
+      // Partidas guardadas antes de que 100 monedas reiniciaran el contador
+      while (this.monedas >= 100) { this.monedas -= 100; this.vidas = Math.min(99, this.vidas + 1); }
       this.score = d.score || 0;
     } catch (e) { /* save corrupto o bloqueado: empezamos de cero */ }
   }
@@ -7308,6 +7681,19 @@ class Game {
 
   // ---------- Utilidades llamadas por las entidades ----------
   puntos(n) { this.score += n; }
+  // Suma monedas; cada 100 dan una vida y el contador vuelve a empezar. (x, y): dónde se dice "1UP"
+  sumarMonedas(n, x, y) {
+    this.monedas += n;
+    let vida = false;
+    while (this.monedas >= 100) { this.monedas -= 100; this.ganarVida(x, y); vida = true; }
+    if (!vida) this.sfx("moneda");
+  }
+  // Una vida más (como mucho 99), con su sonido y el "1UP" sobre el nivel
+  ganarVida(x, y) {
+    this.vidas = Math.min(99, this.vidas + 1);
+    this.sfx("vida");
+    if (this.lvl && x !== undefined) this.lvl.textoFlotante("1UP", x, y - 8);
+  }
   sfx(n) { tocar(n); }
   efectoEnemigo(x, y) { emitir(x + 6, y + 6, 8, [PAL.w, PAL.y], { up: 90, spread: 90, life: 0.4 }); }
 
@@ -7387,6 +7773,7 @@ class Game {
       else if (it.tipo === "flor") { p.setBig(true); p.fire = true; this.puntos(1000); }
       else if (it.tipo === "pluma") { p.cape = true; p.glideT = PHYS.glideTime; this.puntos(1000); }
       else if (it.tipo === "estrella") { p.star = 10; this.puntos(1000); }
+      if (it.tipo === "vida") { this.ganarVida(it.x, it.y); continue; }
       this.sfx(it.tipo === "estrella" ? "estrella" : "hongo");
     }
 
@@ -7398,10 +7785,8 @@ class Game {
       if (!c.alive) continue;
       if (aabb(hitbox, c)) {
         c.alive = false;
-        this.monedas++;
         this.puntos(100);
-        if (this.monedas % 100 === 0) { this.vidas++; this.sfx("vida"); }
-        else this.sfx("moneda");
+        this.sumarMonedas(1, c.x, c.y);
       }
     }
 
@@ -7500,7 +7885,7 @@ class Game {
   premiar(premios) {
     for (const { tipo, n } of premios) {
       if (tipo === "vida") this.vidas = Math.min(99, this.vidas + n);
-      else if (tipo === "moneda") { this.monedas += n; this.puntos(100 * n); }
+      else if (tipo === "moneda") { this.sumarMonedas(n); this.puntos(100 * n); }
       else this.reserva[tipo] = Math.min(9, this.reserva[tipo] + n);
     }
     this.guardarProgreso();
@@ -7645,17 +8030,18 @@ class Game {
   }
 
   salirSala() {
-    const { lvl: padre, tuberia: e } = this.secreta;
+    const { lvl: padre, tuberia: entrada } = this.secreta;
     const id = this.mundoIdx + ":" + this.nivelIdx;
-    // Premio: la primera vez que se sale de cada zona, +1 vida y puntos
+    // Premio: la primera vez que se sale de cada zona, puntos (la sala ya tiene sus monedas y su vida)
     if (!this.secretosHallados.has(id)) {
       this.secretosHallados.add(id);
-      this.vidas++;
       this.score += 1000;
-      this.sfx("vida");
     }
     this.secreta = null;
     this.lvl = padre;
+    // Se sale por la tubería de salida, más adelante en la fase; la entrada queda cerrada (sin flecha)
+    const e = padre.salidaSecreta || entrada;
+    padre.entradaSecreta = null;
     const p = padre.player;
     p.x = e.col * TILE + (2 * TILE - p.w) / 2;   // centrado sobre la boca (dos bloques)
     p.y = e.row * TILE + TILE - p.h;             // dentro del tubo: sale hacia arriba
@@ -8199,23 +8585,23 @@ function dibujarHUD(game) {
   const p = lvl.player;
   const poder = p.fire ? "FUEGO" : p.cape ? "CAPA" : p.big ? "GRANDE" : "PEQUENO";
   // Franja superior translúcida que se desvanece: da contraste al marcador sin tapar el escenario
-  const franja = ctx.createLinearGradient(0, 0, 0, 32);
+  const franja = ctx.createLinearGradient(0, 0, 0, 28);
   franja.addColorStop(0, "rgba(0,0,0,0.35)");
   franja.addColorStop(1, "rgba(0,0,0,0)");
   ctx.fillStyle = franja;
-  ctx.fillRect(0, 0, W, 32);
-  // Izquierda: jugador, vidas y monedas con icono
-  txtHud("BRO " + poder, 6, 6);
-  txtHud("X" + String(game.vidas).padStart(2, "0"), 22, 17);
-  drawSprite(Bloques.sprite("o0"), 4, 25);
-  txtHud("X" + String(game.monedas).padStart(3, "0"), 22, 30, PAL.y);
-  dibujarReserva(4, 42, game.reserva);   // potenciadores guardados (tecla Q)
-  // Centro: mundo y nivel
-  txtHud(game.lvl.castillo ? "CASTILLO " + MUNDOS[game.mundoIdx].id : "MUNDO " + MUNDOS[game.mundoIdx].id + "-" + (game.nivelIdx + 1), W / 2, 6, PAL.w, "center");
-  // Derecha: puntos y temporizador con icono de reloj
-  txtHud(String(game.score).padStart(8, "0"), W - 6, 6, PAL.w, "right");
-  drawSprite(getSprite("reloj", circuloRows(3, "c"), { c: PAL.w }), W - 42, 18);
-  txtHud(String(Math.ceil(lvl.tiempoRest)).padStart(3, "0"), W - 6, 17, PAL.w, "right");
+  ctx.fillRect(0, 0, W, 28);
+  // Dos líneas compactas: así lo alto de los muros y las tuberías elevadas queda a la vista.
+  // Primera línea: jugador con sus vidas y su poder, mundo y nivel, puntos
+  txtHud("BRO X" + String(game.vidas).padStart(2, "0"), 6, 5);
+  txtHud(poder, 40, 5, PAL.gr);
+  txtHud(game.lvl.castillo ? "CASTILLO " + MUNDOS[game.mundoIdx].id : "MUNDO " + MUNDOS[game.mundoIdx].id + "-" + (game.nivelIdx + 1), W / 2, 5, PAL.w, "center");
+  txtHud(String(game.score).padStart(8, "0"), W - 6, 5, PAL.w, "right");
+  // Segunda línea: monedas, potenciadores guardados (tecla Q) y temporizador con icono de reloj
+  drawSprite(Bloques.sprite("o0"), 2, 10);
+  txtHud("X" + String(game.monedas).padStart(2, "0"), 17, 15, PAL.y);
+  dibujarReserva(44, 12, game.reserva);
+  drawSprite(getSprite("reloj", circuloRows(3, "c"), { c: PAL.w }), W - 26, 15);
+  txtHud(String(Math.ceil(lvl.tiempoRest)).padStart(3, "0"), W - 6, 15, PAL.w, "right");
 }
 
 function dibujarNivelYHUD(game) {
@@ -8314,8 +8700,9 @@ function dibujarJuego(game) {
 /* =====================================================================
    18. BUCLE PRINCIPAL (requestAnimationFrame + delta time)
    ===================================================================== */
-// Zonas secretas: [mundo, fase, sala]. Esas fases tienen una tubería extra que lleva a una sala bajo tierra
-for (const [m, f, s] of [[0, 3, 0], [0, 5, 1], [2, 2, 0], [4, 2, 1]]) MUNDOS[m].niveles[f].secreta = s;
+// Zonas secretas: cada fase que no es castillo tiene una tubería que lleva a una sala bajo tierra
+// (las salas se reparten por turnos) y otra, más adelante, por la que se vuelve
+MUNDOS.forEach((m, mi) => m.niveles.forEach((nv, f) => { if (!nv.jefe) nv.secreta = (mi * 7 + f) % SALAS.length; }));
 // Fases de relieve suave (estilo Super Mario Bros. 3): dos por mundo, en lugar de las del generador normal
 for (const [m, f] of [[0, 1], [0, 2], [1, 0], [1, 6], [2, 0], [2, 1], [3, 0], [3, 4], [4, 0], [4, 3], [5, 0], [5, 2], [6, 0], [6, 3], [7, 0], [7, 1]]) MUNDOS[m].niveles[f].colinas = true;
 const game = new Game();
