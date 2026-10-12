@@ -7177,48 +7177,124 @@ addEventListener("keydown", () => { if (audioCtx && audioCtx.state === "suspende
 
 /* =====================================================================
    11b. MÚSICA DE FONDO
-   Tema propio generado con ondas, sin archivos. Sol mayor, 8 compases
-   en bucle a 150 BPM: melodía en cuadrada, bajo en triángulo y
-   percusión con ruido (bombo y charles). Se programa unas décimas por
-   delante del reloj de audio para que no cruja.
+   Temas propios generados con ondas, sin archivos: uno por mundo, otro
+   para las salas secretas, el jefe y la estrella. Cada tema es un bucle
+   de compases de 8 corcheas: melodía, bajo y percusión con ruido (bombo
+   y charles). Se programa unas décimas por delante del reloj de audio
+   para que no cruja, y al cambiar de tema se empieza por su primer paso.
    ===================================================================== */
-const MUSICA_BPM = 150;
-const MUSICA_LOOP = 64;     // corcheas por vuelta: 8 compases de 8
 const MUSICA_ADELANTO = 0.15;
-// Melodía: "nota:corcheas". Nota = letra, # opcional y octava (C4 = do central)
-const MELODIA = [
-  "G5:2", "E5:1", "G5:1", "A5:2", "G5:1", "E5:1",
-  "E5:2", "C5:1", "E5:1", "G5:2", "E5:1", "C5:1",
-  "F#5:1", "A5:1", "D6:2", "C6:1", "A5:1", "F#5:2",
-  "G5:1", "B5:1", "D6:2", "B5:1", "G5:1", "A5:2",
-  "E5:2", "G5:1", "B5:1", "E6:2", "D6:1", "B5:1",
-  "C6:2", "A5:1", "G5:1", "E5:2", "G5:2",
-  "F#5:1", "E5:1", "D5:1", "F#5:1", "A5:2", "F#5:2",
-  "G5:4", "D5:2", "G5:2"
-];
-// Raíz del bajo en cada compás (una raíz por compás, octava 2 o 3)
-const BAJO_COMPASES = ["G2", "C3", "D3", "G2", "E3", "C3", "D3", "G2"];
 const NOTAS_BASE = { C: 0, D: 2, E: 4, F: 5, G: 7, A: 9, B: 11 };
+
+/* Cada tema:
+     bpm, onda (de la melodía), vol (de la melodía), stac (fracción de la nota que suena: 0.5 = picado),
+     eco (repite cada nota tres corcheas después, más flojo), bateria ("normal", "suave", "marcha", "rapida" o "nada"),
+     melodia: "nota:corcheas" ("-" es silencio; nota = letra, # opcional y octava, C4 = do central),
+     bajo: una raíz por compás, ritmo: multiplicador de la raíz en cada corchea del compás (0 = silencio, 2 = octava) */
+const TEMAS = {
+  // Pradera (y título): Sol mayor, alegre
+  pradera: { bpm: 150, onda: "square", vol: 0.035, bateria: "normal", melodia: [
+    "G5:2", "E5:1", "G5:1", "A5:2", "G5:1", "E5:1",
+    "E5:2", "C5:1", "E5:1", "G5:2", "E5:1", "C5:1",
+    "F#5:1", "A5:1", "D6:2", "C6:1", "A5:1", "F#5:2",
+    "G5:1", "B5:1", "D6:2", "B5:1", "G5:1", "A5:2",
+    "E5:2", "G5:1", "B5:1", "E6:2", "D6:1", "B5:1",
+    "C6:2", "A5:1", "G5:1", "E5:2", "G5:2",
+    "F#5:1", "E5:1", "D5:1", "F#5:1", "A5:2", "F#5:2",
+    "G5:4", "D5:2", "G5:2",
+  ], bajo: ["G2", "C3", "D3", "G2", "E3", "C3", "D3", "G2"], ritmo: [1, 1, 2, 1, 1, 2, 1, 1] },
+  // Desierto: mi frigio dominante, con un bajo de habanera
+  desierto: { bpm: 132, onda: "square", vol: 0.032, bateria: "suave", melodia: [
+    "E5:2", "F5:1", "G#5:1", "A5:2", "G#5:1", "F5:1",
+    "E5:3", "F5:1", "E5:2", "D5:1", "C5:1",
+    "B4:2", "C5:1", "D5:1", "E5:2", "F5:1", "E5:1",
+    "D5:1", "C5:1", "B4:1", "C5:1", "E5:4",
+  ], bajo: ["E2", "F2", "D3", "E2"], ritmo: [1, 0, 0, 1, 1, 0, 1, 0] },
+  // Bosque: re dórico, tranquilo
+  bosque: { bpm: 116, onda: "triangle", vol: 0.09, bateria: "suave", melodia: [
+    "D5:2", "F5:2", "A5:3", "G5:1",
+    "F5:2", "E5:2", "D5:4",
+    "C5:2", "E5:2", "G5:3", "F5:1",
+    "E5:2", "C5:2", "D5:4",
+  ], bajo: ["D3", "A2", "C3", "D3"], ritmo: [1, 0, 2, 0, 1, 0, 2, 0] },
+  // Cueva: la menor, notas sueltas con eco
+  cueva: { bpm: 108, onda: "triangle", vol: 0.09, eco: true, bateria: "nada", melodia: [
+    "A4:2", "-:1", "C5:1", "E5:2", "-:2",
+    "D5:2", "-:1", "C5:1", "B4:4",
+    "A4:2", "-:1", "C5:1", "E5:2", "G5:2",
+    "F5:2", "E5:1", "D5:1", "E5:4",
+  ], bajo: ["A2", "D3", "A2", "E2"], ritmo: [1, 0, 0, 0, 2, 0, 0, 0] },
+  // Hielo: la mayor, campanitas agudas y picadas
+  hielo: { bpm: 138, onda: "triangle", vol: 0.08, stac: 0.5, bateria: "suave", melodia: [
+    "E6:1", "C#6:1", "A5:1", "C#6:1", "E6:2", "A6:2",
+    "F#6:1", "E6:1", "C#6:1", "B5:1", "C#6:4",
+    "D6:1", "B5:1", "G#5:1", "B5:1", "D6:2", "F#6:2",
+    "E6:1", "D6:1", "B5:1", "G#5:1", "A5:4",
+  ], bajo: ["A2", "F#2", "D3", "E2"], ritmo: [1, 0, 2, 0, 1, 0, 2, 0] },
+  // Agua: do mayor, ondulante
+  agua: { bpm: 120, onda: "triangle", vol: 0.085, bateria: "suave", melodia: [
+    "E5:3", "G5:1", "C6:2", "B5:2",
+    "A5:3", "G5:1", "E5:4",
+    "F5:3", "A5:1", "D6:2", "C6:2",
+    "B5:2", "G5:2", "C6:4",
+  ], bajo: ["C3", "A2", "F2", "G2"], ritmo: [1, 0, 0, 2, 1, 0, 0, 2] },
+  // Castillo: re menor armónica, marcha tensa
+  castillo: { bpm: 156, onda: "square", vol: 0.03, bateria: "marcha", melodia: [
+    "D5:1", "D5:1", "F5:1", "D5:1", "A5:2", "G5:2",
+    "F5:1", "E5:1", "D5:1", "C#5:1", "D5:4",
+    "A#4:1", "A#4:1", "D5:1", "A#4:1", "F5:2", "E5:2",
+    "D5:1", "C#5:1", "E5:1", "C#5:1", "A4:4",
+  ], bajo: ["D2", "D2", "A#1", "A1"], ritmo: [1, 1, 1, 1, 1, 1, 1, 1] },
+  // Cielo: fa mayor, brillante y rápido
+  cielo: { bpm: 168, onda: "square", vol: 0.033, bateria: "normal", melodia: [
+    "C6:1", "A5:1", "F5:1", "A5:1", "C6:2", "F6:2",
+    "E6:1", "D6:1", "C6:1", "A#5:1", "A5:4",
+    "G5:1", "A#5:1", "D6:1", "A#5:1", "G5:2", "C6:2",
+    "A5:1", "G5:1", "F5:1", "E5:1", "F5:4",
+  ], bajo: ["F2", "D3", "G2", "C3"], ritmo: [1, 1, 2, 1, 1, 2, 1, 1] },
+  // Salas secretas y casas de minijuegos: do menor, picado y con bajo saltarín
+  sala: { bpm: 140, onda: "square", vol: 0.032, stac: 0.5, bateria: "normal", melodia: [
+    "C5:1", "-:1", "D#5:1", "-:1", "G5:1", "F5:1", "D#5:1", "-:1",
+    "D5:1", "-:1", "F5:1", "-:1", "G#5:2", "G5:2",
+    "C5:1", "-:1", "D#5:1", "-:1", "G5:1", "A#5:1", "G5:1", "-:1",
+    "F5:1", "D#5:1", "D5:1", "A#4:1", "C5:4",
+  ], bajo: ["C2", "G#1", "C2", "G1"], ritmo: [1, 0, 2, 0, 1, 0, 2, 1] },
+  // Jefe: mi menor, cromático y rápido
+  jefe: { bpm: 176, onda: "square", vol: 0.032, bateria: "rapida", melodia: [
+    "E5:1", "G5:1", "E5:1", "A#5:1", "B5:2", "A#5:1", "G5:1",
+    "E5:1", "G5:1", "E5:1", "D5:1", "E5:4",
+    "E5:1", "G5:1", "E5:1", "A#5:1", "B5:2", "D6:1", "C#6:1",
+    "C6:1", "B5:1", "A#5:1", "G5:1", "E5:4",
+  ], bajo: ["E2", "C2", "E2", "B1"], ritmo: [1, 1, 2, 1, 1, 2, 1, 2] },
+  // Estrella: arpegios rápidos mientras se es invencible
+  estrella: { bpm: 190, onda: "square", vol: 0.032, bateria: "rapida", melodia: [
+    "G5:1", "C6:1", "E6:1", "G6:1", "E6:1", "C6:1", "G5:2",
+    "A5:1", "D6:1", "F6:1", "A6:1", "G6:1", "F6:1", "E6:2",
+  ], bajo: ["C3", "D3"], ritmo: [1, 2, 1, 2, 1, 2, 1, 2] },
+};
 
 function frecuencia(nombre) {   // "F#5" -> Hz (A4 = 440)
   const m = /^([A-G])(#?)(\d)$/.exec(nombre);
   const midi = (+m[3] + 1) * 12 + NOTAS_BASE[m[1]] + (m[2] ? 1 : 0);
   return 440 * Math.pow(2, (midi - 69) / 12);
 }
-// Pasos (corchea a corchea) de la melodía y del bajo, para consultarlos al programar
-const pasosMelodia = new Map();   // paso -> { f, d }
-const pasosBajo = new Map();      // paso -> frecuencia
+// Pasos (corchea a corchea) de la melodía y del bajo de cada tema, para consultarlos al programar
 (function prepararMusica() {
-  let p = 0;
-  for (const tok of MELODIA) {
-    const [n, d] = tok.split(":");
-    pasosMelodia.set(p, { f: frecuencia(n), d: +d });
-    p += +d;
+  for (const tema of Object.values(TEMAS)) {
+    tema.pasosMelodia = new Map();   // paso -> { f, d }
+    tema.pasosBajo = new Map();      // paso -> frecuencia
+    let p = 0;
+    for (const tok of tema.melodia) {
+      const [n, d] = tok.split(":");
+      if (n !== "-") tema.pasosMelodia.set(p, { f: frecuencia(n), d: +d });
+      p += +d;
+    }
+    tema.pasos = tema.bajo.length * 8;
+    tema.bajo.forEach((raiz, c) => {
+      const base = frecuencia(raiz);
+      tema.ritmo.forEach((mult, k) => { if (mult) tema.pasosBajo.set(c * 8 + k, base * mult); });
+    });
   }
-  BAJO_COMPASES.forEach((raiz, c) => {
-    const base = frecuencia(raiz);
-    [1, 1, 2, 1, 1, 2, 1, 1].forEach((mult, k) => pasosBajo.set(c * 8 + k, base * mult));
-  });
 })();
 
 let musicaGain = null;       // la música usa el mismo audioCtx que los efectos
@@ -7289,24 +7365,33 @@ function charles(t) {
   src.start(t); src.stop(t + 0.05);
   musicaNotas++;
 }
-function programarPaso(p, t, dur) {
-  const m = pasosMelodia.get(p);
-  if (m) nota(m.f, t, m.d * dur * 0.92, "square", 0.035);
-  const b = pasosBajo.get(p);
+function programarPaso(tema, p, t, dur) {
+  const m = tema.pasosMelodia.get(p);
+  if (m) {
+    nota(m.f, t, m.d * dur * (tema.stac || 0.92), tema.onda, tema.vol);
+    if (tema.eco) nota(m.f, t + 3 * dur, m.d * dur * 0.8, tema.onda, tema.vol * 0.35);
+  }
+  const b = tema.pasosBajo.get(p);
   if (b) nota(b, t, dur * 0.9, "triangle", 0.2);
-  if (p % 8 === 0 || p % 8 === 4) bombo(t);
-  if (p % 2 === 1) charles(t);
+  const k = p % 8;
+  switch (tema.bateria) {
+    case "normal": if (k === 0 || k === 4) bombo(t); if (k % 2 === 1) charles(t); break;
+    case "suave": if (k === 0) bombo(t); if (k === 4) charles(t); break;
+    case "marcha": if (k % 2 === 0) bombo(t); if (k % 2 === 1) charles(t); break;
+    case "rapida": if (k % 2 === 0) bombo(t); charles(t); break;
+  }
 }
 
-const musica = { activa: false, paso: 0, siguiente: 0, timer: null };
+const musica = { activa: false, tema: "pradera", paso: 0, siguiente: 0, timer: null };
 function planificar() {
-  const dur = 60 / MUSICA_BPM / 2;
+  const tema = TEMAS[musica.tema];
+  const dur = 60 / tema.bpm / 2;
   // Si la pestaña estuvo oculta, el reloj de audio ya pasó: no se programa en el pasado
   if (musica.siguiente < audioCtx.currentTime) musica.siguiente = audioCtx.currentTime + 0.05;
   while (musica.siguiente < audioCtx.currentTime + MUSICA_ADELANTO) {
-    programarPaso(musica.paso, musica.siguiente, dur);
+    programarPaso(tema, musica.paso, musica.siguiente, dur);
     musica.siguiente += dur;
-    musica.paso = (musica.paso + 1) % MUSICA_LOOP;
+    musica.paso = (musica.paso + 1) % tema.pasos;
   }
 }
 function musicaArrancar() {
@@ -7323,10 +7408,28 @@ function musicaParar() {
   musica.activa = false;
   clearInterval(musica.timer);
 }
-// Suena en el título, el mapa y el nivel; se calla en pausa, al final y si se apaga en ajustes
+// Tema que toca: el del mundo en el mapa y en sus fases; el de las salas secretas (también en las casas de
+// minijuegos), el del castillo en las fases con jefe (y el del jefe al llegar a su arena) y el de la estrella
+function temaDeseado() {
+  const e = game.estado;
+  if (e === "minijuego") return "sala";
+  if (e === "overworld" && game.ov) return game.ov.m.tema;
+  const lvl = game.lvl;
+  if (!lvl || !["nivel", "tuberia", "muerte", "nivelOK"].includes(e)) return "pradera";
+  if (lvl.esSala) return "sala";
+  if (lvl.player.star > 0) return "estrella";
+  if (lvl.boss) return lvl.bossRef && lvl.bossRef.alive && lvl.player.x > lvl.arenaX0 - W / 2 ? "jefe" : "castillo";
+  return TEMAS[lvl.temaKey] ? lvl.temaKey : "pradera";
+}
+
+// Suena en el título, el mapa y el nivel; se calla en pausa, al final y si se apaga en ajustes.
+// Al cambiar de tema, el nuevo empieza por el principio
 function musicaSegunEstado() {
   const callada = !ajustes.musica || game.estado === "pausa" || game.estado === "final";
-  if (callada) musicaParar(); else musicaArrancar();
+  if (callada) { musicaParar(); return; }
+  const tema = temaDeseado();
+  if (tema !== musica.tema) { musica.tema = tema; musica.paso = 0; }
+  musicaArrancar();
 }
 
 /* =====================================================================
