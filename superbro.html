@@ -4999,11 +4999,12 @@ const MECANICAS_MUNDO = {
       ["muelle", "puente", "pinchos", "plataforma_movil", "escalera"],
       ["muelle", "puente", "pinchos", "plataforma_movil", "escalera", "plataforma_caida"],
       ["muelle", "puente", "pinchos", "plataforma_movil", "escalera", "plataforma_caida", "canon"]],
-  2: [[], ["muelle"], ["muelle", "pinchos"], ["muelle", "pinchos", "plataforma_caida"],
-      ["muelle", "pinchos", "plataforma_caida", "escalera"],
-      ["muelle", "pinchos", "plataforma_caida", "escalera", "plataforma_movil"],
-      ["muelle", "pinchos", "plataforma_caida", "escalera", "plataforma_movil", "una_direccion"],
-      ["muelle", "pinchos", "plataforma_caida", "escalera", "plataforma_movil", "una_direccion", "canon"]],
+  // El desierto presenta las arenas movedizas en su primera fase y las repite en todas
+  2: [["arena"], ["arena", "muelle"], ["arena", "muelle", "pinchos"], ["arena", "muelle", "pinchos", "plataforma_caida"],
+      ["arena", "muelle", "pinchos", "plataforma_caida", "escalera"],
+      ["arena", "muelle", "pinchos", "plataforma_caida", "escalera", "plataforma_movil"],
+      ["arena", "muelle", "pinchos", "plataforma_caida", "escalera", "plataforma_movil", "una_direccion"],
+      ["arena", "muelle", "pinchos", "plataforma_caida", "escalera", "plataforma_movil", "una_direccion", "canon"]],
   3: [[], ["muelle"], ["muelle", "una_direccion"], ["muelle", "una_direccion", "puente"],
       ["muelle", "una_direccion", "puente", "escalera"],
       ["muelle", "una_direccion", "puente", "escalera", "plataforma_movil"],
@@ -5262,7 +5263,8 @@ const DECOR_DE_TEMA = {
    Devuelve { cols, rows, tiles[][], ents[], plats[], decor[], canones[], start, goalX, ... }
    Tiles: "." vacío, "G" suelo, "B" ladrillo, "Q" bloque ?, "U" bloque usado, "S" piedra,
           "T" tubería, "F" poste de meta, "M" muelle, "H" pinchos, "V" lava, "L" escalera,
-          "D" plataforma de una dirección, "Z" bloque oculto (invisible hasta golpearlo desde abajo).
+          "D" plataforma de una dirección, "Z" bloque oculto (invisible hasta golpearlo desde abajo),
+          "Y" arena movediza (no es sólida: el jugador se hunde despacio y, si se hunde del todo, muere).
    Plataformas (plats): "movil" (va y viene, en horizontal o en vertical) y "caida" (se cae al pisarla).
    ===================================================================== */
 const ROWS = 14;           // 14 tiles * 16px = 224px de alto
@@ -5311,6 +5313,7 @@ function gridVacia(cols) {
      _  plataforma que cae (cada tramo seguido es una plataforma)
    En las piezas, la última fila es la del suelo y se extiende hacia abajo:
      G suelo · S columna de piedra · h hoyo con pinchos · v lava · w puente de madera · "." hueco sin fondo
+     y arenas movedizas (tres bloques de hondo)
      (con la mecánica "lava", los huecos sin fondo también son lava)
    --------------------------------------------------------------------- */
 
@@ -5539,6 +5542,24 @@ const PIEZAS = [
     "...M........",
     "GGGG.....GGG",
   ] },
+  // Arenas movedizas: se cruzan de un salto; quien cae dentro se hunde despacio y puede salir a saltitos
+  { id: "arenas", tipo: "reto", req: "arena", mapa: [
+    "...cccc...",
+    "..c....c..",
+    "..........",
+    "..........",
+    "..........",
+    "GGyyyyyyGG",
+  ] },
+  // Arenas movedizas largas con dos postes de piedra para ir saltando de uno a otro
+  { id: "arenas_postes", tipo: "reto", req: "arena", min: 3, mapa: [
+    ".......g.......",
+    "...............",
+    "...c...cc...c..",
+    "...............",
+    ".....S....S....",
+    "GGyyySyyyySyyGG",
+  ] },
   // Columnas de piedra en un lago de lava
   { id: "lava", tipo: "reto", req: "lava", mapa: [
     "........g.........",
@@ -5681,6 +5702,7 @@ function ponerSuelo(N, ch, c) {
     let t = ".";
     if (ch === "G" || ch === "S") t = ch;
     else if (ch === "v") t = r === GY ? "." : "V";                         // lava un bloque por debajo del suelo
+    else if (ch === "y") t = "Y";                                           // arenas movedizas
     else if (ch === "h") t = r === GY ? "." : r === GY + 1 ? "H" : "G";   // hoyo de un bloque con pinchos al fondo
     N.tiles[r][c] = t;
   }
@@ -6417,7 +6439,19 @@ const PHYS = {
   shellSpeed: 230,
   climbV: 110,    // velocidad al trepar por una escalera
   springV: 500,   // impulso de un muelle: unos 8 bloques de altura, con o sin mantener salto
+  hieloAccel: 0.35, hieloFriccion: 0.28,   // en el hielo se arranca y se frena con mucha menos fuerza
+  hundir: 9,      // velocidad a la que se hunde en las arenas movedizas (px/s)
+  arenaMax: 40,   // velocidad máxima andando por las arenas movedizas
+  arenaSalto: 0.8,   // fuerza del salto desde las arenas movedizas
 };
+
+// ¿La caja toca alguna casilla del tipo dado?
+function tocaTipo(lvl, p, tipo) {
+  const c0 = Math.floor(p.x / TILE), c1 = Math.floor((p.x + p.w - 0.01) / TILE);
+  const r0 = Math.floor(p.y / TILE), r1 = Math.floor((p.y + p.h - 0.01) / TILE);
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) if (tileAt(lvl, c, r) === tipo) return true;
+  return false;
+}
 
 class Player {
   constructor(x, y) {
@@ -6487,22 +6521,30 @@ class Player {
     if (this.frenadoT > 0) this.frenadoT -= dt;
     this.duck = held.down && this.onGround && this.big;
 
+    // Suelo helado (mundo del hielo): se arranca y se frena con poca fuerza. Arenas movedizas: se anda despacio
+    const hielo = this.onGround && lvl.resbala;
+    this.enArena = tocaTipo(lvl, this, "Y");
+
     // --- Movimiento horizontal ---
     const dir = (der ? 1 : 0) - (izq ? 1 : 0);
-    const maxV = corre ? PHYS.maxRun : PHYS.maxWalk;
-    const acc = this.onGround ? (corre ? PHYS.runAccel : PHYS.walkAccel) : PHYS.airAccel;
+    const maxV = this.enArena ? PHYS.arenaMax : corre ? PHYS.maxRun : PHYS.maxWalk;
+    const acc = this.onGround ? (corre ? PHYS.runAccel : PHYS.walkAccel) * (hielo ? PHYS.hieloAccel : 1) : PHYS.airAccel;
     if (dir !== 0 && !this.duck) {
       this.facing = dir;
       if (Math.abs(this.vx) < maxV || Math.sign(this.vx) !== dir) this.vx += dir * acc * dt;
       if (Math.abs(this.vx) > maxV) this.vx = Math.sign(this.vx) * Math.max(maxV, Math.abs(this.vx) - 400 * dt);
     } else {
-      // Fricción: frena suavemente al soltar la dirección
-      const f = PHYS.friction * dt;
+      // Fricción: frena suavemente al soltar la dirección (en el hielo, casi nada: se patina)
+      const f = PHYS.friction * (hielo ? PHYS.hieloFriccion : 1) * dt;
       if (Math.abs(this.vx) <= f) this.vx = 0;
       else this.vx -= Math.sign(this.vx) * f;
     }
     // Durante el derrape se frena más fuerte
-    if (this.frenadoT > 0 && this.onGround) this.vx -= Math.sign(this.vx) * PHYS.friction * 1.6 * dt;
+    if (this.frenadoT > 0 && this.onGround) this.vx -= Math.sign(this.vx) * PHYS.friction * (hielo ? 0.3 : 1.6) * dt;
+    // Al patinar sobre el hielo saltan cristalitos
+    if (hielo && dir !== Math.sign(this.vx) && Math.abs(this.vx) > 50 && Math.random() < 0.3) {
+      emitir(this.x + this.w / 2, this.y + this.h, 1, ["#e0f4ff", "#ffffff"], { up: 30, spread: 40, life: 0.3, size: 1 });
+    }
     if (this.duck) this.vx = 0;
 
     // --- Escaleras: con arriba o abajo se trepa; saltar suelta la escalera ---
@@ -6520,7 +6562,7 @@ class Player {
     this.coyoteT = this.onGround ? PHYS.coyote : this.coyoteT - dt;
 
     if (this.bufferT > 0 && this.coyoteT > 0 && !this.duck) {
-      this.vy = -PHYS.jumpV - Math.abs(this.vx) * 0.25;
+      this.vy = (-PHYS.jumpV - Math.abs(this.vx) * 0.25) * (this.enArena ? PHYS.arenaSalto : 1);
       this.bufferT = 0; this.coyoteT = 0;
       this.jumping = true;
       this.onGround = false;
@@ -6552,6 +6594,8 @@ class Player {
     if (this.vy >= 0) this.jumping = false;
     if (!held.jump && this.vy < -120 && !this.rebotando) this.vy = -120; // corta el salto al soltar
 
+    // Arenas movedizas: al caer se hunde despacio en vez de caer
+    if (this.enArena && this.vy > 0) this.vy = PHYS.hundir;
     // Punto más alto del salto o de la caída (para saber desde cuánto se cae)
     if (this.vy <= 0 || this.onGround || this.apice === undefined) this.apice = this.y;
     // --- Colisiones ---
@@ -6566,6 +6610,11 @@ class Player {
     // Plataformas de una dirección: solo paran al caer desde arriba
     if (!r.suelo && this.vy >= 0 && aterrizaEnDireccional(lvl, this, this.prevBottom)) { r.suelo = true; this.vy = 0; }
     this.onGround = r.suelo;
+    // En las arenas movedizas se puede saltar (cuenta como suelo); con la cabeza ya dentro, se ahoga
+    if (tocaTipo(lvl, this, "Y") && this.vy >= 0) {
+      this.onGround = true;
+      if (tileAt(lvl, Math.floor((this.x + this.w / 2) / TILE), Math.floor((this.y + 3) / TILE)) === "Y") this.dead = true;
+    }
     if (r.suelo || this.vy >= 0) this.rebotando = false;
     // Muelle: al pisarlo, salta muy alto
     if (r.suelo && vyAntes >= 0 && bajoPies(lvl, this, "M")) {
@@ -7425,6 +7474,7 @@ class Level {
       this.tinte = TINTE_SALA[origen.tema] || null;
     }
     this.golpes = new Map();   // "col,fila" -> tiempo que le queda al saltito de un bloque golpeado
+    this.resbala = this.terreno === "I";   // el suelo de hielo resbala (mundo del hielo y sus salas)
     this.coins = [];
     this.items = [];
     this.qItems = new Map();   // "col,fila" -> objeto del bloque ? (o del bloque oculto)
@@ -7701,6 +7751,7 @@ class Level {
         const x = c * TILE - cam.x;
         let y = r * TILE - cam.y;
         if (t === "Z") { this.brilloOculto(x, y, c, r); continue; }   // el bloque oculto no se ve: como mucho, un destello
+        if (t === "Y") continue;   // las arenas movedizas se dibujan después del jugador, que se hunde en ellas
         const g = this.golpes.get(c + "," + r);
         if (g) y -= Math.round(Math.sin((1 - g / 0.16) * Math.PI) * 4);   // saltito del bloque golpeado
         this.dibujarTile(t, x, y, c, r);
@@ -7747,6 +7798,7 @@ class Level {
     this.dibujarBolas(cam);
     this.dibujarCanones(cam);
     this.dibujarJugador(game, cam);
+    this.dibujarArenas(cam);
     dibujarParticulas(cam);
     for (const tx of this.textos) {
       ctx.globalAlpha = Math.min(1, tx.t * 2);
@@ -7860,6 +7912,22 @@ class Level {
       rect(lx, y + 2, 1, largo, "#2f7d32");
       rect(lx - 1, y + 5, 2, 2, "#4caf50");
       rect(lx, y + 2 + largo - 2, 2, 2, "#4caf50");
+    }
+  }
+
+  // Arenas movedizas: arena más oscura que el suelo, con ondas que giran despacio; tapan la parte hundida del jugador
+  dibujarArenas(cam) {
+    const c0 = Math.max(0, Math.floor(cam.x / TILE)), c1 = Math.min(this.cols - 1, Math.floor((cam.x + W) / TILE) + 1);
+    const t = performance.now() / 1000;
+    for (let r = GY; r < this.rows; r++) for (let c = c0; c <= c1; c++) {
+      if (this.tiles[r][c] !== "Y") continue;
+      const x = c * TILE - cam.x, y = r * TILE - cam.y;
+      rect(x, y, TILE, TILE, r === GY ? "#c98a3e" : "#b07430");
+      for (let k = 0; k < 3; k++) {
+        const ox = (c * 5 + k * 6 + Math.floor(t * 5 * (k % 2 ? 1 : -1) + 100)) % 13;
+        rect(x + ox, y + 3 + k * 5, 3, 1, "rgba(255,226,160,0.55)");
+      }
+      if (this.tiles[r - 1][c] !== "Y") rect(x, y, TILE, 2, "#e3a958");
     }
   }
 
