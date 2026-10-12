@@ -6074,6 +6074,133 @@ function generarNivel(gen, mecanicas = []) {
   };
 }
 
+/* Torres: niveles más altos que la pantalla (más de 14 filas). Una cadena de plataformas lleva de la base a la
+   cima (o al revés, si es de bajada): cada escalón sube o baja 3 ó 4 filas, y 5 a 7 con un muelle al pie.
+   Los pasos entre plataformas tienen como mucho 3 bloques de hueco. La cámara sigue al jugador en vertical. */
+function generarTorre(gen, mecanicas = []) {
+  const rnd = prng(gen.seed);
+  const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+  const dif = clamp(gen.dif || 1, 1, 8);
+  const cols = 24, rows = gen.alto || 42, bajada = !!gen.bajada;
+  const tipos = gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"];
+  const N = nuevoNivel(cols, rnd, dif, tipos, rows, rows - 3);
+  N.candidatas = []; N.reserva = [];
+  const gy = N.gy;
+  const ocupada = new Set();
+  const marcar = (c, r) => ocupada.add(c + "," + r);
+  const libre = (c, r) => c > 0 && c < cols - 1 && r > 0 && r < rows && !ocupada.has(c + "," + r) && N.tiles[r][c] === ".";
+  // Paredes y techo. La base (de la fila gy hacia abajo) no tiene huecos: no se cae de la torre
+  for (let r = 0; r < rows; r++) { N.tiles[r][0] = "S"; N.tiles[r][cols - 1] = "S"; }
+  for (let c = 1; c < cols - 1; c++) { N.tiles[0][c] = "S"; for (let r = gy; r < rows; r++) N.tiles[r][c] = "G"; }
+  // El muelle lanza hacia arriba: solo se usa al subir. Las plataformas de una dirección salen con su mecánica
+  const muelles = mecanicas.includes("muelle") && !bajada, unaDir = mecanicas.includes("una_direccion");
+  // Cadena de escalones desde la base hasta la fila 6, que es la cima
+  const cadena = [{ c0: 1, c1: cols - 2, r: gy, tipo: "G" }];
+  const sitiosPara = (a, w, grande, primero) => {
+    const out = [];
+    for (let c0 = 1; c0 + w - 1 <= cols - 2; c0++) {
+      const c1 = c0 + w - 1;
+      if (primero) {
+        // Sobre la base (suelo entero): la primera plataforma deja libre una columna junto a cada pared
+        if (c0 < 2 || c1 > cols - 3) continue;
+        if (bajada && c1 > cols - 5) continue;                                   // en una bajada, el poste de meta está abajo a la derecha
+      } else {
+        const hueco = Math.max(a.c0 - c1 - 1, c0 - a.c1 - 1);
+        if (hueco < 1 || hueco > 3) continue;                                    // un salto de lado: hueco de 1 a 3 bloques, sin solaparse
+      }
+      if (grande && Math.max(a.c0 + 1, c0 - 2) > Math.min(a.c1 - 1, c1 + 2)) continue;   // el muelle llega a la de arriba
+      out.push(c0);
+    }
+    return out;
+  };
+  while (cadena[cadena.length - 1].r > 6) {
+    const a = cadena[cadena.length - 1], primero = cadena.length === 1;
+    const w = ri(3, 5);
+    let grande = muelles && rnd() < 0.25 + dif * 0.05;
+    let sitios = sitiosPara(a, w, grande, primero);
+    if (!sitios.length) { grande = false; sitios = sitiosPara(a, w, false, primero); }
+    const dy = Math.min(a.r - 6, grande ? ri(5, 7) : ri(3, 4));
+    const r = a.r - dy;
+    const c0 = sitios[Math.floor(rnd() * sitios.length)], c1 = c0 + w - 1;
+    const u = rnd();
+    const tipo = unaDir && u < 0.2 ? "D" : u < 0.5 ? "B" : "G";
+    if (grande) {
+      // El muelle va sobre la plataforma de abajo, en una casilla desde la que se alcanza la de arriba
+      const cm = ri(Math.max(a.c0 + 1, c0 - 2), Math.min(a.c1 - 1, c1 + 2));
+      N.tiles[a.r - 1][cm] = "M"; marcar(cm, a.r - 1);
+    }
+    for (let c = c0; c <= c1; c++) N.tiles[r][c] = tipo;
+    cadena.push({ c0, c1, r, tipo });
+  }
+  const n = cadena.length, top = cadena[n - 1];
+  // Poste de meta: en la cima (al subir) o abajo a la derecha (al bajar)
+  const meta = bajada ? { c: cols - 3, r: gy } : { c: top.c1, r: top.r };
+  for (let r = meta.r - 4; r < meta.r; r++) { N.tiles[r][meta.c] = "F"; marcar(meta.c, r); }
+  // Tuberías de la zona secreta: la boca va antes que la salida (al bajar, al revés)
+  const tuberia = (i0) => {
+    for (const i of [i0, i0 + 1, i0 - 1, i0 + 2, i0 - 2]) {
+      const p = cadena[i];
+      if (!p || i === 0 || i === n - 1) continue;
+      // Primero el lado del escalón contrario al de arriba: el salto hacia el siguiente escalón no pasa por encima
+      const arriba = cadena[i + 1], izquierda = !arriba || arriba.c0 > p.c0;
+      const sitios = [];
+      for (let c = p.c0; c + 1 <= p.c1; c++) sitios.push(c);
+      sitios.sort((a, b) => (izquierda ? a - b : b - a));
+      for (const c of sitios) {
+        // Dos bloques de tubo sobre la plataforma, y libre la casilla donde se para el jugador encima
+        const cuerpo = [[c, p.r - 1], [c + 1, p.r - 1], [c, p.r - 2], [c + 1, p.r - 2]];
+        if (![...cuerpo, [c, p.r - 3], [c + 1, p.r - 3]].every(([x, y]) => libre(x, y))) continue;
+        // Y sin nada encima en cuatro filas: un escalón de arriba taparía el salto hasta la boca
+        let despejado = true;
+        for (let x = c - 1; x <= c + 2; x++) for (let y = p.r - 7; y <= p.r - 4; y++) {
+          if (x >= 1 && x <= cols - 2 && y >= 1 && N.tiles[y][x] !== ".") despejado = false;
+        }
+        if (!despejado) continue;
+        cuerpo.forEach(([x, y]) => { N.tiles[y][x] = "T"; marcar(x, y); });
+        return { col: c, row: p.r - 2 };
+      }
+    }
+    return null;
+  };
+  if (gen.secreta !== undefined) {
+    const iE = bajada ? Math.min(n - 2, Math.floor(n * 0.65)) : Math.max(2, Math.floor(n * 0.35));
+    N.entrada = tuberia(iE);
+    N.salida = tuberia(bajada ? Math.max(1, iE - 2) : Math.min(n - 2, iE + 2));
+  }
+  // Monedas estrella (sobre las plataformas), monedas sueltas y enemigos. Sin bloques ?: en el aire taparían saltos
+  for (const p of cadena.slice(1)) for (let c = p.c0; c <= p.c1; c++) if (c !== meta.c && libre(c, p.r - 1)) N.candidatas.push({ c, r: p.r - 1 });
+  for (const p of cadena.slice(1)) {
+    for (let c = p.c0; c <= p.c1; c++) if (c !== meta.c && libre(c, p.r - 1) && rnd() < 0.5) N.ents.push({ t: "coin", x: c * TILE + 4, y: (p.r - 1) * TILE + 4 });
+  }
+  for (let i = 1; i < n; i++) {   // monedas en el aire, en el paso de cada escalón
+    const a = cadena[i - 1], b = cadena[i];
+    const mc = Math.round((Math.max(a.c0, b.c0) + Math.min(a.c1, b.c1)) / 2), fila = Math.round((a.r + b.r) / 2) - 1;
+    if (libre(mc, fila) && rnd() < 0.6) N.ents.push({ t: "coin", x: mc * TILE + 4, y: fila * TILE + 4 });
+  }
+  for (const p of cadena.slice(2, n - 1)) {
+    if (rnd() > 0.3 + dif * 0.06) continue;
+    const c = ri(p.c0 + 1, Math.max(p.c0 + 1, p.c1 - 1));
+    if (libre(c, p.r - 1)) ponerEnemigo(N, c, p.r - 1, false);
+    if (N.voladores.length && dif >= 3 && rnd() < 0.2 && libre(c, p.r - 4)) ponerEnemigo(N, c, p.r - 4, true);
+  }
+  // Inicio y punto de control (en la plataforma del medio)
+  const start = bajada ? { x: (top.c0 + 1) * TILE, y: (top.r - 2) * TILE } : { x: 3 * TILE, y: (gy - 2) * TILE };
+  const mitad = cadena[Math.max(1, Math.floor(n / 2))];
+  decorarSuelo(N, gen.theme, 2, cols - 2);
+  ponerGrandes(N, rnd);
+  return {
+    cols, rows, gy, sueloMeta: meta.r * TILE, tiles: N.tiles,
+    // Sin enemigos ni monedas sueltas junto al inicio: el jugador aparece sobre el suelo libre
+    ents: N.ents.filter((e) => !(Math.abs(e.x - start.x) < 4 * TILE && Math.abs(e.y - start.y) < 3 * TILE)),
+    plats: [], decor: N.decor, canones: [], start, goalX: meta.c * TILE,
+    theme: gen.theme || null, boss: false, arenaX0: 0,
+    entradaSecreta: N.entrada ? Object.assign({ sala: gen.secreta }, N.entrada) : null,
+    salidaSecreta: N.salida || null,
+    control: { x: (mitad.c0 + 1) * TILE, pie: mitad.r * TILE },
+    fuentes: [], agua: false,
+  };
+}
+
 /* Convierte un mapa escrito a mano (array de strings de 14 filas, leyenda de las piezas) en un nivel */
 function parsearMapa(strs, gen = {}) {
   const cols = Math.max(...strs.map((f) => f.length));
@@ -6400,9 +6527,10 @@ function construirNivel(def, tema) {
   // Los niveles de castillo no llevan decoración de su mundo (usan su propio escenario)
   const gen = Object.assign({ theme: def.castillo ? "castillo" : tema }, def.gen, {
     jefe: def.jefe, secreta: def.secreta, avance: !!def.avance, nubarron: !!def.nubarron, peces: tema === "agua" || !!def.peces,
-    agua: !!def.agua,
+    agua: !!def.agua, alto: def.alto, bajada: !!def.bajada,
   });
-  const lv = def.mapa ? parsearMapa(def.mapa, gen) : def.colinas ? generarColinas(gen) : generarNivel(gen, def.mecanicas || []);
+  const lv = def.mapa ? parsearMapa(def.mapa, gen) : def.torre ? generarTorre(gen, def.mecanicas || [])
+    : def.colinas ? generarColinas(gen) : generarNivel(gen, def.mecanicas || []);
   lv.nombre = def.nombre;
   lv.tiempo = def.tiempo || 300;
   if (def.sala) lv.goalX = 1e9;                       // las salas secretas no tienen meta: se sale por su tubería
@@ -8012,8 +8140,9 @@ class Level {
     if (this.avance) this.cam.y = 0;
     else this.cam.seguir(p, this, dt);
 
-    // Punto de control: se activa al pasar junto al banderín (también al salir de la zona secreta por delante)
-    if (this.control && !this.controlActivo && p.x + p.w / 2 >= this.control.x + 8) {
+    // Punto de control: se activa al pasar junto al banderín (también al salir de la zona secreta por delante).
+    // En una torre, solo al pasar por su plataforma: por la misma columna, más abajo, no cuenta
+    if (this.control && !this.controlActivo && p.x + p.w / 2 >= this.control.x + 8 && (!this.vertical || Math.abs(p.y + p.h - this.control.pie) < 2 * TILE)) {
       this.controlActivo = true;
       game.activarControl(this);
     }
@@ -9666,6 +9795,14 @@ for (const [m, f] of [[0, 4], [7, 2], [7, 5], [7, 6]]) MUNDOS[m].niveles[f].nuba
 for (const [m, f] of [[2, 3]]) MUNDOS[m].niveles[f].peces = true;
 // Fases submarinas (se nada): el arrecife del mundo del agua y el lago de la cueva
 for (const [m, f] of [[5, 4], [3, 3]]) MUNDOS[m].niveles[f].agua = true;
+// Torres (niveles más altos que la pantalla, desde el mundo 3): [mundo, fase, bajada, semilla]. Sube por defecto;
+// 3-3 y 7-5 son de bajada, que empieza arriba y termina en el poste del suelo. Las semillas son de las que
+// pasan el verificador de recorrido: llegar a la meta y a las dos tuberías, y alcanzar todas las monedas,
+// monedas estrella y bloques
+for (const [m, f, bajada, semilla] of [[2, 2, true, 5022], [3, 1, false, 6031], [4, 2, false, 13042], [5, 6, false, 30056], [6, 4, true, 16064], [7, 4, false, 12074]]) {
+  Object.assign(MUNDOS[m].niveles[f], { torre: true, bajada, alto: 42 });
+  MUNDOS[m].niveles[f].gen.seed = semilla;
+}
 const game = new Game();
 KEYMAP.Backspace = "reset";  // para borrar el progreso desde el título
 
