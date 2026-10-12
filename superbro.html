@@ -6387,9 +6387,15 @@ function generarColinas(gen) {
   };
   // Zona secreta: la entrada hacia un tercio del nivel y la salida más adelante, sobre suelo llano
   const ocupado = new Set();   // columnas de las tuberías: sin bloques ni enemigos encima
-  const tuberia = (desde, hasta, marca) => {
+  const tuberia = (desde, hasta, marca, alisar = false) => {
     for (let x = desde; x < hasta; x++) {
-      if (!llano(x - 1, x + 2) || hoyoCerca(x, x + 1)) continue;
+      if (hoyoCerca(x, x + 1)) continue;
+      if (!llano(x - 1, x + 2)) {
+        // Sin tramo llano, con alisar: un trozo casi llano (2 px de desnivel como mucho) se iguala bajo la tubería
+        const s = Math.round(hm[x] / TILE) * TILE;
+        if (!alisar || !isFinite(hm[x]) || ![-1, 0, 1, 2, 3].every((k) => isFinite(hm[x + k]) && Math.abs(hm[x + k] - s) <= 2)) continue;
+        for (let k = x - 1; k <= x + 3; k++) hm[k] = s;
+      }
       const r = hm[x] / TILE - 2;
       ponerCelda(N, marca, x, r); ponerCelda(N, "T", x + 1, r);
       ponerCelda(N, "T", x, r + 1); ponerCelda(N, "T", x + 1, r + 1);
@@ -6399,7 +6405,9 @@ function generarColinas(gen) {
     return false;
   };
   if (gen.secreta !== undefined && tuberia(Math.floor(META * 0.3), Math.floor(META * 0.55), "X")) {
-    if (!tuberia(Math.floor(META * 0.65), META - 14, "R")) tuberia(Math.floor(META * 0.58), META - 5, "R");
+    if (!tuberia(Math.floor(META * 0.65), META - 14, "R") && !tuberia(Math.floor(META * 0.58), META - 5, "R")) {
+      tuberia(Math.floor(META * 0.58), META - 5, "R", true);   // sin tramo llano en todo el nivel, la salida va sobre un trozo casi llano
+    }
   }
   // Monedas: guías sobre los huecos (tres bloques por encima del borde más alto) y arcos sobre las colinas
   const bordeHueco = (x) => {
