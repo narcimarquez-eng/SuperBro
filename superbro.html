@@ -2041,6 +2041,80 @@ function consume(action) {
     rr(g, 0, 0, 16, 16, 2); trazar(g, OUT, 0.9);
   }
   Object.assign(DIBUJOS, { 'vg=': dibujarLadrilloVG, 'vg?': dibujarPreguntaVG });
+
+  // Dalí: bloque de arena blanda con goterones de sombra violeta en el borde
+  function dibujarLadrilloDL(g) {
+    g.fillStyle = grad(g, 0, 0, 0, 16, ['#ffe9c4', '#e9b98a', '#b4764c']);
+    rr(g, 0, 0, 16, 16, 2); g.fill();
+    g.fillStyle = '#7a5a9a'; g.globalAlpha = 0.45;
+    g.beginPath(); g.ellipse(5, 14.5, 1.5, 2.6, 0, 0, Math.PI * 2); g.fill();
+    g.beginPath(); g.ellipse(12, 15, 1.1, 2, 0, 0, Math.PI * 2); g.fill();
+    g.globalAlpha = 1;
+    brillo(g, 6, 2.5, 4.5, 1, 0.4);
+    rr(g, 0, 0, 16, 16, 2); trazar(g, OUT, 0.9);
+  }
+
+  // Dalí: la interrogación es la carátula de un reloj de bolsillo
+  function dibujarPreguntaDL(g) {
+    g.fillStyle = grad(g, 0, 0, 0, 16, ['#fffdf5', '#f0e6c8', '#c8b68c']);
+    rr(g, 0, 0, 16, 16, 2); g.fill();
+    g.strokeStyle = '#2a4a8a'; g.lineWidth = 1.2;
+    g.beginPath(); g.arc(8, 8, 5, 0, Math.PI * 2); g.stroke();
+    g.fillStyle = '#2a4a8a'; g.font = 'bold 7px monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('?', 8, 8.6);
+    rr(g, 0, 0, 16, 16, 2); trazar(g, OUT, 0.9);
+  }
+
+  // Miró: bloque blanco de trazo negro con un punto rojo, un cuadrado azul y un círculo amarillo
+  function dibujarLadrilloMI(g) {
+    g.fillStyle = '#fbf6ea';
+    rr(g, 0, 0, 16, 16, 2); g.fill();
+    g.fillStyle = '#d8322b'; g.beginPath(); g.arc(5, 5, 2.4, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#2f58b8'; g.fillRect(9, 9, 5, 5);
+    g.fillStyle = '#ffc21a'; g.beginPath(); g.arc(12, 4, 1.6, 0, Math.PI * 2); g.fill();
+    g.strokeStyle = '#1a1a1a'; g.lineWidth = 1.4; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(1, 13); g.quadraticCurveTo(6, 9, 8, 15); g.stroke();
+    rr(g, 0, 0, 16, 16, 2); trazar(g, OUT, 1);
+  }
+
+  // Miró: interrogación roja con un disco blanco y el signo negro
+  function dibujarPreguntaMI(g) {
+    g.fillStyle = '#d8322b';
+    rr(g, 0, 0, 16, 16, 2); g.fill();
+    g.fillStyle = '#fbf6ea'; g.beginPath(); g.arc(8, 8, 4.4, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#1a1a1a'; g.font = 'bold 7px monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('?', 8, 8.6);
+    rr(g, 0, 0, 16, 16, 2); trazar(g, OUT, 1);
+  }
+
+  // Gaudí: trencadís, azulejos rotos de colores sobre una junta de cemento
+  function dibujarLadrilloGA(g) {
+    g.fillStyle = '#7a7470';
+    rr(g, 0, 0, 16, 16, 2); g.fill();
+    const piezas = [[1, 1, 6, 6, '#2f9fc8'], [8, 1, 7, 6, '#ffd27a'], [1, 8, 6, 7, '#ec6a4a'], [8, 8, 7, 7, '#3fa36b']];
+    for (const [x, y, w, h, col] of piezas) {
+      g.fillStyle = col; g.fillRect(x, y, w, h);
+      g.fillStyle = 'rgba(255,255,255,0.4)'; g.fillRect(x, y, w, 1);
+    }
+    rr(g, 0, 0, 16, 16, 2); trazar(g, OUT, 0.9);
+  }
+
+  // Gaudí: la interrogación es un disco azul de mosaico con el signo en blanco
+  function dibujarPreguntaGA(g) {
+    g.fillStyle = '#ffd27a';
+    rr(g, 0, 0, 16, 16, 2); g.fill();
+    g.fillStyle = '#ec6a4a'; g.fillRect(1, 1, 5, 5);
+    g.fillStyle = '#3fa36b'; g.fillRect(10, 10, 5, 5);
+    g.fillStyle = '#2f58b8'; g.beginPath(); g.arc(8, 8, 4.4, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#ffffff'; g.font = 'bold 6px monospace'; g.textAlign = 'center'; g.textBaseline = 'middle';
+    g.fillText('?', 8, 8.4);
+    rr(g, 0, 0, 16, 16, 2); trazar(g, OUT, 0.9);
+  }
+  Object.assign(DIBUJOS, {
+    'dl=': dibujarLadrilloDL, 'dl?': dibujarPreguntaDL,
+    'mi=': dibujarLadrilloMI, 'mi?': dibujarPreguntaMI,
+    'ga=': dibujarLadrilloGA, 'ga?': dibujarPreguntaGA,
+  });
   Object.assign(DIBUJOS, DECOR);
 
   // Clave de sprite: 'o0'..'o7' para monedas; 'T|1010' para terrenos (T = tipo; cada cifra: 1 = lado al aire,
@@ -2747,7 +2821,14 @@ function consume(action) {
     cuervo:         { w: 20, h: 12, vel: 58, pisable: false, vuela: true },
     girasol:        { w: 18, h: 40, vel: 0,  pisable: false, planta: true },
     cipres:         { w: 16, h: 34, vel: 22, pisable: true },
-    espiral:        { w: 20, h: 20, vel: 40, pisable: true }
+    espiral:        { w: 20, h: 20, vel: 40, pisable: true },
+    // Dalí y Miró: relojes blandos y elefantes que caminan; el pájaro de Miró vuela en zigzag y la figura camina
+    reloj_blando:   { w: 16, h: 14, vel: 24, pisable: true },
+    elefante:       { w: 24, h: 30, vel: 30, pisable: false },
+    pajaro_miro:    { w: 14, h: 12, vel: 54, pisable: false, vuela: true },
+    personaje_miro: { w: 12, h: 22, vel: 36, pisable: true },
+    // Gaudí: el lagarto de trencadís corre por el suelo de mosaico
+    lagarto:        { w: 22, h: 12, vel: 46, pisable: true }
   };
 
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
@@ -3025,7 +3106,7 @@ function consume(action) {
       e.dir = dx >= 0 ? 1 : -1;
       return;
     }
-    if (e.type === 'murcielago' || e.type === 'cuervo') {
+    if (e.type === 'murcielago' || e.type === 'cuervo' || e.type === 'pajaro_miro') {
       e.timer -= dt;
       if (e.timer <= 0) { e.vx = -e.vx * (0.6 + Math.random() * 0.8); e.timer = 0.6 + Math.random() * 0.8; }
       e.y = e.base + Math.sin(e.t * 7) * 16;
@@ -3813,7 +3894,89 @@ function consume(action) {
       case 'girasol':        return dibujarGirasol(c, e, t);
       case 'cipres':         return dibujarCipres(c, e, t);
       case 'espiral':        return dibujarEspiral(c, e, t);
+      case 'reloj_blando':   return dibujarRelojBlando(c, e, t);
+      case 'elefante':       return dibujarElefante(c, e, t);
+      case 'pajaro_miro':    return dibujarPajaroMiro(c, e, t);
+      case 'personaje_miro': return dibujarPersonajeMiro(c, e, t);
+      case 'lagarto':        return dibujarLagarto(c, e, t);
     }
+  }
+
+  // Reloj blando (Dalí, "La persistencia de la memoria"): esfera de bolsillo que se escurre sobre una rama
+  function dibujarRelojBlando(c, e, t) {
+    const mece = Math.sin(t * 6) * 0.8;
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    c.strokeStyle = '#6a4a2a'; c.lineWidth = 1.6; c.lineCap = 'round';
+    c.beginPath(); c.moveTo(-8, -6); c.lineTo(8, -6); c.stroke();
+    c.fillStyle = '#f4ecd0';
+    c.beginPath(); c.ellipse(0, -1, 6.5, 5.5, 0, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.moveTo(4, 2); c.quadraticCurveTo(5, 6 + mece, 6, 8 + mece); c.lineTo(7.4, 8 + mece); c.quadraticCurveTo(6.5, 5, 3, 3.5); c.fill();
+    c.beginPath(); c.ellipse(6.4, 9 + mece, 1.6, 2, 0, 0, Math.PI * 2); c.fill();
+    contorno(c, 0, -1, 6.5, 5.5, 1);
+    c.strokeStyle = '#3a3a4a'; c.lineWidth = 1;
+    c.beginPath(); c.moveTo(0, -1); c.lineTo(0, -4.5); c.moveTo(0, -1); c.lineTo(2.5, -0.5); c.stroke();
+  }
+
+  // Elefante de Dalí: patas largas y finas, un obelisco en el lomo y una trompa que se curva
+  function dibujarElefante(c, e, t) {
+    const paso = Math.sin(t * 6) * 2.2;
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    c.strokeStyle = '#d8cfc4'; c.lineWidth = 2.2; c.lineCap = 'round';
+    c.beginPath(); c.moveTo(-5, 2); c.lineTo(-6 + paso, 14); c.moveTo(4, 2); c.lineTo(5 - paso, 14); c.stroke();
+    c.fillStyle = '#efe8dc';
+    c.beginPath(); c.ellipse(0, -2, 9, 6, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#c9bfb0'; c.fillRect(-4, -15, 2.4, 8);
+    c.beginPath(); c.moveTo(-4, -15); c.lineTo(-2.8, -18.5); c.lineTo(-1.6, -15); c.fill();
+    c.fillStyle = '#efe8dc';
+    c.beginPath(); c.ellipse(8, -6, 4.2, 3.6, 0, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#d8cfc4'; c.lineWidth = 1.8;
+    c.beginPath(); c.moveTo(11.5, -5); c.quadraticCurveTo(15, -2, 12, 3); c.stroke();
+    c.fillStyle = '#2a2a3a'; c.beginPath(); c.arc(9.6, -7, 0.7, 0, Math.PI * 2); c.fill();
+  }
+
+  // Pájaro de Miró: trazo negro, cuerpo rojo y pico amarillo; bate el ala al volar en zigzag
+  function dibujarPajaroMiro(c, e, t) {
+    const ala = e.dead ? 0 : Math.sin(t * 14);
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    c.strokeStyle = '#1a1a1a'; c.lineWidth = 1.5; c.lineCap = 'round';
+    c.beginPath(); c.moveTo(-2, -1); c.quadraticCurveTo(-3, -8 + ala * 3, 4, -4); c.stroke();
+    c.beginPath(); c.moveTo(-6, 2); c.lineTo(-10, 4); c.stroke();
+    c.fillStyle = '#d8322b';
+    c.beginPath(); c.arc(0, 1, 4.4, 0, Math.PI * 2); c.fill(); c.stroke();
+    c.fillStyle = '#ffc21a'; c.beginPath(); c.moveTo(4, 0); c.lineTo(7.5, 1.4); c.lineTo(4, 2.6); c.fill();
+    c.fillStyle = '#1a1a1a'; c.beginPath(); c.arc(2, -0.4, 0.9, 0, Math.PI * 2); c.fill();
+  }
+
+  // Figura de Miró: trazo negro, cabeza amarilla con un punto rojo; camina con los brazos en alto
+  function dibujarPersonajeMiro(c, e, t) {
+    const paso = Math.sin(t * 9) * 2.5;
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    c.strokeStyle = '#1a1a1a'; c.lineWidth = 1.5; c.lineCap = 'round';
+    c.beginPath(); c.moveTo(0, -4); c.lineTo(0, 4); c.stroke();
+    c.beginPath(); c.moveTo(0, 4); c.lineTo(-3 + paso, 10); c.moveTo(0, 4); c.lineTo(3 - paso, 10); c.stroke();
+    c.beginPath(); c.moveTo(0, -2); c.lineTo(-5, -6 - paso); c.moveTo(0, -2); c.lineTo(5, -6 + paso); c.stroke();
+    c.fillStyle = '#ffc21a'; c.beginPath(); c.arc(0, -8, 3.4, 0, Math.PI * 2); c.fill(); c.stroke();
+    c.fillStyle = '#d8322b'; c.beginPath(); c.arc(0.4, -8.2, 1.1, 0, Math.PI * 2); c.fill();
+  }
+
+  // Lagarto de trencadís (Gaudí, el dragón del Park Güell): cuerpo de teselas de colores y cola que se mueve
+  function dibujarLagarto(c, e, t) {
+    const paso = Math.sin(t * 10) * 1.4;
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    c.strokeStyle = '#2a5a3a'; c.lineWidth = 1.4; c.lineCap = 'round';
+    c.beginPath(); c.moveTo(-6, 2); c.lineTo(-7 - paso, 6); c.moveTo(4, 2); c.lineTo(3 + paso, 6); c.stroke();
+    c.beginPath(); c.moveTo(-8, -2); c.quadraticCurveTo(-14, -4 + paso, -16, 0); c.stroke();
+    c.fillStyle = '#3fa36b';
+    c.beginPath(); c.ellipse(0, -1, 9, 4.5, 0, 0, Math.PI * 2); c.fill();
+    const teselas = ['#ffd27a', '#2f9fc8', '#ec6a4a', '#ffffff'];
+    for (let k = 0; k < 5; k++) { c.fillStyle = teselas[k % 4]; c.fillRect(-6 + k * 3, -4.5, 2, 2); }
+    c.fillStyle = '#3fa36b'; c.beginPath(); c.ellipse(8, -2.6, 3.4, 2.6, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#ffd27a'; c.beginPath(); c.arc(9.4, -3.2, 0.8, 0, Math.PI * 2); c.fill();
   }
 
   // Sombra en el suelo: el enemigo "pisa" algo, así se nota la altura
@@ -3906,7 +4069,11 @@ function consume(action) {
     { id: 'girasol', nombre: 'Girasol gigante', forma: 'girasol', hp: 4, vel: 14, w: 40, h: 50, flota: false,
       ataques: ['semillas', 'carga', 'salto', 'semillas'], aliento: 'semilla', corona: false,
       cielo: ['#ffd98a', '#e8a030'], suelo: '#c48a2c',
-      c: ['#fff3a0', '#f5c53a', '#b9801c'], acento: '#5a3a14', melena: '#ffd23f', ojos: '#2f58b8', sombra: '#8a5a1a' }
+      c: ['#fff3a0', '#f5c53a', '#b9801c'], acento: '#5a3a14', melena: '#ffd23f', ojos: '#2f58b8', sombra: '#8a5a1a' },
+    { id: 'mosaico', nombre: 'Dragón de trencadís', forma: 'mosaico', hp: 4, vel: 16, w: 44, h: 36, flota: false,
+      ataques: ['piedras', 'carga', 'pisoton', 'piedras'], aliento: 'piedra', corona: false,
+      cielo: ['#7fc4e8', '#e9b98a'], suelo: '#c9a06a',
+      c: ['#2f9fc8', '#1d6f96', '#0e3f5a'], acento: '#ffd27a', melena: '#ec6a4a', ojos: '#ffffff', sombra: '#0e3f5a' }
   ];
 
   /* ---------- Utilidades de dibujo ---------- */
@@ -4403,10 +4570,35 @@ function consume(action) {
     g.restore();
   }
 
+  // Dragón de trencadís (Gaudí, el dragón del Park Güell): cuerpo de teselas, cresta de espinas y patas que pisan
+  function cuerpoMosaico(g, d, o) {
+    const p = o.paso || 0;
+    const teselas = ['#2f9fc8', '#ffd27a', '#ec6a4a', '#3fa36b', '#ffffff', '#5a3a8a'];
+    g.fillStyle = '#1d6f96';
+    g.fillRect(-14, 10 + p, 6, 9); g.fillRect(8, 10 - p, 6, 9);
+    g.fillStyle = '#2f9fc8';
+    g.beginPath(); g.ellipse(0, 0, 18, 12, 0, 0, Math.PI * 2); g.fill();
+    for (let k = 0; k < 16; k++) {
+      const a = k * 0.8, r = 4 + (k % 3) * 4;
+      g.fillStyle = teselas[k % teselas.length];
+      g.fillRect(Math.cos(a) * r * 1.4 - 2, Math.sin(a) * r * 0.8 - 2, 4, 4);
+    }
+    g.fillStyle = '#ec6a4a';
+    for (let k = -3; k <= 3; k++) { g.beginPath(); g.moveTo(k * 5 - 2, -10); g.lineTo(k * 5, -17); g.lineTo(k * 5 + 2, -10); g.fill(); }
+    g.fillStyle = '#2f9fc8'; g.beginPath(); g.ellipse(20, -4, 9, 7, 0, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#ffffff'; g.beginPath(); g.arc(23, -6, 2.4, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#111'; g.beginPath(); g.arc(23.6, -6, 1.1, 0, Math.PI * 2); g.fill();
+    g.fillStyle = '#2a0a06'; g.beginPath();
+    if (o.abierta) g.ellipse(26, 0, 3, 2.2, 0, 0, Math.PI * 2); else g.ellipse(26, 0, 3, 0.9, 0, 0, Math.PI * 2);
+    g.fill();
+    g.strokeStyle = '#2f9fc8'; g.lineWidth = 6; g.lineCap = 'round';
+    g.beginPath(); g.moveTo(-16, -2); g.quadraticCurveTo(-30, -6 + p, -34, 4); g.stroke();
+  }
+
   const DIBUJA = {
     koopa: cuerpoKoopa, magma: cuerpoMagma, helado: cuerpoHelado, arena: cuerpoArena,
     golem: cuerpoGolem, selva: cuerpoSelva, abisal: cuerpoAbisal, oscuro: cuerpoOscuro,
-    girasol: cuerpoGirasol
+    girasol: cuerpoGirasol, mosaico: cuerpoMosaico
   };
 
   /* ---------- Proyectiles ---------- */
@@ -5252,21 +5444,24 @@ const MECANICAS_MUNDO = {
 
 /* Crea las 8 fases de un mundo con sus nombres. w: número del mundo.
    Las dos primeras fases usan solo dos tipos de enemigo; la 8 es el castillo.
-   opc.horas: momento del día de cada fase; opc.castillo: el castillo usa el escenario de piedra. */
+   opc.horas: momento del día de cada fase; opc.castillo: el castillo usa el escenario de piedra;
+   opc.estilos: estilo de arte de cada fase (def.estilo); opc.enemigosDeEstilo: enemigos de cada estilo. */
 function fases(w, nombres, enemigos, opc = {}) {
   return nombres.map((nombre, i) => {
     const k = i + 1, castillo = k === 8;
+    const lista = opc.estilos && opc.enemigosDeEstilo ? opc.enemigosDeEstilo[opc.estilos[i]] : enemigos;
     const lv = {
       nombre: castillo ? w + "-C " + nombre : w + "-" + k + " " + nombre,
       tiempo: castillo ? 250 : 300,
       gen: {
         seed: w * 100 + k,
         dif: Math.min(8, w + Math.floor((k - 1) / 3) + (castillo ? 1 : 0)),
-        enemigos: k <= 2 ? enemigos.slice(0, 2) : enemigos,
+        enemigos: k <= 2 ? lista.slice(0, 2) : lista,
       },
       mecanicas: (MECANICAS_MUNDO[w] || MECANICAS_POR_FASE)[i],
     };
     if (opc.horas && opc.horas[i] !== undefined) lv.hora = opc.horas[i];
+    if (opc.estilos && opc.estilos[i]) lv.estilo = opc.estilos[i];
     if (castillo) { lv.jefe = true; if (opc.castillo) lv.castillo = true; }
     return lv;
   });
@@ -5430,6 +5625,32 @@ const MUNDOS = [
     niveles: fases(9, ["Trigal", "Girasoles", "Cipreses", "Noche estrellada", "Café nocturno", "Cuervos", "Remolinos", "Casa amarilla"],
       ["cuervo", "girasol", "cipres", "espiral"], { horas: [0.5, 0.5, 0.25, 0.75, 0.75, 0.5, 0.75] }),
   },
+  // Mundo 10: Imaginario. Relojes blandos y elefantes de Dalí, estrellas y figuras de Miró, trencadís de Gaudí
+  {
+    id: 10,
+    nombre: "Imaginario",
+    tema: "dali",
+    jefeTipo: "mosaico",
+    climas: {},
+    particulas: false,
+    hora: 0.5,
+    paleta: {
+      cielo: "#7fc4e8", lejos: "#e9b98a", cerca: "#f0d2a0", arbusto: "#2f6f8a",
+      G: "#c9a06a", g: "#f2dcb0", O: "#8a6a4a", Y: "#ffd23f", U: "#6a8ab0", tubo: "#2f7fb0", sol: "#ffe9a8",
+    },
+    ruta: [[20, 150], [60, 118], [96, 146], [134, 100], [172, 126], [208, 80], [238, 58]],
+    bonus: [3, 6],
+    niveles: fases(10, ["Relojes", "Elefantes", "Estrellas", "Figuras", "Trencadís", "Parque", "Playa", "Dragón"],
+      ["reloj_blando", "elefante", "pajaro_miro", "personaje_miro", "lagarto"], {
+        horas: [0.5, 0.5, 0.25, 0.25, 0.5, 0.5, 0.25, 0.5],
+        estilos: ["dali", "dali", "miro", "miro", "gaudi", "gaudi", "dali", "gaudi"],
+        enemigosDeEstilo: {
+          dali: ["reloj_blando", "elefante"],
+          miro: ["pajaro_miro", "personaje_miro"],
+          gaudi: ["lagarto", "pajaro_miro"],
+        },
+      }),
+  },
 ];
 
 /* Nodos del mapa de un mundo: las fases y las casas de minijuegos en orden,
@@ -5475,8 +5696,12 @@ const PALETA_CASTILLO = {
 /* Carácter de bloques.js para el suelo de cada tema (ver LEYENDA en bloques.js) */
 const TERRENO_DE_TEMA = { pradera: "#", desierto: "A", bosque: "#", cueva: "R", hielo: "I", agua: "W", castillo: "R", cielo: "N", vangogh: "V", dali: "D", miro: "O", gaudi: "G" };
 // Estilos de los mundos de arte: paleta propia (los niveles de estilo la usan en vez de la del mundo) y prefijo de sus bloques
-const PALETA_ESTILO = {};
-const PREFIJO_BLOQUE = { vangogh: "vg" };
+const PALETA_ESTILO = {
+  dali:  { cielo: "#7fc4e8", lejos: "#e9b98a", cerca: "#f0d2a0", arbusto: "#2f6f8a", G: "#c9a06a", g: "#f2dcb0", O: "#8a6a4a", Y: "#ffd23f", U: "#6a8ab0", tubo: "#2f7fb0", sol: "#ffe9a8" },
+  miro:  { cielo: "#fbf6ea", lejos: "#f2e2b8", cerca: "#ffffff", arbusto: "#d8322b", G: "#d8322b", g: "#ffc21a", O: "#1a1a1a", Y: "#2f58b8", U: "#2f58b8", tubo: "#d8322b", sol: "#ffc21a" },
+  gaudi: { cielo: "#2f6fb0", lejos: "#2f9fc8", cerca: "#ffd27a", arbusto: "#3fa36b", G: "#ec6a4a", g: "#ffd27a", O: "#5a3a8a", Y: "#ffd23f", U: "#2f9fc8", tubo: "#3fa36b", sol: "#ffe9a8" },
+};
+const PREFIJO_BLOQUE = { vangogh: "vg", dali: "dl", miro: "mi", gaudi: "ga" };
 
 /* Decoración de bloques.js sobre el suelo abierto de cada tema (no es sólida).
    Cada pieza lista sus caracteres de abajo arriba: ["k", "T"] es un árbol de dos bloques. */
@@ -5505,7 +5730,7 @@ const POTENCIADORES = ["hongo", "hongo", "flor", "pluma"];
 // Monedas que da un ladrillo multimoneda (K) antes de quedarse vacío
 const MONEDAS_MULTI = 8;
 // Enemigos que vuelan: se colocan en el aire, no en el suelo
-const VOLADORES = ["flyer", "murcielago", "medusa", "fantasma", "pez_nadador", "cuervo"];
+const VOLADORES = ["flyer", "murcielago", "medusa", "fantasma", "pez_nadador", "cuervo", "pajaro_miro"];
 
 // Generador pseudoaleatorio determinista (mulberry32): misma semilla = mismo nivel
 function prng(seed) {
@@ -7700,8 +7925,134 @@ function escenaVanGogh(cam, pal, hora) {
   ctx.restore();
 }
 
+/* =====================================================================
+   13e. ESCENARIOS DEL MUNDO 10: Dalí (mar, acantilados y relojes que se derriten),
+   Miró (fondo crema con estrellas y colores primarios) y Gaudí (cielo azul y torres de trencadís)
+   ===================================================================== */
+// Relojes blandos colgados de una rama (periódico en X): cada esfera se escurre por un lado
+function texRelojesDali() {
+  return textura("dl-relojes", () => {
+    const ancho = 512, alto = 40;
+    const grid = Array.from({ length: alto }, () => Array(ancho).fill("."));
+    const poner = (x, y, ch) => { if (x >= 0 && x < ancho && y >= 0 && y < alto) grid[y][x] = ch; };
+    for (const [cx, cy] of [[70, 16], [212, 22], [352, 14], [458, 20]]) {
+      for (let x = cx - 16; x <= cx + 16; x++) poner(x, cy - 12, "b");                                   // rama
+      for (let y = -8; y <= 8; y++) for (let x = -8; x <= 8; x++) if (x * x + y * y <= 64) poner(cx + x, cy + y, "w");   // esfera
+      for (let y = -6; y <= 0; y++) poner(cx, cy + y, "k");                                              // manecilla larga
+      for (let x = 0; x <= 4; x++) poner(cx + x, cy, "k");                                               // manecilla corta
+      for (let y = 4; y <= 14; y++) poner(cx - 7, cy + y, "w");                                          // gota que se escurre
+      for (let y = 0; y < 3; y++) for (let x = -2; x <= 2; x++) poner(cx - 7 + x, cy + 15 + y, "w");     // gota del final
+    }
+    const sp = spriteFromRows(expandir(grid.map((r) => r.join(""))), { w: "#f4ecd0", k: "#3a3a4a", b: "#6a4a2a" }, true, true, false);
+    sp.tw = ancho;
+    return sp;
+  });
+}
+
+// Escenario de Dalí: cielo pálido, un mar lejano, relojes blandos colgando de una rama y acantilados ocres
+function escenaDali(cam, pal) {
+  const cielo = ctx.createLinearGradient(0, 0, 0, OY + 150);
+  cielo.addColorStop(0, "#7fc4e8");
+  cielo.addColorStop(1, "#f6d7b0");
+  ctx.fillStyle = cielo;
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(0, OY);
+  dibujarSol(pal, W - 66, 26);
+  ctx.fillStyle = "#2f7fb0";
+  ctx.fillRect(0, 110, W, 30);
+  ctx.fillStyle = "#9ad8f0";
+  const off = mod(cam.x * 0.2, 24);
+  for (let x = -off; x < W; x += 24) { ctx.fillRect(Math.round(x), 116, 8, 1); ctx.fillRect(Math.round(x + 10), 124, 6, 1); }
+  capaPeriodica(texRelojesDali(), cam.x, 0.5, 76);
+  capaPeriodica(texColinas("dl-acantilados", 512, "#c9a06a", (x) => 136 + Math.sin((x / 512) * Math.PI * 4) * 6 + Math.sin((x / 512) * Math.PI * 10) * 2), cam.x, 0.3, 0);
+  ctx.restore();
+}
+
+// Formas de Miró (periódicas en X): cruces de trazo negro, discos rojos, azules y amarillos, líneas onduladas y una escalera
+function texFormasMiro() {
+  return textura("mi-formas", () => {
+    const ancho = 512, alto = 176;
+    const grid = Array.from({ length: alto }, () => Array(ancho).fill("."));
+    const poner = (x, y, ch) => { if (x >= 0 && x < ancho && y >= 0 && y < alto) grid[y][x] = ch; };
+    // Azar fijo (seno con fracción): cada forma cae en un sitio distinto, sin patrón a la vista
+    const azar = (n) => { const v = Math.sin(n * 12.9898 + 78.233) * 43758.5453; return v - Math.floor(v); };
+    for (let k = 0; k < 20; k++) {
+      const x = 16 + Math.floor(azar(k * 2) * 480), y = 14 + Math.floor(azar(k * 2 + 1) * 136);
+      if (k % 3 === 0) {
+        for (let d = -3; d <= 3; d++) { poner(x + d, y, "k"); poner(x, y + d, "k"); }   // cruz de trazo negro
+      } else {
+        const col = ["r", "a", "y"][k % 3];
+        for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) if (dx * dx + dy * dy <= 16) poner(x + dx, y + dy, col);   // disco
+      }
+    }
+    // Líneas onduladas de trazo negro: con un número entero de ondas, el borde del fondo encaja
+    for (const [y0, ondas, amp] of [[34, 2, 5], [92, 3, 4], [146, 4, 5]]) {
+      for (let x = 0; x < ancho; x++) poner(x, y0 + Math.round(amp * Math.sin((x / ancho) * Math.PI * 2 * ondas)), "k");
+    }
+    // Escalera de Miró: dos montantes negros con travesaños
+    for (let y = 100; y <= 160; y++) { poner(420, y, "k"); poner(432, y, "k"); }
+    for (let y = 104; y <= 156; y += 8) for (let x = 421; x <= 431; x++) poner(x, y, "k");
+    const sp = spriteFromRows(expandir(grid.map((r) => r.join(""))), { k: "#1a1a1a", r: "#d8322b", a: "#2f58b8", y: "#ffc21a" }, false, true, false);
+    sp.tw = ancho;
+    return sp;
+  });
+}
+
+// Escenario de Miró: fondo crema, un sol amarillo y formas de colores primarios sobre trazos negros
+function escenaMiro(cam, pal) {
+  const cielo = ctx.createLinearGradient(0, 0, 0, OY + 176);
+  cielo.addColorStop(0, "#fbf6ea");
+  cielo.addColorStop(1, "#f2e2b8");
+  ctx.fillStyle = cielo;
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(0, OY);
+  // Las formas siguen hacia arriba hasta el borde de la pantalla (en los visores altos)
+  const formas = texFormasMiro();
+  for (let k = 0; k <= Math.ceil(OY / 176); k++) capaPeriodica(formas, cam.x + k * 61, 0.25, -176 * k);
+  dibujarSol(pal, W - 60, 24);
+  ctx.restore();
+}
+
+// Torres de trencadís (periódicas en X): agujas de teselas de colores en damero que se estrechan hacia la punta
+function texTorresGaudi() {
+  return textura("ga-torres", () => {
+    const ancho = 512, base = 176;
+    const torres = [[26, 22, 112], [120, 16, 84], [222, 28, 132], [338, 18, 96], [446, 24, 118]];   // [x, ancho, alto]
+    const teselas = ["a", "b", "c", "d", "e", "f"];
+    const grid = Array.from({ length: base }, () => Array(ancho).fill("."));
+    for (const [tx, tw, th] of torres) {
+      for (let y = base - th; y < base; y++) {
+        const k = (y - (base - th)) / th;                        // 0 en la punta, 1 en la base
+        const media = (tw / 2) * Math.min(1, 0.2 + k * 1.1);     // aguja que se ensancha hacia abajo
+        for (let x = Math.round(tx + tw / 2 - media); x < Math.round(tx + tw / 2 + media); x++) {
+          grid[y][x] = teselas[(Math.floor(x / 3) + Math.floor(y / 3)) % teselas.length];
+        }
+      }
+    }
+    const sp = spriteFromRows(expandir(grid.map((r) => r.join(""))), { a: "#2f9fc8", b: "#ffd27a", c: "#ec6a4a", d: "#3fa36b", e: "#ffffff", f: "#5a3a8a" }, false, true, false);
+    sp.tw = ancho;
+    return sp;
+  });
+}
+
+// Escenario de Gaudí: cielo azul de Barcelona, torres de trencadís recortadas y un sol de mosaico
+function escenaGaudi(cam, pal) {
+  const cielo = ctx.createLinearGradient(0, 0, 0, OY + 176);
+  cielo.addColorStop(0, "#2f6fb0");
+  cielo.addColorStop(1, "#9ad8f0");
+  ctx.fillStyle = cielo;
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(0, OY);
+  dibujarSol(pal, W - 62, 26);
+  capaPeriodica(texTorresGaudi(), cam.x, 0.3, 0);
+  ctx.restore();
+}
+
 // Escenarios de los mundos de arte, por el tema de su estilo (ver TERRENO_DE_TEMA)
-const ESCENAS_ESTILO = { vangogh: escenaVanGogh };
+const ESCENAS_ESTILO = { vangogh: escenaVanGogh, dali: escenaDali, miro: escenaMiro, gaudi: escenaGaudi };
 
 // Fondo del escenario. El cielo, el sol o la luna, las nubes y las montañas vienen de bloques.js
 // y cambian con la hora (0 amanecer, 0.25 día, 0.5 atardecer, 0.75 noche); la cueva usa roca.
@@ -7990,6 +8341,17 @@ const TEMAS = {
     "C5:3", "E5:2", "G5:1", "A5:3", "G5:3",
     "F5:2", "E5:1", "D5:3", "E5:3", "D5:2",
   ], bajo: ["C3", "G2", "A2", "E2", "F2", "C3"], ritmo: [1, 0, 0, 1, 1, 0, 2, 0] },
+  dali: { bpm: 84, onda: "triangle", vol: 0.07, bateria: "nada", melodia: [
+    "A4:3", "C5:2", "E5:3", "D5:2", "C5:2", "A4:4", "G4:4", "E4:4", "A4:2", "C5:2", "E5:4",
+  ], bajo: ["A2", "F2", "C3", "E2"], ritmo: [1, 0, 0, 1, 1, 0, 2, 0] },
+  miro: { bpm: 128, onda: "square", vol: 0.04, bateria: "rapida", melodia: [
+    "C5:1", "E5:1", "G5:1", "C6:1", "B5:2", "G5:1", "E5:1", "D5:1", "F5:1", "A5:1", "G5:2", "-:3",
+    "E5:2", "C5:2", "D5:2", "E5:2", "G5:2", "-:2", "C6:2", "-:2",
+  ], bajo: ["C3", "G2", "A2", "F2"], ritmo: [1, 1, 2, 1, 1, 2, 1, 2] },
+  gaudi: { bpm: 104, onda: "triangle", vol: 0.07, bateria: "marcha", melodia: [
+    "D5:2", "F5:1", "A5:2", "G5:1", "F5:2", "D5:2", "E5:2", "-:4",
+    "A4:2", "C5:2", "D5:2", "F5:2", "E5:4", "-:4",
+  ], bajo: ["D3", "A2", "B2", "G2"], ritmo: [1, 0, 0, 1, 1, 0, 1, 0] },
   jefe: { bpm: 176, onda: "square", vol: 0.032, bateria: "rapida", melodia: [
     "E5:1", "G5:1", "E5:1", "A#5:1", "B5:2", "A#5:1", "G5:1",
     "E5:1", "G5:1", "E5:1", "D5:1", "E5:4",
@@ -8211,6 +8573,7 @@ const TIPO_ENEMIGO = {
   seta: "seta", jabali: "jabali", murcielago: "murcielago", arana: "arana", fantasma: "fantasma",
   nubarron: "nubarron", pez_nadador: "pez_nadador",
   cuervo: "cuervo", girasol: "girasol", cipres: "cipres", espiral: "espiral",
+  reloj_blando: "reloj_blando", elefante: "elefante", pajaro_miro: "pajaro_miro", personaje_miro: "personaje_miro", lagarto: "lagarto",
 };
 
 // Crea el enemigo de enemigos.js sobre la entidad (e.x, e.y = esquina superior izquierda)
