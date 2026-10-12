@@ -1505,11 +1505,30 @@ function consume(action) {
     g.fill();
   }
 
-  // Ambiente de cueva: roca oscura, estalactitas en dos capas y cristales que brillan
+  // Silueta de roca periódica. colgada: la masa baja desde el techo; si no, sube desde el suelo
+  function capaRoca(g, camX, f, base, amp, periodo, cols, colgada, vistaW, vistaH, arriba) {
+    g.beginPath();
+    g.moveTo(-2, colgada ? -arriba : vistaH);
+    for (let x = -2; x <= vistaW + 2; x += 3) {
+      const wx = x + camX * f;
+      const h = amp * (0.55 + 0.45 * Math.sin(wx * 2 * Math.PI / periodo + 0.7)) * (0.8 + 0.2 * Math.sin(wx * 0.23 + 1.9));
+      g.lineTo(x, colgada ? base + h : base - h);
+    }
+    g.lineTo(vistaW + 2, colgada ? -arriba : vistaH);
+    g.closePath();
+    g.fillStyle = grad(g, 0, -arriba, 0, vistaH, cols);
+    g.fill();
+  }
+
+  // Ambiente de cueva: paredes de roca con paralaje, estalactitas y estalagmitas, y cristales que brillan
   function cueva(g, camX, tiempo, vistaW, vistaH, arriba) {
     arriba = arriba || 0;
+    const t = tiempo || 0;
     g.fillStyle = grad(g, 0, -arriba, 0, vistaH, ['#2b2634', '#3a3245', '#17141e']);
     g.fillRect(0, -arriba, vistaW, vistaH + arriba);
+    // Pared de roca del fondo: una masa que cuelga del techo con el borde inferior irregular
+    capaRoca(g, camX, 0.12, 90, 36, 140, ['#5a4e6e', '#3a3149'], true, vistaW, vistaH, arriba);
+    // Estalactitas en dos capas (las de delante se mueven más deprisa)
     [[0.25, 300, 26, '#5a5068', '#2e2838'], [0.5, 240, 16, '#4a4258', '#241f2e']].forEach(function (capa) {
       const f = capa[0], ciclo = capa[1], alt = capa[2];
       for (let i = 0; i < 12; i++) {
@@ -1522,12 +1541,18 @@ function consume(action) {
         }
       }
     });
-    for (let i = 0; i < 10; i++) {
-      const x = ((i * 47 + 20 - camX * 0.6) % vistaW + vistaW) % vistaW;
-      const y = 100 + (i * 13) % 30;
-      const t = 0.5 + 0.5 * Math.sin((tiempo || 0) * 2 + i);
-      g.fillStyle = rgba([120, 230, 255], 0.25 + 0.5 * t);
-      g.beginPath(); g.arc(x, y, 1.5 + t, 0, Math.PI * 2); g.fill();
+    // Estalagmitas del suelo en dos capas de paralaje, de la más lejana a la más cercana
+    capaRoca(g, camX, 0.3, vistaH + 2, 34, 110, ['#4a4160', '#2a2338'], false, vistaW, vistaH, arriba);
+    capaRoca(g, camX, 0.55, vistaH + 2, 22, 70, ['#332c44', '#1a1526'], false, vistaW, vistaH, arriba);
+    // Cristales que brillan sobre la roca: un halo que late y un rombo azul claro
+    for (let i = 0; i < 9; i++) {
+      const x = ((i * 53 + 20 - camX * 0.55) % vistaW + vistaW) % vistaW;
+      const y = 112 + (i * 17) % 22;
+      const pulso = 0.5 + 0.5 * Math.sin(t * 1.6 + i * 1.3);
+      g.fillStyle = radial(g, x, y, 0.5, 9, ['rgba(120,230,255,' + (0.4 * pulso).toFixed(3) + ')', 'rgba(120,230,255,0)']);
+      g.beginPath(); g.arc(x, y, 9, 0, Math.PI * 2); g.fill();
+      g.fillStyle = 'rgba(170,245,255,' + (0.7 + 0.3 * pulso).toFixed(3) + ')';
+      g.beginPath(); g.moveTo(x, y - 3); g.lineTo(x + 1.5, y); g.lineTo(x, y + 3); g.lineTo(x - 1.5, y); g.closePath(); g.fill();
     }
   }
 
