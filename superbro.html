@@ -7924,46 +7924,197 @@ function escenaVanGogh(cam, pal, hora) {
 }
 
 /* =====================================================================
-   13e. ESCENARIOS DEL MUNDO 10: Dalí (mar, acantilados y relojes que se derriten),
-   Miró (fondo crema con estrellas y colores primarios) y Gaudí (cielo azul y torres de trencadís)
+   13e. ESCENARIOS DEL MUNDO 10: Dalí (inspirado en "La persistencia de la memoria": cielo que se dora,
+   bahía con pueblo, acantilados de ocre, llano oscuro y relojes que se derriten), Miró (fondo crema con
+   estrellas y colores primarios) y Gaudí (cielo azul y torres de trencadís)
    ===================================================================== */
-// Relojes blandos colgados de una rama (periódico en X): cada esfera se escurre por un lado
-function texRelojesDali() {
-  return textura("dl-relojes", () => {
-    const ancho = 512, alto = 40;
-    const grid = Array.from({ length: alto }, () => Array(ancho).fill("."));
-    const poner = (x, y, ch) => { if (x >= 0 && x < ancho && y >= 0 && y < alto) grid[y][x] = ch; };
-    for (const [cx, cy] of [[70, 16], [212, 22], [352, 14], [458, 20]]) {
-      for (let x = cx - 16; x <= cx + 16; x++) poner(x, cy - 12, "b");                                   // rama
-      for (let y = -8; y <= 8; y++) for (let x = -8; x <= 8; x++) if (x * x + y * y <= 64) poner(cx + x, cy + y, "w");   // esfera
-      for (let y = -6; y <= 0; y++) poner(cx, cy + y, "k");                                              // manecilla larga
-      for (let x = 0; x <= 4; x++) poner(cx + x, cy, "k");                                               // manecilla corta
-      for (let y = 4; y <= 14; y++) poner(cx - 7, cy + y, "w");                                          // gota que se escurre
-      for (let y = 0; y < 3; y++) for (let x = -2; x <= 2; x++) poner(cx - 7 + x, cy + 15 + y, "w");     // gota del final
+// Lienzo de caracteres para las texturas de Dalí. poner() pinta un píxel; pegar() copia una figura;
+// trazo() dibuja un grosor que se estrecha de un extremo al otro, con luz, medio y sombra
+function lienzoDali(ancho, alto) {
+  const filas = Array.from({ length: alto }, () => Array(ancho).fill("."));
+  const poner = (x, y, ch) => { if (x >= 0 && x < ancho && y >= 0 && y < alto) filas[y][x] = ch; };
+  const pegar = (figura, x0, y0) => figura.forEach((r, dy) => [...r].forEach((ch, dx) => { if (ch !== ".") poner(x0 + dx, y0 + dy, ch); }));
+  const trazo = (x0, y0, x1, y1, g0, g1, [luz, medio, sombra]) => {
+    const pasos = Math.ceil(Math.hypot(x1 - x0, y1 - y0) * 2);
+    for (let k = 0; k <= pasos; k++) {
+      const t = k / pasos, cx = x0 + (x1 - x0) * t, cy = y0 + (y1 - y0) * t, g = g0 + (g1 - g0) * t, G = Math.ceil(g);
+      for (let dy = -G; dy <= G; dy++) for (let dx = -G; dx <= G; dx++) {
+        if (Math.abs(dx) + Math.abs(dy) > g + 0.5) continue;
+        poner(Math.round(cx + dx), Math.round(cy + dy), dx < -g * 0.35 ? luz : dx > g * 0.35 ? sombra : medio);
+      }
     }
-    const sp = spriteFromRows(expandir(grid.map((r) => r.join(""))), { w: "#f4ecd0", k: "#3a3a4a", b: "#6a4a2a" }, true, true, false);
+  };
+  const sprite = (paleta, contorno = false) => {
+    const sp = spriteFromRows(expandir(filas.map((r) => r.join(""))), paleta, contorno, true, false);
     sp.tw = ancho;
     return sp;
+  };
+  return { poner, pegar, trazo, sprite };
+}
+
+// Reloj blando: una esfera de bolsillo que se estira y se escurre por su lado derecho (w y h en píxeles de diseño)
+function figuraRelojDali(w, h, goteo) {
+  const filas = Array.from({ length: h + goteo }, () => Array(w).fill("."));
+  const cx = (w - 1) / 2, cy = (h - 1) / 2;
+  for (let x = 0; x < w; x++) {
+    const u = (x - cx) / (w / 2);                                        // de -1 a 1
+    const semi = Math.sqrt(Math.max(0, 1 - u * u)) * (h / 2);           // semialtura de la esfera en esta columna
+    const arriba = Math.max(0, Math.round(cy - semi)), abajo = Math.round(cy + semi + Math.max(0, u) * goteo);
+    for (let y = arriba; y <= abajo && y < filas.length; y++) {
+      filas[y][x] = y === arriba || y === abajo || x === 0 || x === w - 1 ? "g" : "f";
+    }
+  }
+  for (let y = Math.round(cy); y >= Math.round(cy - h * 0.3); y--) filas[y][Math.round(cx)] = "k";     // manecilla a las doce
+  for (let x = Math.round(cx); x <= Math.round(cx + w * 0.25); x++) filas[Math.round(cy)][x] = "k";    // y otra a las tres
+  return filas.map((f) => f.join(""));
+}
+
+// Reloj de torre sobre un tallo, como el de la pintura: esfera clara con borde oscuro y manecillas
+function figuraRelojRedondo(r) {
+  const filas = [];
+  for (let y = -r; y <= r; y++) {
+    let f = "";
+    for (let x = -r; x <= r; x++) {
+      const d = Math.hypot(x, y);
+      const manecilla = (x === 0 && y < 0 && y >= -(r - 2)) || (y === 0 && x > 0 && x <= r - 3);
+      f += d > r ? "." : d > r - 1 || manecilla ? "k" : "f";
+    }
+    filas.push(f);
+  }
+  return filas;
+}
+
+// Cielo: estrellas pálidas, un reloj de bolsillo que flota y un globo azul colgado de un paracaídas
+function texCieloDali() {
+  return textura("dl-cielo", () => {
+    const L = lienzoDali(512, 96);
+    for (let k = 0; k < 30; k++) L.poner((k * 157 + 40) % 512, (k * 53 + 7) % 30, "w");
+    L.pegar(figuraRelojDali(12, 8, 3), 146, 36);
+    // Paracaídas a rayas, con dos cuerdas que bajan hasta el globo
+    for (let dy = 0; dy < 4; dy++) for (let x = 226 - (12 - 2 * dy); x <= 226 + (12 - 2 * dy); x++) L.poner(x, 34 + dy, Math.floor(x / 3) % 2 ? "y" : "r");
+    for (let k = 0; k < 6; k++) { L.poner(219 + k, 38 + k, "k"); L.poner(233 - k, 38 + k, "k"); }
+    for (let dy = -4; dy <= 4; dy++) for (let dx = -4; dx <= 4; dx++) if (dx * dx + dy * dy <= 16) L.poner(226 + dx, 48 + dy, dx < -1 && dy < 0 ? "v" : "u");
+    return L.sprite({ w: "#eaf8ff", g: "#d4a93c", f: "#dfeef3", k: "#2a2a36", y: "#e8c060", r: "#c0502a", u: "#2c6da0", v: "#9ad0ef" }, true);
   });
 }
 
-// Escenario de Dalí: cielo pálido, un mar lejano, relojes blandos colgando de una rama y acantilados ocres
-function escenaDali(cam, pal) {
-  const cielo = ctx.createLinearGradient(0, 0, 0, OY + 150);
-  cielo.addColorStop(0, "#7fc4e8");
-  cielo.addColorStop(1, "#f6d7b0");
+// Acantilados de ocre al otro lado de la bahía: una masa de roca con cumbres irregulares y facetas (la cara
+// que sube hacia la derecha recibe la luz; la que baja, la sombra), estratos que ondulan y la base en sombra
+function texAcantiladosDali() {
+  return textura("dl-acantilados", () => {
+    const L = lienzoDali(512, 104), base = 96, ancho = 230;
+    const cumbres = [];
+    for (let i = 0; i <= ancho + 8; i++) {
+      const u = Math.min(1, i / ancho);
+      const altura = 40 * Math.pow(Math.sin(Math.PI * u), 0.5) + 9 * Math.max(0, Math.sin(u * Math.PI * 3)) * Math.pow(Math.sin(Math.PI * u), 0.3) + 3 * Math.sin(i * 0.11 + 0.7);
+      cumbres.push(Math.round(base - altura));
+    }
+    for (let i = 0; i < ancho; i++) {
+      const cumbre = cumbres[i], bajada = cumbres[i + 8] - cumbre;     // la pendiente se mide en 8 px para que las caras no parpadeen
+      for (let y = cumbre; y < base; y++) {
+        const estrato = (y - cumbre + Math.round(1.5 * Math.sin(i * 0.25 + y * 0.1))) % 7 === 6;
+        const ch = y - cumbre < 2 ? "e" : y >= base - 5 ? "n" : estrato ? "j" : bajada < 0 ? "o" : "d";
+        L.poner(190 + i, y, ch);
+      }
+    }
+    return L.sprite({ e: "#f0cd7e", o: "#e0b25e", d: "#a8742f", j: "#c9934a", n: "#7a4e25" });
+  });
+}
+
+// Reflejos de la bahía: trazos finos y claros que se desplazan con el parallax
+function texReflejosDali() {
+  return textura("dl-reflejos", () => {
+    const L = lienzoDali(512, 12);
+    for (let k = 0; k < 40; k++) {
+      const x = (k * 97) % 500, y = (k * 5) % 11, largo = 6 + (k % 4) * 3;
+      for (let dx = 0; dx < largo; dx++) if (dx % 5 < 4) L.poner(x + dx, y, k % 3 ? "l" : "m");
+    }
+    return L.sprite({ l: "#b9e5eb", m: "#7fbfcc" });
+  });
+}
+
+// Pueblo al otro lado de la bahía: casas de paredes claras y tejados rojos, ventanas encendidas y una iglesia con aguja
+function texCiudadDali() {
+  return textura("dl-ciudad", () => {
+    const L = lienzoDali(512, 120), base = 112;
+    // Un edificio: x, ancho, alto del muro y alto del tejado a dos aguas (el tejado de la iglesia es oscuro)
+    const edificio = (x0, w, muro, techo, tejado = "r") => {
+      for (let x = x0; x < x0 + w; x++) {
+        for (let y = base - muro; y < base; y++) L.poner(x, y, x - x0 < w / 2 ? "a" : "b");
+        for (let y = base - muro - techo; y < base - muro; y++) {
+          const k = (y - (base - muro - techo)) / techo;                 // 0 en la cumbre, 1 en el alero
+          if (Math.abs(x + 0.5 - (x0 + w / 2)) <= (w / 2 + 1) * k) L.poner(x, y, x - x0 < w / 2 ? tejado : "R");
+        }
+      }
+      for (const vx of [x0 + 2, x0 + w - 4]) for (let dy = 0; dy < 2; dy++) for (let dx = 0; dx < 2; dx++) L.poner(vx + dx, base - muro + 2 + 2 * dy, "w");
+    };
+    [[14, 12, 7, 5], [30, 9, 5, 4], [43, 16, 9, 6], [63, 10, 6, 4], [78, 14, 8, 5], [97, 9, 5, 4],
+     [150, 13, 7, 5], [167, 18, 10, 6], [189, 10, 6, 4], [203, 14, 8, 5]].forEach((e) => edificio(...e));
+    edificio(104, 16, 9, 6);                   // nave de la iglesia
+    edificio(122, 8, 24, 14, "s");             // torre con aguja oscura
+    return L.sprite({ a: "#f3ecd9", b: "#d9cdb2", r: "#c35b3e", R: "#9e4330", s: "#3b4650", w: "#5c6b7c" });
+  });
+}
+
+// Árbol gris sin hojas, con un reloj que se derrama sobre su rama; una columna con un reloj de torre;
+// y una repisa con otro reloj que cuelga de su borde. Periódica en X (512): cada cosa cabe en su tramo
+function texEscenarioDali() {
+  return textura("dl-escenario", () => {
+    const L = lienzoDali(512, 176), luz = ["h", "b", "s"];
+    L.trazo(46, 152, 50, 126, 3.5, 3, luz);     // tronco
+    L.trazo(50, 126, 53, 100, 3, 2.2, luz);
+    L.trazo(53, 100, 52, 80, 2.2, 1.6, luz);
+    L.trazo(52, 80, 56, 60, 1.6, 1.2, luz);
+    L.trazo(53, 88, 98, 74, 2.2, 1.2, luz);     // rama hacia la derecha, donde se cuelga el reloj
+    L.trazo(51, 104, 40, 90, 1.8, 1, luz);      // rama corta hacia la izquierda
+    L.trazo(56, 66, 66, 56, 1.1, 0.8, luz);     // ramita seca
+    L.pegar(figuraRelojDali(20, 12, 5), 72, 79);
+    L.trazo(176, 152, 176, 104, 1.1, 1.1, ["p", "p", "q"]);   // tallo del reloj de torre
+    L.pegar(figuraRelojRedondo(7), 169, 90);
+    for (let x = 212; x <= 254; x++) for (let y = 139; y < 152; y++) L.poner(x, y, y === 139 ? "T" : "L");   // repisa
+    L.pegar(figuraRelojDali(18, 10, 5), 216, 131);
+    return L.sprite({ h: "#d6dbe0", b: "#9ca3aa", s: "#5d646c", g: "#d4a93c", f: "#dfeef3", k: "#2a2a36", p: "#e8e1d2", q: "#a9a293", L: "#7d6650", T: "#a58d74" }, true);
+  });
+}
+
+// Escenario de Dalí: cielo que se dora hacia el horizonte, bahía con pueblo, acantilados de ocre,
+// llano oscuro y, delante, un árbol gris con relojes que se derriten
+function escenaDali(cam) {
+  const cielo = ctx.createLinearGradient(0, 0, 0, OY + 96);
+  cielo.addColorStop(0, "#1d4b63");
+  cielo.addColorStop(0.3, "#2d6480");
+  cielo.addColorStop(0.6, "#5fa3b5");
+  cielo.addColorStop(0.82, "#bfe0d6");
+  cielo.addColorStop(1, "#f5d58a");
   ctx.fillStyle = cielo;
   ctx.fillRect(0, 0, W, H);
   ctx.save();
   ctx.translate(0, OY);
-  dibujarSol(pal, W - 66, 26);
-  ctx.fillStyle = "#2f7fb0";
-  ctx.fillRect(0, 110, W, 30);
-  ctx.fillStyle = "#9ad8f0";
-  const off = mod(cam.x * 0.2, 24);
-  for (let x = -off; x < W; x += 24) { ctx.fillRect(Math.round(x), 116, 8, 1); ctx.fillRect(Math.round(x + 10), 124, 6, 1); }
-  capaPeriodica(texRelojesDali(), cam.x, 0.5, 76);
-  capaPeriodica(texColinas("dl-acantilados", 512, "#c9a06a", (x) => 136 + Math.sin((x / 512) * Math.PI * 4) * 6 + Math.sin((x / 512) * Math.PI * 10) * 2), cam.x, 0.3, 0);
+  // El cielo se repite hacia arriba en los visores altos
+  const sky = texCieloDali();
+  for (let k = 0; k <= Math.ceil(OY / 96); k++) capaPeriodica(sky, cam.x + k * 1733, 0.1, -96 * k);   // cada copia cae en otro sitio
+  // Luz baja del horizonte, como en la pintura
+  const luz = ctx.createRadialGradient(W * 0.55, 96, 4, W * 0.55, 96, 110);
+  luz.addColorStop(0, "rgba(255,236,176,0.6)");
+  luz.addColorStop(1, "rgba(255,236,176,0)");
+  ctx.fillStyle = luz;
+  ctx.fillRect(0, 30, W, 90);
+  capaPeriodica(texAcantiladosDali(), cam.x, 0.25, 0);
+  // Bahía: franja turquesa con reflejos blancos que se mueven despacio
+  const mar = ctx.createLinearGradient(0, 96, 0, 112);
+  mar.addColorStop(0, "#3e8aa3");
+  mar.addColorStop(1, "#22566e");
+  ctx.fillStyle = mar;
+  ctx.fillRect(0, 96, W, 16);
+  capaPeriodica(texReflejosDali(), cam.x, 0.2, 98);
+  capaPeriodica(texCiudadDali(), cam.x, 0.35, 0);
+  // Llano oscuro del primer plano: sobre él van el árbol y los relojes
+  const llano = ctx.createLinearGradient(0, 112, 0, 176);
+  llano.addColorStop(0, "#5f4330");
+  llano.addColorStop(1, "#2b2019");
+  ctx.fillStyle = llano;
+  ctx.fillRect(0, 112, W, H);
+  capaPeriodica(texEscenarioDali(), cam.x, 0.8, 0);
   ctx.restore();
 }
 
