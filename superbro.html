@@ -5207,6 +5207,8 @@ function gridVacia(cols) {
      X  boca de la zona secreta               R  tubería por la que se sale de la zona secreta
      (  cañón que dispara a la izquierda      )  cañón que dispara a la derecha
      c  moneda          e  enemigo del mundo  E  enemigo solo con dificultad 4 o más
+     g  sitio para una moneda estrella (en las salas, la moneda estrella de la sala)
+     %  sitio de reserva para una moneda estrella, si la fase no tiene bastantes "g"
      f  enemigo volador del mundo (si el mundo tiene)                @  inicio (salas)
      =  recorrido de una plataforma móvil horizontal (de 3 bloques)
      ^  recorrido de un ascensor (columna izquierda de la plataforma de 3 bloques)
@@ -5246,6 +5248,8 @@ const PIEZAS = [
   ] },
   // Tuberías cada vez más altas (con planta si el mundo la tiene); las monedas marcan los saltos
   { id: "tubos", tipo: "reto", mapa: [
+    "................g...",
+    "....................",
     "....cc......cc......",
     "...............pT...",
     "........pT.....TT...",
@@ -5260,7 +5264,7 @@ const PIEZAS = [
     "....S..S....",
     "...SS..SS...",
     "..SSS..SSS..",
-    ".SSSS..SSSS.",
+    ".SSSSg.SSSS.",
     "GGGGGGGGGGGG",
   ] },
   { id: "escalinata_hueco", tipo: "reto", min: 3, mapa: [
@@ -5274,6 +5278,7 @@ const PIEZAS = [
   ] },
   // Isla de piedra en mitad de un hueco ancho
   { id: "isla", tipo: "reto", min: 2, mapa: [
+    "......g.......",
     "......cc......",
     "..............",
     ".....SSSS.....",
@@ -5284,7 +5289,7 @@ const PIEZAS = [
   ] },
   // Ruta alta opcional con monedas sobre una calle con enemigos. Bajo la ruta hay un bloque oculto con vida
   { id: "ruta_alta", tipo: "reto", min: 2, mapa: [
-    ".....cccccccc....",
+    ".....cccccccc.g..",
     ".....SSSSSSSS....",
     ".................",
     ".................",
@@ -5298,7 +5303,7 @@ const PIEZAS = [
   // ----- Puertas: un muro de 8 bloques que no se salta; hay que subir para seguir -----
   // Escalones de piedra hasta lo alto de la meseta
   { id: "muro_escalones", tipo: "puerta", mapa: [
-    "..........cccc....",
+    "..........cccc%...",
     ".........GGGGGG...",
     "......c..GGGGGG...",
     ".....SSS.GGGGGG...",
@@ -5311,7 +5316,7 @@ const PIEZAS = [
   ] },
   // Muelle: solo su impulso llega arriba del muro
   { id: "muro_muelle", tipo: "puerta", req: "muelle", mapa: [
-    "......cccc..",
+    "......cccc%.",
     "......GGGGGG",
     "....c.GGGGGG",
     "......GGGGGG",
@@ -5325,7 +5330,7 @@ const PIEZAS = [
   // Escalera de mano hasta lo alto del muro
   { id: "muro_escalera", tipo: "puerta", req: "escalera", mapa: [
     "...S........",
-    "...L.cccc...",
+    "...L.cccc%..",
     "...LDGGGGG..",
     "...L.GGGGG..",
     "...L.GGGGG..",
@@ -5338,7 +5343,7 @@ const PIEZAS = [
   ] },
   // Plataformas de una dirección: se atraviesan desde abajo, piso a piso
   { id: "muro_direccional", tipo: "puerta", req: "una_direccion", mapa: [
-    "......cc..cccc.",
+    "......cc..cccc%",
     ".....DDDDGGGGGG",
     ".........GGGGGG",
     "....cc...GGGGGG",
@@ -5351,7 +5356,7 @@ const PIEZAS = [
   ] },
   // Ascensor: sube y baja junto al muro; hay que subirse y pasar arriba
   { id: "ascensor", tipo: "puerta", req: "plataforma_movil", mapa: [
-    "......cccc...",
+    "......cccc%..",
     "..^..GGGGGG..",
     "..^..GGGGGG..",
     "..^..GGGGGG..",
@@ -5366,6 +5371,7 @@ const PIEZAS = [
   // ----- Retos con las mecánicas de cada fase -----
   // Plataforma móvil sobre un foso; al otro lado, una meseta que solo se alcanza desde la plataforma
   { id: "foso_movil", tipo: "reto", req: "plataforma_movil", mapa: [
+    ".........g....",
     "....cccc......",
     "...........GGG",
     "...........GGG",
@@ -5376,6 +5382,7 @@ const PIEZAS = [
   ] },
   // Dos plataformas que caen sobre un foso ancho: no hay que pararse
   { id: "foso_caida", tipo: "reto", req: "plataforma_caida", mapa: [
+    ".......g.......",
     "...cc.....cc...",
     "...............",
     ".........___...",
@@ -5386,6 +5393,8 @@ const PIEZAS = [
   ] },
   // Puente de madera que se derrumba en cascada al pisarlo
   { id: "puente", tipo: "reto", req: "puente", mapa: [
+    ".....g......",
+    "............",
     "...cccccc...",
     "............",
     "............",
@@ -5397,7 +5406,7 @@ const PIEZAS = [
     "....c......c.....",
     "...ccc....ccc....",
     ".................",
-    ".......SS........",
+    ".....g.SS........",
     ".......SS........",
     "GGGhhhhSShhhhGGGG",
   ] },
@@ -5405,13 +5414,15 @@ const PIEZAS = [
   { id: "pinchos_lecho", tipo: "reto", req: "pinchos", min: 4, mapa: [
     ".....cc.....",
     "............",
-    "............",
+    "......g.....",
     "...SS..SS...",
     "............",
     "GGhhhhhhhhGG",
   ] },
   // Escalinata de plataformas de una dirección sobre un hueco
   { id: "foso_direccional", tipo: "reto", req: "una_direccion", mapa: [
+    ".....g......",
+    "............",
     "....ccc.....",
     "....DDD.....",
     "............",
@@ -5434,6 +5445,8 @@ const PIEZAS = [
   ] },
   // Columnas de piedra en un lago de lava
   { id: "lava", tipo: "reto", req: "lava", mapa: [
+    "........g.........",
+    "..................",
     "..c....ccc....cc..",
     "..................",
     "....SS.....SS.....",
@@ -5448,7 +5461,7 @@ const PIEZAS = [
     "..............",
     "..............",
     "..............",
-    ".....E.......(",
+    ".....E......g(",
     "GGGGGGGGGGGGGG",
   ] },
   // Cañón tras un hueco: saltar el hueco sin chocar con una bala
@@ -5456,7 +5469,7 @@ const PIEZAS = [
     ".....ccc......",
     "..............",
     "..............",
-    ".............(",
+    "............g(",
     "GGGGG...GGGGGG",
   ] },
 
@@ -5514,6 +5527,7 @@ function nuevoNivel(cols, rnd, dif, tipos) {
     cols, tiles: gridVacia(cols), ents: [], plats: [], canones: [], decor: [], rnd, dif, planta,
     caminantes: caminantes.length ? caminantes : voladores, voladores,
     entrada: null, salida: null, start: null, puentes: 0,
+    candidatas: null, reserva: null,   // sitios para monedas estrella (solo en las fases generadas)
   };
 }
 
@@ -5556,6 +5570,12 @@ function ponerCelda(N, ch, c, r) {
       N.canones.push({ col: c, row: r, dir: ch === "(" ? -1 : 1, cada: 2.4, velocidad: 90, inicio: 1.2 + 1.2 * (N.canones.length % 2) });
       break;
     case "@": N.start = { x: c * TILE, y: r * TILE }; break;
+    // Moneda estrella: en una fase, la celda es un sitio posible; en una sala, es la moneda de la sala (la tercera)
+    case "g":
+      if (N.candidatas) N.candidatas.push({ c, r });
+      else N.ents.push({ t: "grande", x: c * TILE, y: r * TILE, idx: 2 });
+      break;
+    case "%": if (N.reserva) N.reserva.push({ c, r }); break;
   }
 }
 
@@ -5687,9 +5707,31 @@ function elegirPiezas(rnd, dif, mecanicas, secreta, jefe) {
   return elegidas;
 }
 
-// Tramo llano entre dos piezas: a veces un enemigo, un grupo de bloques o un volador
-function ponerTramo(N, x, w) {
+// Reparte k sitios a lo largo de la fase: uno al azar en cada tramo de la lista ordenada de izquierda a derecha
+function repartir(sitios, k, rnd) {
+  const orden = sitios.slice().sort((a, b) => a.c - b.c);
+  if (orden.length <= k) return orden;
+  const out = [];
+  for (let i = 0; i < k; i++) {
+    const a = Math.floor((orden.length * i) / k), b = Math.floor((orden.length * (i + 1)) / k);
+    out.push(orden[a + Math.floor(rnd() * (b - a))]);
+  }
+  return out;
+}
+
+// Monedas estrella de una fase: tres, o dos si la tercera está en su zona secreta. Se numeran de izquierda a derecha
+function ponerGrandes(N, rnd) {
+  const k = N.entrada ? 2 : 3;
+  let sitios = repartir(N.candidatas, k, rnd);
+  if (sitios.length < k) sitios = sitios.concat(repartir(N.reserva, k - sitios.length, rnd)).sort((a, b) => a.c - b.c);
+  sitios.forEach((st, i) => N.ents.push({ t: "grande", x: st.c * TILE, y: st.r * TILE, idx: i }));
+}
+
+// Tramo llano entre dos piezas: a veces un enemigo, un grupo de bloques o un volador.
+// El tramo del punto de control queda sin enemigos
+function ponerTramo(N, x, w, tranquilo) {
   const rnd = N.rnd;
+  if (tranquilo) return;
   if (rnd() < 0.3 + N.dif * 0.07) ponerEnemigo(N, x + 1 + Math.floor(rnd() * (w - 1)), GY - 1, false);
   if (w >= 5 && rnd() < 0.35) {
     const forma = ["Q", "BQB", "QQ", "BPB", "BKB"][Math.floor(rnd() * 5)];
@@ -5724,12 +5766,18 @@ function generarNivel(gen, mecanicas = []) {
   const anchoPiezas = piezas.reduce((s, p, i) => s + separaciones[i] + Math.max(...p.mapa.map((f) => f.length)), 0);
   const cols = INICIO + anchoPiezas + 4 + ARENA + FINAL;
   const N = nuevoNivel(cols, rnd, dif, tipos);
+  N.candidatas = []; N.reserva = [];
   for (let c = 0; c < cols; c++) ponerSuelo(N, "G", c);
+  // Punto de control: en el tramo antes de la pieza de la mitad, y siempre después del atajo de la zona secreta
+  const iSalida = piezas.findIndex((p) => p.tipo === "salida");
+  const iControl = Math.min(piezas.length - 1, Math.max(Math.floor(piezas.length / 2), iSalida + 1));
+  let control = null;
 
   // Piezas, cada una tras un tramo llano
   let x = INICIO;
   piezas.forEach((p, i) => {
-    ponerTramo(N, x, separaciones[i]);
+    if (i === iControl) control = { x: (x + 1) * TILE, pie: GY * TILE };
+    ponerTramo(N, x, separaciones[i], i === iControl);
     x += separaciones[i];
     x += pegarMapa(N, p.mapa, x, GY - p.mapa.length + 1, true);
   });
@@ -5744,11 +5792,13 @@ function generarNivel(gen, mecanicas = []) {
     N.ents.push({ t: "boss", x: (x + 20) * TILE, y: (GY - 1) * TILE - 16 });
     x += ARENA;
   }
-  // Escalinata final de piedra (alturas 1 a 7, la cima de dos bloques) y poste de meta
-  for (let k = 0; k < 8; k++) for (let h = 0; h < Math.min(k + 1, 7); h++) N.tiles[GY - 1 - h][x + 2 + k] = "S";
-  const goalX = x + 14;
+  // Escalinata final de piedra (alturas 1 a 5, la cima de dos bloques) y, ocho bloques después, el poste de meta:
+  // desde la cima, con un buen salto corriendo se toca alto (más puntos, o una vida por encima del poste)
+  for (let k = 0; k < 6; k++) for (let h = 0; h < Math.min(k + 1, 5); h++) N.tiles[GY - 1 - h][x + 2 + k] = "S";
+  const goalX = x + 16;
   for (let r = 4; r < GY; r++) N.tiles[r][goalX] = "F";
   decorarSuelo(N, gen.theme, 4, cols - 4);
+  ponerGrandes(N, rnd);
 
   if (gen.jefe) N.ents = N.ents.filter((e) => e.t === "boss" || e.x < arenaX0 * TILE);   // la arena queda libre
   return {
@@ -5762,6 +5812,7 @@ function generarNivel(gen, mecanicas = []) {
     arenaX0: gen.jefe ? arenaX0 * TILE : 0,
     entradaSecreta: N.entrada ? Object.assign({ sala: gen.secreta }, N.entrada) : null,
     salidaSecreta: N.salida,
+    control,
   };
 }
 
@@ -5786,7 +5837,7 @@ const SALAS = [
   { tiempo: 120, sala: true, mapa: [
     "SSSSSSSSSSSSSSSSSSSSSSSS",
     "S......................S",
-    "S......................S",
+    "S....g.................S",
     "S..cccccc..............S",
     "S..BBKBBB.....cccc.....S",
     "S.............SSSS.....S",
@@ -5803,7 +5854,7 @@ const SALAS = [
   { tiempo: 120, sala: true, mapa: [
     "SSSSSSSSSSSSSSSSSSSSSSSS",
     "S......................S",
-    "S.......cccccccc.......S",
+    "S.......ccccgccc.......S",
     "S.......SSSSSSSS.......S",
     "S......................S",
     "S......................S",
@@ -5827,7 +5878,7 @@ const SALAS = [
     "S...ccc....ccc.........S",
     "S......................S",
     "S......................S",
-    "S..................TT..S",
+    "S...........g......TT..S",
     "S.@................TT..S",
     "SGGG....GG....GGGGGGGGGS",
     "SGGGHHHHGGHHHHGGGGGGGGGS",
@@ -5838,7 +5889,7 @@ const SALAS = [
     "SSSSSSSSSSSSSSSSSSSSSSSS",
     "S......................S",
     "S......................S",
-    "S......................S",
+    "S.....................gS",
     "S...cccccc....cccccc...S",
     "S...BBBBBB....BBBBBB...S",
     "S......................S",
@@ -5855,7 +5906,7 @@ const SALAS = [
     "SSSSSSSSSSSSSSSSSSSSSSSS",
     "S......................S",
     "S......................S",
-    "S...cccc....P..........S",
+    "S...gccc....P..........S",
     "S...DDDD...............S",
     "S......................S",
     "S........DDDDDD.cccc...S",
@@ -5876,7 +5927,7 @@ const SALAS = [
     "S.........c............S",
     "S........ccc...........S",
     "S..1....ccccc..........S",
-    "S......ccccccc.........S",
+    "S......cccgccc.........S",
     "S.......ccccc...QPQ....S",
     "S........ccc.......TT..S",
     "S.@.......c........TT..S",
@@ -5997,6 +6048,23 @@ function generarColinas(gen) {
     forma.forEach((linea, i) => [...linea].forEach((ch, k) => ponerCelda(N, ch, x + k, fila + i * 4)));
     x += w + 8;
   }
+  // Monedas estrella: altas sobre los huecos (hay que saltar fuerte) y sobre las cimas de las colinas
+  N.candidatas = []; N.reserva = [];
+  for (let x = 20; x < META - 12; x++) {
+    if (hm[x] === Infinity && hm[x - 1] !== Infinity) {
+      let b = x; while (hm[b + 1] === Infinity) b++;
+      N.candidatas.push({ c: Math.floor((x + b) / 2), r: Math.floor(bordeHueco(x) / TILE) - 5 });
+    } else if (isFinite(hm[x]) && hm[x] <= base - 3 * TILE && hm[x] <= hm[x - 1] && hm[x] < hm[x + 1] && !ocupado.has(x)) {
+      N.candidatas.push({ c: x, r: Math.floor(hm[x] / TILE) - 4 });
+    }
+  }
+  N.candidatas = N.candidatas.filter((st) => st.r >= 2 && !ocupado.has(st.c));
+  ponerGrandes(N, rnd);
+  // Punto de control hacia la mitad, en suelo casi llano, lejos de huecos y de las tuberías
+  let control = null;
+  for (let x = Math.floor(META / 2); x < META - 20 && !control; x++) {
+    if (isFinite(hm[x]) && Math.abs(hm[x + 1] - hm[x]) < 2 && !hoyoCerca(x, x) && !ocupado.has(x)) control = { x: x * TILE, pie: hm[x] };
+  }
   // Una vida escondida en un bloque oculto sobre un tramo llano sin nada encima
   for (let x = 40; x < META - 30 && !ocultoPuesto; x++) {
     if (rnd() > 0.05 || !llano(x - 1, x + 1) || hoyoCerca(x, x) || ocupado.has(x)) continue;
@@ -6029,6 +6097,7 @@ function generarColinas(gen) {
     goalX: META * TILE, theme: gen.theme || null, boss: false, arenaX0: 0, hm,
     entradaSecreta: N.entrada ? Object.assign({ sala: gen.secreta }, N.entrada) : null,
     salidaSecreta: N.salida,
+    control,
   };
 }
 
@@ -6047,15 +6116,20 @@ function sanearNivel(lv) {
     return (lv.plats || []).some((p) => x < p.x + p.w && x + w > p.x && y < p.y + p.h && y + h > p.y);
   };
   const monedas = new Set();
+  const grandes = lv.ents.filter((e) => e.t === "grande");
+  const sobreGrande = (x, y) => grandes.some((g) => x < g.x + TILE && x + 8 > g.x && y < g.y + TILE && y + 10 > g.y);
+  const junto = (e) => lv.control && Math.abs(e.x - lv.control.x) < 4 * TILE;
   lv.ents = lv.ents.filter((e) => {
+    if (e.t === "grande") return true;
     if (e.t === "coin") {
       const k = e.x + "," + e.y;
-      if (monedas.has(k) || tocaAlgo(e.x, e.y, 8, 10)) return false;
+      if (monedas.has(k) || tocaAlgo(e.x, e.y, 8, 10) || sobreGrande(e.x, e.y)) return false;
       monedas.add(k);
       return true;
     }
     if (e.t === "qitem") return "QZB".includes(lv.tiles[Math.floor(e.y / TILE)][Math.floor(e.x / TILE)]);
     if (e.t === "boss" || e.t === "plant" || e.t === "planta_zombie") return true;
+    if (junto(e)) return false;   // al volver al punto de control no hay un enemigo encima
     return !ocupada(Math.floor((e.x + TILE / 2) / TILE), Math.floor((e.y + TILE / 2) / TILE));
   });
   return lv;
@@ -6906,6 +6980,7 @@ const SFX = {
   patear: [200, 120, 0.1], moneda: [880, 1320, 0.06], hongo: [400, 800, 0.2],
   rompe: [150, 60, 0.12], golpe: [200, 80, 0.25], vida: [500, 1000, 0.3],
   meta: [600, 900, 0.5], muerte: [400, 60, 0.7], estrella: [700, 1400, 0.4],
+  control: [660, 990, 0.25], grande: [990, 1980, 0.35],
 };
 let audioCtx = null;
 function tocar(nombre) {
@@ -7124,6 +7199,59 @@ function crearEnemigo(e) {
 // Bola de fuego de la flor de fuego: tamaño, velocidad, rebote en el suelo, duración y máximo en pantalla
 const BOLA = { w: 6, h: 6, vx: 190, rebote: -150, vida: 2.2, max: 2 };
 
+// Contorno de una estrella de cinco puntas (radio exterior r1, interior r2)
+function rutaEstrella(cx, cy, r1, r2) {
+  ctx.beginPath();
+  for (let i = 0; i < 10; i++) {
+    const r = i % 2 ? r2 : r1, a = -Math.PI / 2 + (i * Math.PI) / 5;
+    ctx.lineTo(cx + r * Math.cos(a), cy + r * Math.sin(a));
+  }
+  ctx.closePath();
+}
+
+/* Moneda estrella: moneda grande con una estrella, que gira. (x, y): esquina del tile.
+   fantasma: ya estaba guardada de otra partida (se ve azulada y translúcida) */
+function dibujarGrande(x, y, t, fantasma) {
+  const ancho = Math.max(0.2, Math.abs(Math.cos(t * 2.4)));
+  ctx.save();
+  ctx.globalAlpha = fantasma ? 0.5 : 1;
+  ctx.translate(x + 8, y + 8);
+  ctx.scale(ancho, 1);
+  ctx.fillStyle = fantasma ? "#3a5a8a" : "#7a4a00";
+  ctx.beginPath(); ctx.arc(0, 0, 7.5, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = fantasma ? "#7ab0e8" : "#f2a000";
+  ctx.beginPath(); ctx.arc(0, 0, 6.6, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = fantasma ? "#cfe6ff" : "#ffd23f";
+  ctx.beginPath(); ctx.arc(-0.5, -0.5, 5.4, 0, Math.PI * 2); ctx.fill();
+  if (ancho > 0.45) {
+    ctx.fillStyle = fantasma ? "#ffffff" : "#fff6c8";
+    rutaEstrella(0, 0.3, 4, 1.7); ctx.fill();
+    ctx.strokeStyle = fantasma ? "#3a5a8a" : "#c07000"; ctx.lineWidth = 0.6; ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Icono pequeño de moneda estrella para el marcador y el mapa: "si" (cogida), "antes" (guardada) o "no"
+function iconoGrande(x, y, estado) {
+  ctx.fillStyle = estado === "no" ? PAL.dgr : "#7a4a00";
+  ctx.beginPath(); ctx.arc(x + 4, y + 4, 4, 0, Math.PI * 2); ctx.fill();
+  ctx.fillStyle = estado === "si" ? PAL.y : estado === "antes" ? "#b88a30" : "#24273a";
+  ctx.beginPath(); ctx.arc(x + 4, y + 4, 3, 0, Math.PI * 2); ctx.fill();
+  if (estado !== "no") { ctx.fillStyle = estado === "si" ? PAL.w : "#e0c890"; rutaEstrella(x + 4, y + 4.2, 2.2, 0.9); ctx.fill(); }
+}
+
+// Banderín del punto de control: gris y abajo hasta que se pasa; morado (el color de BRO) y arriba después
+function dibujarControl(x, pie, activo, t) {
+  rect(x + 5, pie - 2, 6, 2, PAL.dgr);
+  rect(x + 7, pie - 30, 2, 28, PAL.w);
+  rect(x + 8, pie - 30, 1, 28, PAL.gr);
+  rect(x + 6, pie - 33, 4, 3, PAL.y);
+  const y = activo ? pie - 29 : pie - 12, ola = Math.sin(t * 6) * 0.8;
+  ctx.fillStyle = activo ? "#8e44d6" : PAL.gr;
+  ctx.beginPath(); ctx.moveTo(x + 9, y); ctx.lineTo(x + 19, y + 3.5 + ola); ctx.lineTo(x + 9, y + 7); ctx.closePath(); ctx.fill();
+  if (activo) { ctx.fillStyle = PAL.y; rutaEstrella(x + 12.5, y + 3.5 + ola / 2, 1.8, 0.8); ctx.fill(); }
+}
+
 class Level {
   constructor(def, mundo) {
     const data = construirNivel(def, mundo.tema);
@@ -7160,6 +7288,11 @@ class Level {
     this.qItems = new Map();   // "col,fila" -> objeto del bloque ? (o del bloque oculto)
     this.multi = new Map();    // "col,fila" -> monedas que quedan en un ladrillo multimoneda
     this.textos = [];          // textos que suben y se desvanecen ("1UP"): { x, y, t, s }
+    this.grandes = [];         // monedas estrella: { x, y, w, h, idx, fantasma, cogida }
+    this.control = data.control || null;   // punto de control: { x, pie } (columna del banderín y altura del suelo)
+    this.controlActivo = false;
+    this.bonusBandera = null;  // premio según la altura a la que se toca el poste: puntos o "1UP"
+    this.metaInicio = 0;       // momento en que se tocó el poste: la bandera baja desde entonces
     this.bossRef = null;
     this.bolas = [];           // bolas de fuego del jugador (flor de fuego)
     // Cañones de pared: disparan a su altura; la bala para en el primer bloque sólido
@@ -7182,6 +7315,7 @@ class Level {
     else if (e.t === "qitem" && e.item === "multi") this.multi.set(Math.floor(e.x / TILE) + "," + Math.floor(e.y / TILE), MONEDAS_MULTI);
     else if (e.t === "qitem") this.qItems.set(Math.floor(e.x / TILE) + "," + Math.floor(e.y / TILE), e.item);
     else if (e.t === "boss") this.bossRef = new Boss(e.x, e.y, this.jefeTipo);
+    else if (e.t === "grande") this.grandes.push({ x: e.x + 2, y: e.y + 1, w: 12, h: 14, idx: e.idx, fantasma: false, cogida: false });
     else this.enemigos.push({ e: crearEnemigo(e), llevado: false });
   }
 
@@ -7250,6 +7384,10 @@ class Level {
 
   // Texto que sube y se desvanece sobre el nivel (por ejemplo "1UP")
   textoFlotante(s, x, y) { this.textos.push({ s, x, y, t: 1.2 }); }
+  actualizarTextos(dt) {
+    for (const tx of this.textos) { tx.t -= dt; tx.y -= 24 * dt; }
+    this.textos = this.textos.filter((tx) => tx.t > 0);
+  }
 
   // Rompe ladrillos al pasar por encima con salto giratorio
   romperConGiro(player, game) {
@@ -7300,8 +7438,7 @@ class Level {
     this.actualizarBolas(dt, game);
     for (const c of this.coins) c.update(dt);
     this.coins = this.coins.filter((c) => c.alive);
-    for (const tx of this.textos) { tx.t -= dt; tx.y -= 24 * dt; }
-    this.textos = this.textos.filter((tx) => tx.t > 0);
+    this.actualizarTextos(dt);
     for (const it of this.items) it.update(dt, this);
     this.items = this.items.filter((it) => it.alive);
 
@@ -7309,9 +7446,17 @@ class Level {
     game.colisionesJugador(this);
     this.cam.seguir(p, this, dt);
 
-    // Poste de meta: al llegar, termina el nivel
+    // Punto de control: se activa al pasar junto al banderín (también al salir de la zona secreta por delante)
+    if (this.control && !this.controlActivo && p.x + p.w / 2 >= this.control.x + 8) {
+      this.controlActivo = true;
+      game.activarControl(this);
+    }
+
+    // Poste de meta: al llegar, termina el nivel; cuanto más alto se toca, más premio
     if (!this.meta && p.x + p.w >= this.goalX) {
       this.meta = true;
+      this.metaInicio = performance.now();
+      this.bonusBandera = game.premioBandera(this, p);
       game.sfx("meta");
     }
   }
@@ -7360,6 +7505,10 @@ class Level {
         drawSprite(Bloques.sprite(pl.t === "movil" || pl.madera ? "W|1000" : "X"), pl.x + k * TILE - cam.x, pl.y - cam.y);
       }
     }
+    // Punto de control y monedas estrella
+    const ahora = performance.now() / 1000;
+    if (this.control) dibujarControl(this.control.x - cam.x, this.control.pie - cam.y, this.controlActivo, ahora);
+    for (const g of this.grandes) dibujarGrande(g.x - 2 - cam.x, g.y - 1 - cam.y, ahora + g.idx, g.fantasma);
     // Monedas: arte de bloques.js (8 frames de giro), centradas en su hitbox
     for (const c of this.coins) {
       drawSprite(Bloques.sprite("o" + (Math.floor(c.anim) % 8)), c.x + c.w / 2 - 8 - cam.x, c.y + c.h / 2 - 8 - cam.y);
@@ -7443,9 +7592,17 @@ class Level {
       const cuerpo = tileAt(this, c, r - 1) === "T", derecha = tileAt(this, c - 1, r) === "T";
       drawSprite(Bloques.sprite(cuerpo ? (derecha ? "q" : "p") : (derecha ? "Q" : "P")), x, y);
     } else if (t === "F") {
-      // Poste de meta: la bandera va en el bloque de arriba; el resto es poste
+      // Poste de meta: la bandera va en el bloque de arriba; el resto es poste. Al tocarlo, la bandera baja
       if (tileAt(this, c, r - 1) === "F") this.dibujarPoste(x, y);
-      else drawSprite(Bloques.sprite("E"), x, y);
+      else {
+        let bajada = 0;
+        if (this.meta) {
+          let fin = r; while (tileAt(this, c, fin + 1) === "F") fin++;
+          bajada = Math.min(1, (performance.now() - this.metaInicio) / 900) * (fin - r) * TILE;
+        }
+        if (bajada > 0) { this.dibujarPoste(x, y); rect(x + 2, y - 1, 3, 3, PAL.y); }
+        drawSprite(Bloques.sprite("E"), x, y + bajada);
+      }
     } else if (t === "G") {
       drawSprite(Bloques.sprite(this.terreno + "|" + this.aireDe(c, r)), x, y);
     } else if (t === "S") {
@@ -7630,7 +7787,9 @@ class Game {
     this.transicion = null;   // entrada o salida de una tubería: { tipo, t, dur, y0, tuberia }
     this.esperarSoltar = false;   // tras cambiar de sitio por una tubería, hay que soltar ↓ antes de volver a usarla
     this.avisoSecretaT = 0;   // tiempo que se muestra el aviso "zona secreta"
-    this.secretosHallados = new Set();   // zonas ya halladas: la primera salida da premio
+    this.secretosHallados = new Set();   // zonas secretas halladas ("mundo:fase"): se guardan y se ven en el mapa
+    this.grandes = {};        // "mundo:fase" -> [bool, bool, bool]: monedas estrella guardadas
+    this.intento = null;      // fase en curso: { clave, grandes: Set de las cogidas, control: null | { grandes } }
     this.cargarProgreso();
   }
 
@@ -7646,6 +7805,8 @@ class Game {
       this.mundoIdx = clamp(d.mundoIdx || 0, 0, MUNDOS.length - 1);
       this.vidas = clamp(d.vidas || 3, 1, 99);
       this.monedas = d.monedas || 0;
+      this.grandes = d.grandes || {};
+      this.secretosHallados = new Set(d.secretos || []);
       // Partidas guardadas antes de que 100 monedas reiniciaran el contador
       while (this.monedas >= 100) { this.monedas -= 100; this.vidas = Math.min(99, this.vidas + 1); }
       this.score = d.score || 0;
@@ -7656,6 +7817,7 @@ class Game {
       localStorage.setItem(SAVE_KEY, JSON.stringify({
         completados: this.completados, bonus: this.bonus, reserva: this.reserva,
         mundoIdx: this.mundoIdx, vidas: this.vidas, monedas: this.monedas, score: this.score,
+        grandes: this.grandes, secretos: [...this.secretosHallados],
       }));
     } catch (e) { /* sin almacenamiento: el juego sigue funcionando */ }
   }
@@ -7663,6 +7825,7 @@ class Game {
     try { localStorage.removeItem(SAVE_KEY); } catch (e) { /* nada que borrar */ }
     this.completados = {}; this.bonus = {}; this.reserva = { seta: 0, estrella: 0, flor: 0, pluma: 0 };
     this.mundoIdx = 0; this.vidas = 3; this.monedas = 0; this.score = 0;
+    this.grandes = {}; this.secretosHallados = new Set();
   }
 
   // Una fase está desbloqueada si es la primera del mundo (y el mundo está abierto) o la anterior está completada
@@ -7687,6 +7850,27 @@ class Game {
     let vida = false;
     while (this.monedas >= 100) { this.monedas -= 100; this.ganarVida(x, y); vida = true; }
     if (!vida) this.sfx("moneda");
+  }
+  // Punto de control: al morir se vuelve aquí, con las monedas estrella que se llevaban al pasarlo
+  activarControl(lvl) {
+    if (this.intento) this.intento.control = { grandes: new Set(this.intento.grandes) };
+    this.sfx("control");
+    emitir(lvl.control.x + 12, lvl.control.pie - 26, 10, ["#8e44d6", PAL.y, PAL.w], { up: 110, spread: 70, life: 0.5 });
+  }
+  // Premio del poste de meta según la altura de los pies sobre el suelo; por encima del poste, una vida
+  premioBandera(lvl, p) {
+    const altura = GY * TILE - (p.y + p.h);
+    const premio = [[112, "1UP"], [88, 5000], [64, 2000], [40, 800], [16, 400], [-Infinity, 100]].find(([h]) => altura >= h)[1];
+    if (premio === "1UP") { this.puntos(5000); this.ganarVida(p.x, p.y); }
+    else { this.puntos(premio); lvl.textoFlotante(String(premio), p.x, p.y - 8); }
+    return premio;
+  }
+  // Monedas estrella de un nivel recién creado: las cogidas en este intento no salen; las guardadas salen translúcidas
+  prepararGrandes(lvl) {
+    if (!this.intento) return;
+    const guardadas = this.grandes[this.intento.clave] || [];
+    lvl.grandes = lvl.grandes.filter((g) => !this.intento.grandes.has(g.idx));
+    for (const g of lvl.grandes) g.fantasma = !!guardadas[g.idx];
   }
   // Una vida más (como mucho 99), con su sonido y el "1UP" sobre el nivel
   ganarVida(x, y) {
@@ -7789,6 +7973,18 @@ class Game {
         this.sumarMonedas(1, c.x, c.y);
       }
     }
+
+    // Monedas estrella: cuentan cuando se termina la fase; las que ya estaban guardadas solo dan puntos
+    for (const g of lvl.grandes) {
+      if (g.cogida || !aabb(hitbox, g)) continue;
+      g.cogida = true;
+      if (this.intento) this.intento.grandes.add(g.idx);
+      this.puntos(g.fantasma ? 200 : 2000);
+      this.sfx("grande");
+      emitir(g.x + 6, g.y + 7, 14, [PAL.y, PAL.w, "#f2a000"], { up: 130, spread: 100, life: 0.6 });
+      lvl.textoFlotante(g.fantasma ? "200" : "2000", g.x - 2, g.y);
+    }
+    lvl.grandes = lvl.grandes.filter((g) => !g.cogida);
 
     // Caparazón lanzado: derriba a los demás enemigos que toca
     for (const w of lvl.enemigos) {
@@ -7916,11 +8112,22 @@ class Game {
   }
 
   // ---------- Flujo de nivel ----------
-  empezarNivel(mIdx, nIdx) {
+  // reintento: tras morir; si se pasó el punto de control, se empieza en él
+  empezarNivel(mIdx, nIdx, reintento = false) {
     this.mundoIdx = mIdx;
     this.nivelIdx = nIdx;
     const mundo = MUNDOS[mIdx];
+    const clave = mIdx + ":" + nIdx;
+    if (!reintento || !this.intento || this.intento.clave !== clave) this.intento = { clave, grandes: new Set(), control: null };
     this.lvl = new Level(mundo.niveles[nIdx], mundo);
+    this.prepararGrandes(this.lvl);
+    if (this.intento.control && this.lvl.control) {
+      const lvl = this.lvl, p = lvl.player;
+      lvl.controlActivo = true;
+      p.x = lvl.control.x + 2;
+      p.y = lvl.control.pie - p.h;
+      lvl.cam.centrar(p, lvl);
+    }
     this.secreta = null;
     this.transicion = null;
     this.estado = "nivel";
@@ -7952,7 +8159,7 @@ class Game {
         return;
       }
       if (lvl.meta) {
-        this.timerEstado = 1.6;
+        this.timerEstado = 2.4;
         this.estado = "nivelOK";
         this.sfx("meta");
         return;
@@ -7967,6 +8174,16 @@ class Game {
       return;
     }
     this.timerEstado -= dt;
+    // Fase superada: el jugador baja por el poste mientras baja la bandera
+    if (this.estado === "nivelOK" && this.lvl) {
+      const lvl = this.lvl, pl = lvl.player;
+      const suelo = lvl.hm ? superficieEn(lvl, lvl.goalX - 4) : GY * TILE;
+      pl.x = lvl.goalX - pl.w + 2;
+      pl.vx = 0; pl.vy = 0;
+      pl.y = Math.min(pl.y + 120 * dt, suelo - pl.h);
+      pl.pose = pl.y + pl.h < suelo ? "caida" : "quieto";
+      lvl.actualizarTextos(dt);
+    }
     if (this.estado === "muerte" && this.lvl) {
       const pl = this.lvl.player;
       pl.vy += GRAVITY * dt;
@@ -7978,7 +8195,10 @@ class Game {
         this.estado = "gameover";
         this.timerEstado = 4;
       } else {
-        this.empezarNivel(this.mundoIdx, this.nivelIdx);
+        // Se vuelve a empezar (en el punto de control, si se pasó) con las monedas estrella que se tenían al pasarlo
+        const it = this.intento;
+        if (it) it.grandes = it.control ? new Set(it.control.grandes) : new Set();
+        this.empezarNivel(this.mundoIdx, this.nivelIdx, true);
       }
     }
     if (this.estado === "nivelOK" && this.timerEstado <= 0) {
@@ -8022,6 +8242,14 @@ class Game {
     const k = padre.entradaSecreta.sala;
     this.secreta = { lvl: padre, tuberia: t, sala: k };
     this.lvl = new Level(SALAS[k], MUNDOS[3]);
+    this.prepararGrandes(this.lvl);   // la moneda estrella de la sala es la tercera de la fase
+    // La primera vez que se halla cada zona: puntos, y queda marcada en el mapa
+    const id = this.mundoIdx + ":" + this.nivelIdx;
+    if (!this.secretosHallados.has(id)) {
+      this.secretosHallados.add(id);
+      this.score += 1000;
+      this.guardarProgreso();
+    }
     this.transicion = null;
     this.estado = "nivel";
     this.esperarSoltar = true;
@@ -8031,12 +8259,6 @@ class Game {
 
   salirSala() {
     const { lvl: padre, tuberia: entrada } = this.secreta;
-    const id = this.mundoIdx + ":" + this.nivelIdx;
-    // Premio: la primera vez que se sale de cada zona, puntos (la sala ya tiene sus monedas y su vida)
-    if (!this.secretosHallados.has(id)) {
-      this.secretosHallados.add(id);
-      this.score += 1000;
-    }
     this.secreta = null;
     this.lvl = padre;
     // Se sale por la tubería de salida, más adelante en la fase; la entrada queda cerrada (sin flecha)
@@ -8057,6 +8279,13 @@ class Game {
     const nivel = mundo.niveles[this.nivelIdx];
     const castillo = this.nivelIdx === mundo.niveles.length - 1;
     this.completados[this.mundoIdx + ":" + this.nivelIdx] = true;
+    // Las monedas estrella cogidas en esta partida de la fase quedan guardadas
+    if (this.intento) {
+      const g = this.grandes[this.intento.clave] || [false, false, false];
+      for (const i of this.intento.grandes) g[i] = true;
+      this.grandes[this.intento.clave] = g;
+      this.intento = null;
+    }
     this.guardarProgreso();
     if (castillo && this.mundoIdx === MUNDOS.length - 1) {
       this.estado = "final";
@@ -8072,6 +8301,7 @@ class Game {
   // Vuelve al mapa del mundo actual (overworld); cursor: nodo donde queda el jugador
   volverAlMapa(cursor) {
     this.lvl = null;
+    this.intento = null;
     this.secreta = null;
     this.transicion = null;
     this.ov = new Overworld(this, this.mundoIdx, cursor);
@@ -8344,7 +8574,7 @@ const GLIFOS = {
   "-": ["000", "000", "111", "000", "000"], "!": ["010", "010", "010", "000", "010"],
   "?": ["110", "001", "010", "000", "010"], "/": ["001", "001", "010", "100", "100"],
   "(": ["010", "100", "100", "100", "010"], ")": ["010", "001", "001", "001", "010"],
-  "'": ["010", "010", "000", "000", "000"], " ": ["000", "000", "000", "000", "000"],
+  "'": ["010", "010", "000", "000", "000"], "+": ["000", "010", "111", "010", "000"], " ": ["000", "000", "000", "000", "000"],
 };
 
 // Dibuja un glifo en (x,y) sobre el contexto dado (por defecto, la pantalla)
@@ -8485,6 +8715,15 @@ class Overworld {
         drawSprite(getSprite("nodo-" + color, circuloRows(6, "c"), { c: color }), n.x - 6, n.y - 6);
         txt(String(n.ref + 1), n.x, n.y - 2, PAL.k, "center");
       }
+      // Bajo cada fase abierta, sus tres monedas estrella; arriba a la derecha, una tubería si se halló su zona secreta
+      if (n.ref !== undefined && abierto) {
+        const clave = this.mIdx + ":" + n.ref, g = this.g.grandes[clave] || [];
+        for (let i = 0; i < 3; i++) rect(n.x - 5 + i * 4, n.y + (n.castillo ? 10 : 8), 2, 2, g[i] ? PAL.y : PAL.dgr);
+        if (this.g.secretosHallados.has(clave)) {
+          rect(n.x + 5, n.y - 9, 5, 2, PAL.g);
+          rect(n.x + 6, n.y - 7, 3, 3, PAL.dg);
+        }
+      }
     });
     // Cursor: el jugador parpadea sobre el nodo actual
     const n = nodos[this.cur];
@@ -8499,6 +8738,15 @@ class Overworld {
     const texto = n.ref !== undefined ? this.m.niveles[n.ref].nombre : this.hecho(n) ? "CASA VACIA" : "CASA DE MINIJUEGOS";
     rect(0, H - 46, W, 46, "rgba(0,0,0,0.5)");   // banda oscura para leer los textos de abajo
     txt(texto, W / 2, H - 12, PAL.w, "center");
+    if (n.ref !== undefined) {
+      const clave = this.mIdx + ":" + n.ref, g = this.g.grandes[clave] || [];
+      for (let i = 0; i < 3; i++) iconoGrande(W - 36 + i * 10, H - 14, g[i] ? "si" : "no");
+      if (this.g.secretosHallados.has(clave)) {
+        rect(4, H - 14, 7, 3, PAL.g);
+        rect(5, H - 11, 5, 4, PAL.dg);
+        txt("SECRETA", 14, H - 12, PAL.w);
+      }
+    }
     dibujarReserva(W / 2 - 60, H - 42, this.g.reserva);
     txt("ENTER: entrar  ESC: mundos", W / 2, H - 24, PAL.w, "center");
   }
@@ -8600,6 +8848,9 @@ function dibujarHUD(game) {
   drawSprite(Bloques.sprite("o0"), 2, 10);
   txtHud("X" + String(game.monedas).padStart(2, "0"), 17, 15, PAL.y);
   dibujarReserva(44, 12, game.reserva);
+  // Monedas estrella de la fase: cogidas en esta partida, guardadas de antes o por coger
+  const it = game.intento, guardadas = (it && game.grandes[it.clave]) || [];
+  for (let i = 0; i < 3; i++) iconoGrande(W - 66 + i * 10, 13, it && it.grandes.has(i) ? "si" : guardadas[i] ? "antes" : "no");
   drawSprite(getSprite("reloj", circuloRows(3, "c"), { c: PAL.w }), W - 26, 15);
   txtHud(String(Math.ceil(lvl.tiempoRest)).padStart(3, "0"), W - 6, 15, PAL.w, "right");
 }
@@ -8692,7 +8943,10 @@ function dibujarJuego(game) {
   dibujarNivelYHUD(game);
   if (e === "pausa") velo("PAUSA", "P o ESC para seguir");
   else if (e === "muerte") velo("BRO x" + game.vidas, "");
-  else if (e === "nivelOK") velo("NIVEL COMPLETADO", "PUNTOS " + game.score);
+  else if (e === "nivelOK" && game.timerEstado < 1.2) {
+    const b = game.lvl.bonusBandera;
+    velo("NIVEL COMPLETADO", (b ? "BANDERA " + (b === "1UP" ? "1UP" : "+" + b) + "   " : "") + "PUNTOS " + game.score);
+  }
   else if (e === "mundoOK") velo("MUNDO " + MUNDOS[game.mundoIdx].id + " COMPLETADO", "¡Nuevo mundo abierto!");
   else if (e === "gameover") velo("GAME OVER", "Se reinicia el mapa");
 }
