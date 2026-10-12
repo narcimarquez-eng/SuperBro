@@ -6304,20 +6304,50 @@ function antorchaSprite(f) {
 }
 
 function escenaCastillo(cam, pal) {
-  // Atardecer: de púrpura arriba a naranja cerca del horizonte
+  // Atardecer: de índigo arriba a malva y naranja cerca del horizonte
   const horizonte = OY + 176;
-  rect(0, 0, W, H, pal.cielo);
-  const banda = Math.ceil(horizonte / 8);
-  for (let i = 0; i < 8; i++) rect(0, i * banda, W, banda, mezclar(pal.cielo, i * 0.1, "#ff9a5a"));
+  const cielo = ctx.createLinearGradient(0, 0, 0, horizonte);
+  cielo.addColorStop(0, "#2a1f4f");
+  cielo.addColorStop(0.5, "#7a4a86");
+  cielo.addColorStop(1, "#ff9a5a");
+  ctx.fillStyle = cielo;
+  ctx.fillRect(0, 0, W, H);
   dibujarSol(pal, W - 70, 56 + OY * 0.2);
   ctx.save();
   ctx.translate(0, OY);
   capaPeriodica(texTorres(), cam.x, 0.2, 0);
   capaPeriodica(texMuro(), cam.x, 0.5, 96);
-  // Antorchas sobre el muro, con parpadeo
-  const fr = Math.floor(performance.now() / 110) % 3;
+  // Sombra del muro: más oscura bajo las almenas y junto al suelo
+  const sombra = ctx.createLinearGradient(0, 96, 0, 176);
+  sombra.addColorStop(0, "rgba(20,10,30,0.35)");
+  sombra.addColorStop(0.35, "rgba(20,10,30,0.05)");
+  sombra.addColorStop(1, "rgba(20,10,30,0.4)");
+  ctx.fillStyle = sombra;
+  ctx.fillRect(0, 96, W, 80);
+  // Estandartes morados con emblema dorado, colgados del muro entre las antorchas
   const off = mod(cam.x * 0.5, 96);
-  for (let k = -1; k < 6; k++) drawSprite(antorchaSprite(fr), k * 96 + 44 - off, 84);
+  for (let k = -1; k < 6; k++) {
+    const bx = k * 96 + 92 - off;
+    ctx.fillStyle = "#3d1a57";
+    ctx.fillRect(bx - 9, 106, 18, 42);
+    ctx.fillStyle = "#6a2c91";
+    ctx.fillRect(bx - 8, 107, 16, 40);
+    ctx.beginPath(); ctx.moveTo(bx - 8, 147); ctx.lineTo(bx, 141); ctx.lineTo(bx + 8, 147); ctx.closePath(); ctx.fill();
+    ctx.fillStyle = "#f2c14e";
+    ctx.beginPath(); ctx.moveTo(bx, 116); ctx.lineTo(bx + 3, 122); ctx.lineTo(bx, 128); ctx.lineTo(bx - 3, 122); ctx.closePath(); ctx.fill();
+  }
+  // Antorchas sobre el muro, con parpadeo y un halo de luz cálida alrededor
+  const fr = Math.floor(performance.now() / 110) % 3;
+  for (let k = -1; k < 6; k++) {
+    const tx = k * 96 + 44 - off;
+    const brillo = 0.45 + 0.1 * Math.sin(performance.now() / 150 + k);
+    const halo = ctx.createRadialGradient(tx + 4, 88, 2, tx + 4, 88, 42);
+    halo.addColorStop(0, "rgba(255,170,80," + brillo.toFixed(3) + ")");
+    halo.addColorStop(1, "rgba(255,170,80,0)");
+    ctx.fillStyle = halo;
+    ctx.beginPath(); ctx.arc(tx + 4, 88, 42, 0, Math.PI * 2); ctx.fill();
+    drawSprite(antorchaSprite(fr), tx, 84);
+  }
   ctx.restore();
   pintarExtension(pal, "castillo");
 }
