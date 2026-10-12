@@ -6552,6 +6552,8 @@ class Player {
     if (this.vy >= 0) this.jumping = false;
     if (!held.jump && this.vy < -120 && !this.rebotando) this.vy = -120; // corta el salto al soltar
 
+    // Punto más alto del salto o de la caída (para saber desde cuánto se cae)
+    if (this.vy <= 0 || this.onGround || this.apice === undefined) this.apice = this.y;
     // --- Colisiones ---
     const vyAntes = this.vy, enAireAntes = !this.onGround, yAntes = this.y;
     const r = moverEntidad(lvl, this, dt);
@@ -6581,8 +6583,9 @@ class Player {
       // El rebote de pinchos sube lo justo para salir del hoyo andando (unos 32 px)
       if (!this.dead) { this.vy = -PHYS.jumpV * 0.8; this.onGround = false; this.jumping = false; this.rebotando = true; }
     }
-    // Aterrizaje fuerte: aplastamiento y polvo
+    // Aterrizaje fuerte: aplastamiento y polvo; desde muy alto (más de seis bloques), la pantalla tiembla
     if (r.suelo && enAireAntes && vyAntes > 150) {
+      if (this.y - this.apice > 6 * TILE && game.sacudir) game.sacudir(0.18, 2);
       this.aterrizajeT = 0.12;
       emitir(this.x + this.w / 2, this.y + this.h, 6, ["#e8e8f0", "#c8c8d8"], { up: 40, spread: 70, life: 0.35, size: 2 });
     }
@@ -7375,8 +7378,18 @@ function dibujarControl(x, pie, activo, t) {
   if (activo) { ctx.fillStyle = PAL.y; rutaEstrella(x + 12.5, y + 3.5 + ola / 2, 1.8, 0.8); ctx.fill(); }
 }
 
+// Salas secretas: el suelo y un tinte de color según el mundo desde el que se entra
+const TERRENO_SALA = { pradera: "R", desierto: "A", bosque: "R", cueva: "R", hielo: "I", agua: "W", castillo: "R", cielo: "N" };
+const TINTE_SALA = {
+  pradera: "rgba(60,180,90,0.2)", desierto: "rgba(230,160,60,0.25)", bosque: "rgba(30,120,50,0.3)", cueva: null,
+  hielo: "rgba(120,200,255,0.28)", agua: "rgba(40,120,220,0.3)", castillo: "rgba(180,40,40,0.25)", cielo: "rgba(255,230,150,0.3)",
+};
+// Temas con vegetación: sus muros y mesetas llevan enredaderas
+const TEMAS_VERDES = ["pradera", "bosque"];
+
 class Level {
-  constructor(def, mundo) {
+  // origen: en una sala secreta, el mundo desde el que se ha entrado (da el suelo y el tinte de la sala)
+  constructor(def, mundo, origen) {
     const data = construirNivel(def, mundo.tema);
     this.def = def;
     this.nombre = data.nombre;
@@ -7406,6 +7419,12 @@ class Level {
     this.plats = (data.plats || []).map((d) => new Plataforma(d));   // plataformas móviles y que caen
     this.mundo = { tile: TILE, jugador: null, solid: (x, y) => this.solidoEn(x, y) };   // lo que usan los enemigos
     this.terreno = TERRENO_DE_TEMA[this.temaKey] || "#";   // carácter de bloques.js para el suelo
+    this.tinte = null;                                      // color que tiñe el fondo (salas secretas)
+    if (def.sala && origen) {
+      this.terreno = TERRENO_SALA[origen.tema] || this.terreno;
+      this.tinte = TINTE_SALA[origen.tema] || null;
+    }
+    this.golpes = new Map();   // "col,fila" -> tiempo que le queda al saltito de un bloque golpeado
     this.coins = [];
     this.items = [];
     this.qItems = new Map();   // "col,fila" -> objeto del bloque ? (o del bloque oculto)
@@ -7459,6 +7478,10 @@ class Level {
   golpearBloque(c, r, player, game) {
     const t = tileAt(this, c, r);
     const k = c + "," + r;
+    if (t === "Q" || t === "Z" || t === "B") {
+      this.golpes.set(k, 0.16);
+      this.derribarEncima(c, r, game);
+    }
     if (t === "Q" || t === "Z") {
       this.tiles[r][c] = "U";
       const item = this.qItems.get(k) || "moneda";
@@ -7490,6 +7513,18 @@ class Level {
         emitir(c * TILE + 8, r * TILE, 3, [this.pal.O], { up: 40, life: 0.3 });
         game.sfx("golpe");
       }
+    }
+  }
+
+  // El golpe desde abajo derriba a los enemigos que están de pie sobre el bloque
+  derribarEncima(c, r, game) {
+    const zona = { x: c * TILE, y: (r - 1) * TILE, w: TILE, h: TILE + 2 };
+    for (const w of this.enemigos) {
+      const e = w.e, b = Enemigos.box(e);
+      if (w.llevado || e.dead || e.remove || !b || !aabb(zona, b)) continue;
+      e.dead = true; e.deadT = 0; e.vx = 0; e.vy = -200;
+      game.puntos(200);
+      game.efectoEnemigo(b.x + b.w / 2, b.y + b.h / 2);
     }
   }
 
@@ -7579,6 +7614,7 @@ class Level {
     }
     if (this.avisoT > 0) this.avisoT -= dt;
     if (this.introJefeT > 0) this.introJefeT -= dt;
+    for (const [k, g] of this.golpes) { if (g - dt <= 0) this.golpes.delete(k); else this.golpes.set(k, g - dt); }
     // Plataformas móviles y que caen: se mueven antes y llevan consigo al jugador que está de pie sobre ellas
     for (const pl of this.plats) pl.update(dt, this);
     if (p.plat) { p.x += p.plat.dx; p.y += p.plat.dy; }
@@ -7644,6 +7680,7 @@ class Level {
   dibujar(game) {
     const cam = this.cam;
     dibujarFondo(cam, this.pal, this.temaKey, this.hora, this);
+    if (this.tinte) rect(0, 0, W, H, this.tinte);   // las salas secretas toman el color de su mundo
     // El área de diseño se desplaza según la pantalla (OY); el HUD se dibuja aparte, arriba
     ctx.save();
     ctx.translate(0, OY);
@@ -7660,9 +7697,14 @@ class Level {
     for (let r = 0; r < this.rows; r++) {
       for (let c = c0; c <= c1; c++) {
         const t = this.tiles[r][c];
-        if (t === "." || t === "Z") continue;   // el bloque oculto no se ve
-        const x = c * TILE - cam.x, y = r * TILE - cam.y;
+        if (t === ".") continue;
+        const x = c * TILE - cam.x;
+        let y = r * TILE - cam.y;
+        if (t === "Z") { this.brilloOculto(x, y, c, r); continue; }   // el bloque oculto no se ve: como mucho, un destello
+        const g = this.golpes.get(c + "," + r);
+        if (g) y -= Math.round(Math.sin((1 - g / 0.16) * Math.PI) * 4);   // saltito del bloque golpeado
         this.dibujarTile(t, x, y, c, r);
+        if (t === "G" && r < GY) this.detalleTerreno(x, y, c, r);
       }
     }
     // Pista de la zona secreta: una flecha amarilla que flota sobre la boca cuando el jugador está cerca
@@ -7799,6 +7841,36 @@ class Level {
     } else {
       drawSprite(Bloques.sprite({ B: "=", Q: "?", U: "x" }[t]), x, y);   // ladrillo, interrogación, usado
     }
+  }
+
+  // Detalle de los muros y mesetas (terreno por encima del suelo): grietas, piedrecitas y, en los temas verdes,
+  // enredaderas que cuelgan desde lo alto por los lados al aire. Cada bloque tiene siempre el mismo detalle
+  detalleTerreno(x, y, c, r) {
+    const h = ((c * 73856093) ^ (r * 19349663)) >>> 0;
+    const aire = this.aireDe(c, r);
+    if (h % 5 === 0) {
+      const gx = x + 4 + ((h >> 3) % 8), gy = y + 4 + ((h >> 6) % 5);
+      rect(gx, gy, 1, 3, "rgba(0,0,0,0.3)");
+      rect(gx + 1, gy + 2, 1, 3, "rgba(0,0,0,0.3)");
+      rect(gx - 1, gy + 4, 1, 2, "rgba(0,0,0,0.22)");
+    }
+    if (h % 7 === 3) rect(x + 2 + ((h >> 4) % 11), y + 3 + ((h >> 8) % 10), 2, 1, "rgba(255,255,255,0.2)");
+    if (TEMAS_VERDES.includes(this.temaKey) && aire[0] === "1" && (aire[1] === "1" || aire[2] === "1") && h % 2 === 0) {
+      const lx = aire[1] === "1" ? x + 1 : x + 13, largo = 8 + (h % 8);
+      rect(lx, y + 2, 1, largo, "#2f7d32");
+      rect(lx - 1, y + 5, 2, 2, "#4caf50");
+      rect(lx, y + 2 + largo - 2, 2, 2, "#4caf50");
+    }
+  }
+
+  // Destello muy sutil, cada pocos segundos, donde hay un bloque oculto
+  brilloOculto(x, y, c, r) {
+    const fase = (performance.now() / 1000 + ((c * 7 + r * 3) % 4)) % 4;
+    if (fase > 0.4) return;
+    ctx.globalAlpha = Math.sin((fase / 0.4) * Math.PI) * 0.55;
+    rect(x + 7, y + 6, 1, 4, PAL.w);
+    rect(x + 6, y + 7, 3, 1, PAL.w);
+    ctx.globalAlpha = 1;
   }
 
   // Lados que dan al aire (arriba, izquierda, derecha, abajo): "1" = aire, "0" = bloque
@@ -8059,6 +8131,8 @@ class Game {
   }
   sfx(n) { tocar(n); }
   efectoEnemigo(x, y) { emitir(x + 6, y + 6, 8, [PAL.w, PAL.y], { up: 90, spread: 90, life: 0.4 }); }
+  // Tiembla la pantalla durante t segundos con la fuerza dada (píxeles)
+  sacudir(t, fuerza) { this.sacudida = { hasta: performance.now() + t * 1000, fuerza }; }
 
   // Golpe contra un bloque sobre la cabeza del jugador
   golpearDesdeAbajo(p) {
@@ -8150,6 +8224,7 @@ class Game {
         c.alive = false;
         this.puntos(100);
         this.sumarMonedas(1, c.x, c.y);
+        emitir(c.x + 4, c.y + 5, 5, [PAL.w, PAL.y], { up: 70, spread: 55, life: 0.35, size: 1, g: 80 });
       }
     }
 
@@ -8300,6 +8375,7 @@ class Game {
     if (!reintento || !this.intento || this.intento.clave !== clave) this.intento = { clave, grandes: new Set(), control: null };
     this.lvl = new Level(mundo.niveles[nIdx], mundo);
     this.prepararGrandes(this.lvl);
+    this.irisAbre = performance.now();
     if (this.intento.control && this.lvl.control) {
       const lvl = this.lvl, p = lvl.player;
       lvl.controlActivo = true;
@@ -8373,6 +8449,7 @@ class Game {
       if (this.vidas <= 0) {
         this.estado = "gameover";
         this.timerEstado = 4;
+        this.irisAbre = performance.now();
       } else {
         // Se vuelve a empezar (en el punto de control, si se pasó) con las monedas estrella que se tenían al pasarlo
         const it = this.intento;
@@ -8420,8 +8497,9 @@ class Game {
     const padre = this.lvl;
     const k = padre.entradaSecreta.sala;
     this.secreta = { lvl: padre, tuberia: t, sala: k };
-    this.lvl = new Level(SALAS[k], MUNDOS[3]);
+    this.lvl = new Level(SALAS[k], MUNDOS[3], MUNDOS[this.mundoIdx]);
     this.prepararGrandes(this.lvl);   // la moneda estrella de la sala es la tercera de la fase
+    this.irisAbre = performance.now();
     // La primera vez que se halla cada zona: puntos, y queda marcada en el mapa
     const id = this.mundoIdx + ":" + this.nivelIdx;
     if (!this.secretosHallados.has(id)) {
@@ -8448,6 +8526,7 @@ class Game {
     p.y = e.row * TILE + TILE - p.h;             // dentro del tubo: sale hacia arriba
     p.vx = 0; p.vy = 0;
     padre.cam.centrar(p, padre);
+    this.irisAbre = performance.now();
     this.transicion = { tipo: "subir", t: 0, dur: 0.6, y0: p.y, tuberia: e };
     this.estado = "tuberia";
     this.sfx("pisar");
@@ -8482,6 +8561,7 @@ class Game {
   volverAlMapa(cursor) {
     this.lvl = null;
     this.intento = null;
+    this.irisAbre = performance.now();
     this.secreta = null;
     this.transicion = null;
     this.ov = new Overworld(this, this.mundoIdx, cursor);
@@ -9036,7 +9116,13 @@ function dibujarHUD(game) {
 }
 
 function dibujarNivelYHUD(game) {
-  game.lvl.dibujar(game);
+  const sac = game.sacudida;
+  if (sac && performance.now() < sac.hasta) {
+    ctx.save();
+    ctx.translate(Math.round((Math.random() * 2 - 1) * sac.fuerza), Math.round((Math.random() * 2 - 1) * sac.fuerza));
+    game.lvl.dibujar(game);
+    ctx.restore();
+  } else game.lvl.dibujar(game);
   dibujarHUD(game);
   if (game.avisoSecretaT > 0) txtHud("ZONA SECRETA", W / 2, 22, PAL.y, "center", 2);
   if (game.lvl.avisoT > 0) txtHud("DERROTA AL JEFE", W / 2, 22, PAL.y, "center", 2);
@@ -9064,8 +9150,41 @@ function txtLogo(s, cx, y, escala, t) {
   });
 }
 
-// Dibuja la pantalla actual del juego
+// Iris: un círculo que se cierra a negro o se abre desde negro, centrado en el jugador
+// (en el mapa, en el centro). f: 1 = abierto del todo, 0 = cerrado
+function aperturaIris(game) {
+  const tr = game.transicion;
+  if (game.estado === "tuberia" && tr && (tr.tipo === "entrar" || tr.tipo === "salir")) return 1 - Math.min(1, tr.t / tr.dur);
+  if (game.estado === "muerte" && game.timerEstado < 0.5) return Math.max(0, game.timerEstado / 0.5);
+  if (game.estado === "nivelOK" && game.timerEstado < 0.45) return Math.max(0, game.timerEstado / 0.45);
+  return Math.min(1, (performance.now() - (game.irisAbre || 0)) / 450);
+}
+function dibujarIris(game) {
+  if (game.estado === "titulo") return;
+  const f = aperturaIris(game);
+  if (f >= 1) return;
+  let cx = W / 2, cy = H / 2;
+  const enNivel = game.lvl && ["nivel", "tuberia", "muerte", "nivelOK", "pausa", "gameover"].includes(game.estado);
+  if (enNivel) {
+    const p = game.lvl.player, cam = game.lvl.cam;
+    cx = p.x + p.w / 2 - cam.x;
+    cy = p.y + p.h / 2 - cam.y + OY;
+  }
+  const radio = Math.hypot(Math.max(cx, W - cx), Math.max(cy, H - cy)) * f * f;
+  ctx.fillStyle = "#000";
+  ctx.beginPath();
+  ctx.rect(0, 0, W, H);
+  ctx.arc(cx, cy, Math.max(0.01, radio), 0, Math.PI * 2, true);
+  ctx.fill("evenodd");
+}
+
+// Dibuja la pantalla actual del juego y, encima, la transición en iris
 function dibujarJuego(game) {
+  dibujarPantalla(game);
+  dibujarIris(game);
+}
+
+function dibujarPantalla(game) {
   const e = game.estado;
   if (e === "titulo") {
     // Pradera de fondo con viñeta, logo ondulante y el personaje apoyado en el suelo
