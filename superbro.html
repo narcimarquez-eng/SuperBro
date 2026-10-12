@@ -2637,6 +2637,7 @@ function consume(action) {
                     en que lanza; el nivel crea el erizo). Se pisa desde arriba.
     pez_saltarin    salta desde un hueco en un arco y vuelve a caer (el nivel lo crea con su vx y vy). Se pisa.
     bola_lava       salta desde la lava y vuelve a caer en ella. No se puede pisar.
+    pez_nadador     nada bajo el agua de un lado a otro y, si te tiene cerca, se acerca a tu altura. No se puede pisar.
 */
 (function (global) {
   'use strict';
@@ -2667,7 +2668,8 @@ function consume(action) {
     fantasma:       { w: 22, h: 24, vel: 26, pisable: false, vuela: true },
     nubarron:       { w: 26, h: 18, vel: 0,  pisable: true, vuela: true, nube: true },
     pez_saltarin:   { w: 20, h: 12, vel: 0,  pisable: true, salta: true },
-    bola_lava:      { w: 12, h: 12, vel: 0,  pisable: false, salta: true }
+    bola_lava:      { w: 12, h: 12, vel: 0,  pisable: false, salta: true },
+    pez_nadador:    { w: 20, h: 12, vel: 34, pisable: false, vuela: true }
   };
 
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
@@ -2949,6 +2951,10 @@ function consume(action) {
       e.timer -= dt;
       if (e.timer <= 0) { e.vx = -e.vx * (0.6 + Math.random() * 0.8); e.timer = 0.6 + Math.random() * 0.8; }
       e.y = e.base + Math.sin(e.t * 7) * 16;
+    } else if (e.type === 'pez_nadador') {
+      // nada a su altura meciéndose; con el jugador cerca, la cambia poco a poco hacia la suya
+      if (j && Math.abs(j.x - e.x) < 110) e.base += clamp(j.y - e.base, -1, 1) * 14 * dt;
+      e.y = e.base + Math.sin(e.t * 2.2) * 4;
     } else {
       e.y = e.base + Math.sin(e.t * 1.5) * 10;     // medusa: sube y baja sin prisa
     }
@@ -3642,6 +3648,7 @@ function consume(action) {
       case 'fantasma':       return dibujarFantasma(c, e, t);
       case 'nubarron':       return dibujarNubarron(c, e, t);
       case 'pez_saltarin':   return dibujarPez(c, e, t);
+      case 'pez_nadador':    return dibujarPez(c, e, t);
       case 'bola_lava':      return dibujarBolaLava(c, e, t);
     }
   }
@@ -5274,7 +5281,7 @@ const POTENCIADORES = ["hongo", "hongo", "flor", "pluma"];
 // Monedas que da un ladrillo multimoneda (K) antes de quedarse vacío
 const MONEDAS_MULTI = 8;
 // Enemigos que vuelan: se colocan en el aire, no en el suelo
-const VOLADORES = ["flyer", "murcielago", "medusa", "fantasma"];
+const VOLADORES = ["flyer", "murcielago", "medusa", "fantasma", "pez_nadador"];
 
 // Generador pseudoaleatorio determinista (mulberry32): misma semilla = mismo nivel
 function prng(seed) {
@@ -5590,6 +5597,92 @@ const PIEZAS = [
     "GGGGG...GGGGGG",
   ] },
 
+  // ----- Piezas submarinas (fases bajo el agua: se nada, así que los retos son pasos estrechos, no muros) -----
+  // Arrecife: montículos de coral con bloques flotando encima (la primera pieza de la fase)
+  { id: "arrecife", tipo: "inicio_agua", mapa: [
+    "................",
+    "................",
+    "................",
+    ".....QPQ........",
+    "................",
+    "................",
+    "................",
+    "..........S.....",
+    "..SS.....SSS....",
+    ".SSSS...SSSSS...",
+    "GGGGGGGGGGGGGGGG",
+  ] },
+  // Columnas de coral con el paso a distinta altura: arriba en la primera, abajo en la segunda
+  { id: "columnas", tipo: "submarina", mapa: [
+    "....SS......SS....",
+    "......c.....SS....",
+    ".....c.c....SS....",
+    "....c.....c.SS....",
+    "....SS......SS....",
+    "....SS...f..SS....",
+    "....SS........g...",
+    "....SS.....c.c....",
+    "....SS......c.....",
+    "....SS......SS....",
+    "GGGGGGGGGGGGGGGGGG",
+  ] },
+  // Túnel bajo un techo de roca, con un cangrejo en el fondo
+  { id: "tunel", tipo: "submarina", mapa: [
+    "GGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGG",
+    "GGGGGGGGGGGGGGGG",
+    "BBBBBBBKBBBBBBBB",
+    "................",
+    ".cccccccccccccc.",
+    "................",
+    "......e.........",
+    "GGGGGGGGGGGGGGGG",
+  ] },
+  // Fosa sin fondo: si se cae, se hunde despacio y hay que nadar hacia arriba. En el fondo, una moneda estrella
+  { id: "fosa", tipo: "submarina", mapa: [
+    "..............",
+    "..............",
+    "..............",
+    "........f.....",
+    "..............",
+    ".....cccc.....",
+    "..............",
+    "..............",
+    "..............",
+    "......g.......",
+    "GGG........GGG",
+  ] },
+  // Agua abierta con medusas y peces alrededor de un anillo de monedas
+  { id: "medusas", tipo: "submarina", mapa: [
+    "................",
+    "........f.......",
+    "................",
+    "...f............",
+    ".......ccc......",
+    "......c...c.....",
+    ".......ccc....f.",
+    "................",
+    "................",
+    "................",
+    "GGGGGGGGGGGGGGGG",
+  ] },
+  // Laberinto de roca: se entra por el medio y se sale por arriba o por abajo
+  { id: "laberinto", tipo: "submarina", mapa: [
+    "GGGGGG..........",
+    "GGGGGG......g...",
+    "GGGGGG....GGGGGG",
+    "..........GGGGGG",
+    "..cccc....GGGGGG",
+    "..........GGGGGG",
+    "GGGGGG....GGGGGG",
+    "GGGGGG...cccc...",
+    "GGGGGG..........",
+    "GGGGGG.....f....",
+    "GGGGGGGGGGGGGGGG",
+  ] },
+
   // ----- Entradas de la zona secreta (la boca X lleva la flecha amarilla cuando el jugador se acerca) -----
   // Tubería en lo alto de una meseta
   { id: "entrada_meseta", tipo: "entrada", mapa: [
@@ -5776,7 +5869,8 @@ function barajar(lista, rnd) {
 /* Elige las piezas de una fase: la mecánica nueva de la fase sale al menos dos veces, hay una o más
    puertas (muros que obligan a subir) según la dificultad, y el resto se reparte entre las demás
    mecánicas y los retos básicos. Ninguna pieza sale más de dos veces. */
-function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance) {
+function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance, agua) {
+  if (agua) return elegirPiezasAgua(rnd, dif, secreta);
   // Con avance automático no hay ascensor: esperarlo con la pantalla empujando sería una trampa
   const vale = (p) => (!p.req || mecanicas.includes(p.req)) && dif >= (p.min || 1) && dif <= (p.max || 8) && !(avance && p.id === "ascensor");
   const pool = PIEZAS.filter((p) => (p.tipo === "reto" || p.tipo === "puerta") && vale(p));
@@ -5865,17 +5959,38 @@ function surtidores(tiles, cols, peces, hm) {
   return out;
 }
 
+// Fases submarinas: arrecife al empezar y después piezas submarinas al azar (ninguna más de dos veces),
+// con la entrada de la zona secreta hacia un tercio y su salida dos piezas después
+function elegirPiezasAgua(rnd, dif, secreta) {
+  const pool = PIEZAS.filter((p) => p.tipo === "submarina");
+  const n = 6 + Math.ceil(dif / 2), usos = {}, elegidas = [];
+  while (elegidas.length < n) {
+    const libres = pool.filter((p) => (usos[p.id] || 0) < 2 && elegidas[elegidas.length - 1] !== p);
+    const p = libres[Math.floor(rnd() * libres.length)];
+    usos[p.id] = (usos[p.id] || 0) + 1;
+    elegidas.push(p);
+  }
+  elegidas.unshift(PIEZAS.find((p) => p.tipo === "inicio_agua"));
+  if (secreta !== undefined) {
+    const i = Math.max(2, Math.floor(elegidas.length * 0.35));
+    elegidas.splice(i, 0, PIEZAS.find((p) => p.id === "entrada_pozo"));
+    elegidas.splice(Math.min(elegidas.length, i + 3), 0, PIEZAS.find((p) => p.tipo === "salida"));
+  }
+  return elegidas;
+}
+
 // Tramo llano entre dos piezas: a veces un enemigo, un grupo de bloques o un volador.
 // El tramo del punto de control queda sin enemigos
 function ponerTramo(N, x, w, tranquilo) {
   const rnd = N.rnd;
   if (tranquilo) return;
-  if (rnd() < 0.3 + N.dif * 0.07) ponerEnemigo(N, x + 1 + Math.floor(rnd() * (w - 1)), GY - 1, false);
+  // Bajo el agua las piezas ya traen sus peces y medusas: en los tramos hay menos enemigos
+  if (rnd() < (0.3 + N.dif * 0.07) * (N.agua ? 0.4 : 1)) ponerEnemigo(N, x + 1 + Math.floor(rnd() * (w - 1)), GY - 1, false);
   if (w >= 5 && rnd() < 0.35) {
     const forma = ["Q", "BQB", "QQ", "BPB", "BKB"][Math.floor(rnd() * 5)];
     const c0 = x + Math.floor((w - forma.length) / 2);
     [...forma].forEach((ch, k) => ponerCelda(N, ch, c0 + k, GY - 4));
-  } else if (N.dif >= 3 && N.voladores.length && rnd() < 0.25) {
+  } else if (N.dif >= 3 && N.voladores.length && !N.agua && rnd() < 0.25) {
     ponerEnemigo(N, x + Math.floor(w / 2), 5 + Math.floor(rnd() * 3), true);
   }
 }
@@ -5897,14 +6012,16 @@ function generarNivel(gen, mecanicas = []) {
   const rnd = prng(gen.seed);
   const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
   const dif = clamp(gen.dif || 1, 1, 8);
-  const tipos = gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"];
-  const piezas = elegirPiezas(rnd, dif, mecanicas, gen.secreta, gen.jefe, gen.avance);
+  // Bajo el agua: cangrejos por el fondo, y peces y medusas nadando
+  const tipos = gen.agua ? ["cangrejo", "pez_nadador", "medusa"] : gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"];
+  const piezas = elegirPiezas(rnd, dif, mecanicas, gen.secreta, gen.jefe, gen.avance, gen.agua);
   const separaciones = piezas.map(() => ri(3, 6));
   const INICIO = 12, ARENA = gen.jefe ? 34 : 0, FINAL = 22;
   const anchoPiezas = piezas.reduce((s, p, i) => s + separaciones[i] + Math.max(...p.mapa.map((f) => f.length)), 0);
   const cols = INICIO + anchoPiezas + 4 + ARENA + FINAL;
   const N = nuevoNivel(cols, rnd, dif, tipos);
   N.candidatas = []; N.reserva = [];
+  N.agua = !!gen.agua;
   for (let c = 0; c < cols; c++) ponerSuelo(N, "G", c);
   // Punto de control: en el tramo antes de la pieza de la mitad, y siempre después del atajo de la zona secreta
   const iSalida = piezas.findIndex((p) => p.tipo === "salida");
@@ -5952,7 +6069,8 @@ function generarNivel(gen, mecanicas = []) {
     entradaSecreta: N.entrada ? Object.assign({ sala: gen.secreta }, N.entrada) : null,
     salidaSecreta: N.salida,
     control,
-    fuentes: surtidores(N.tiles, cols, gen.peces, null),
+    fuentes: surtidores(N.tiles, cols, gen.peces && !gen.agua, null),
+    agua: !!gen.agua,
   };
 }
 
@@ -6282,6 +6400,7 @@ function construirNivel(def, tema) {
   // Los niveles de castillo no llevan decoración de su mundo (usan su propio escenario)
   const gen = Object.assign({ theme: def.castillo ? "castillo" : tema }, def.gen, {
     jefe: def.jefe, secreta: def.secreta, avance: !!def.avance, nubarron: !!def.nubarron, peces: tema === "agua" || !!def.peces,
+    agua: !!def.agua,
   });
   const lv = def.mapa ? parsearMapa(def.mapa, gen) : def.colinas ? generarColinas(gen) : generarNivel(gen, def.mecanicas || []);
   lv.nombre = def.nombre;
@@ -6443,7 +6562,12 @@ const PHYS = {
   hundir: 9,      // velocidad a la que se hunde en las arenas movedizas (px/s)
   arenaMax: 40,   // velocidad máxima andando por las arenas movedizas
   arenaSalto: 0.8,   // fuerza del salto desde las arenas movedizas
+  // Bajo el agua: cada pulsación de salto es una brazada; se cae despacio y se anda despacio por el fondo
+  brazada: 150, aguaG: 260, aguaCaida: 90, aguaMax: 70, aguaMaxCorre: 95, aguaFondo: 50, aguaAccel: 320,
 };
+
+// Altura de la superficie en las fases submarinas (justo debajo del marcador): por encima no se nada
+const SUPERFICIE_AGUA = 28;
 
 // ¿La caja toca alguna casilla del tipo dado?
 function tocaTipo(lvl, p, tipo) {
@@ -6527,8 +6651,11 @@ class Player {
 
     // --- Movimiento horizontal ---
     const dir = (der ? 1 : 0) - (izq ? 1 : 0);
-    const maxV = this.enArena ? PHYS.arenaMax : corre ? PHYS.maxRun : PHYS.maxWalk;
-    const acc = this.onGround ? (corre ? PHYS.runAccel : PHYS.walkAccel) * (hielo ? PHYS.hieloAccel : 1) : PHYS.airAccel;
+    const agua = !!lvl.agua;
+    const maxV = agua ? (this.onGround ? PHYS.aguaFondo : corre ? PHYS.aguaMaxCorre : PHYS.aguaMax)
+      : this.enArena ? PHYS.arenaMax : corre ? PHYS.maxRun : PHYS.maxWalk;
+    const acc = agua ? PHYS.aguaAccel
+      : this.onGround ? (corre ? PHYS.runAccel : PHYS.walkAccel) * (hielo ? PHYS.hieloAccel : 1) : PHYS.airAccel;
     if (dir !== 0 && !this.duck) {
       this.facing = dir;
       if (Math.abs(this.vx) < maxV || Math.sign(this.vx) !== dir) this.vx += dir * acc * dt;
@@ -6556,6 +6683,16 @@ class Player {
       this.jumping = false;
     }
 
+    // --- Bajo el agua: cada pulsación de salto (o de giro) es una brazada hacia arriba, también en el aire ---
+    if (agua) {
+      if (consume("jump") || consume("spin")) {
+        this.vy = -PHYS.brazada;
+        this.onGround = false;
+        game.sfx("pisar");
+        emitir(this.x + this.w / 2, this.y + 2, 2, ["rgba(255,255,255,0.8)"], { up: 20, spread: 10, life: 1, size: 2, g: -50 });
+      }
+      this.jumping = false;
+    }
     // --- Salto: buffer (recordar pulsación) y coyote time (saltar tras caer) ---
     if (consume("jump")) this.bufferT = PHYS.buffer;
     else this.bufferT -= dt;
@@ -6586,11 +6723,11 @@ class Player {
 
     // --- Gravedad: más suave si se mantiene salto subiendo (salto variable) ---
     const subiendoConSalto = this.vy < 0 && held.jump && this.jumping;
-    const g = subiendoConSalto ? PHYS.jumpHoldG : GRAVITY;
+    const g = agua ? PHYS.aguaG : subiendoConSalto ? PHYS.jumpHoldG : GRAVITY;
     if (!this.trepando && !(this.cape && held.jump && this.glideT > 0 && this.vy >= 0 && this.vy <= PHYS.glideV)) {
       this.vy += g * dt;
     }
-    if (this.vy > MAX_FALL) this.vy = MAX_FALL;
+    if (this.vy > (agua ? PHYS.aguaCaida : MAX_FALL)) this.vy = agua ? PHYS.aguaCaida : MAX_FALL;
     if (this.vy >= 0) this.jumping = false;
     if (!held.jump && this.vy < -120 && !this.rebotando) this.vy = -120; // corta el salto al soltar
 
@@ -6641,6 +6778,11 @@ class Player {
     if (this.aterrizajeT > 0) this.aterrizajeT -= dt;
     if (r.suelo) this.jumping = false;
 
+    // Bajo el agua no se sale por arriba, y de vez en cuando sube una burbuja
+    if (agua) {
+      if (this.y < SUPERFICIE_AGUA) { this.y = SUPERFICIE_AGUA; if (this.vy < 0) this.vy = 0; }
+      if (Math.random() < dt * 1.2) emitir(this.x + this.w / 2 + this.facing * 3, this.y + 2, 1, ["rgba(255,255,255,0.75)"], { up: 15, spread: 6, life: 1.4, size: 2, g: -40 });
+    }
     // Caer fuera del nivel
     if (this.y > lvl.rows * TILE + 40) this.dead = true;
 
@@ -7463,7 +7605,7 @@ const TIPO_ENEMIGO = {
   // Enemigos de mundo: el nombre del juego es el mismo que el de enemigos.js
   pinguino: "pinguino", cangrejo: "cangrejo", pez: "pez", medusa: "medusa", escorpion: "escorpion",
   seta: "seta", jabali: "jabali", murcielago: "murcielago", arana: "arana", fantasma: "fantasma",
-  nubarron: "nubarron",
+  nubarron: "nubarron", pez_nadador: "pez_nadador",
 };
 
 // Crea el enemigo de enemigos.js sobre la entidad (e.x, e.y = esquina superior izquierda)
@@ -7539,6 +7681,40 @@ const TINTE_SALA = {
 // Temas con vegetación: sus muros y mesetas llevan enredaderas
 const TEMAS_VERDES = ["pradera", "bosque"];
 
+/* Fondo del mar (fases submarinas del mundo del agua): azul que oscurece hacia abajo, dos capas de arrecife
+   con paralaje y algas que se mecen en la capa cercana */
+function fondoMarino(cam) {
+  const t = performance.now() / 1000;
+  const cielo = ctx.createLinearGradient(0, 0, 0, H);
+  cielo.addColorStop(0, "#2f8fd4");
+  cielo.addColorStop(1, "#071f48");
+  ctx.fillStyle = cielo;
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(0, OY);
+  for (const [f, base, amp, color] of [[0.2, 150, 26, "#11497e"], [0.45, 182, 34, "#0b335e"]]) {
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(0, H);
+    for (let x = 0; x <= W + 4; x += 4) {
+      const wx = x + cam.x * f;
+      ctx.lineTo(x, base - amp * (0.55 + 0.45 * Math.sin(wx * 0.021)) * Math.abs(Math.sin(wx * 0.009 + 1)));
+    }
+    ctx.lineTo(W, H);
+    ctx.fill();
+  }
+  ctx.strokeStyle = "#145c4a";
+  ctx.lineWidth = 2;
+  for (let k = 0; k < 9; k++) {
+    const x = ((k * 61 - cam.x * 0.45) % (W + 40) + W + 40) % (W + 40) - 20;
+    ctx.beginPath();
+    ctx.moveTo(x, 200);
+    for (let y = 200; y > 150 - (k % 3) * 12; y -= 6) ctx.lineTo(x + Math.sin(t * 1.4 + y * 0.08 + k) * 3, y);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
 class Level {
   // origen: en una sala secreta, el mundo desde el que se ha entrado (da el suelo y el tinte de la sala)
   constructor(def, mundo, origen) {
@@ -7578,6 +7754,7 @@ class Level {
     }
     this.golpes = new Map();   // "col,fila" -> tiempo que le queda al saltito de un bloque golpeado
     this.resbala = this.terreno === "I";   // el suelo de hielo resbala (mundo del hielo y sus salas)
+    this.agua = !!data.agua;               // fase submarina: se nada
     this.coins = [];
     this.items = [];
     this.qItems = new Map();   // "col,fila" -> objeto del bloque ? (o del bloque oculto)
@@ -7832,8 +8009,11 @@ class Level {
   // Dibuja el nivel completo con la cámara actual
   dibujar(game) {
     const cam = this.cam;
-    dibujarFondo(cam, this.pal, this.temaKey, this.hora, this);
+    // En el mar, fondo submarino propio; en los demás, el escenario del tema (la cueva, en el lago de la cueva)
+    if (this.agua && this.temaKey === "agua") fondoMarino(cam);
+    else dibujarFondo(cam, this.pal, this.temaKey, this.hora, this);
     if (this.tinte) rect(0, 0, W, H, this.tinte);   // las salas secretas toman el color de su mundo
+    if (this.agua) this.dibujarAgua(cam);
     // El área de diseño se desplaza según la pantalla (OY); el HUD se dibuja aparte, arriba
     ctx.save();
     ctx.translate(0, OY);
@@ -8016,6 +8196,28 @@ class Level {
       rect(lx - 1, y + 5, 2, 2, "#4caf50");
       rect(lx, y + 2 + largo - 2, 2, 2, "#4caf50");
     }
+  }
+
+  // Bajo el agua: todo teñido de azul (más oscuro hacia el fondo), con rayos de luz que bajan y la superficie
+  // ondulando justo debajo del marcador (por encima de ella no se puede nadar)
+  dibujarAgua(cam) {
+    const t = performance.now() / 1000;
+    const marino = this.temaKey === "agua";   // el fondo marino ya es azul: se tiñe menos
+    const tono = ctx.createLinearGradient(0, OY, 0, H);
+    tono.addColorStop(0, marino ? "rgba(40,130,210,0.12)" : "rgba(40,130,210,0.35)");
+    tono.addColorStop(1, marino ? "rgba(10,40,110,0.3)" : "rgba(10,40,110,0.6)");
+    ctx.fillStyle = tono;
+    ctx.fillRect(0, 0, W, H);
+    ctx.save();
+    ctx.translate(0, OY);
+    ctx.fillStyle = "rgba(200,235,255,0.07)";
+    for (let k = 0; k < 4; k++) {
+      const x = ((k * 97 - cam.x * 0.3) % (W + 80) + W + 80) % (W + 80) - 40 + Math.sin(t * 0.6 + k) * 8;
+      ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + 18, 0); ctx.lineTo(x + 50, 180); ctx.lineTo(x + 26, 180); ctx.fill();
+    }
+    ctx.fillStyle = "rgba(220,245,255,0.6)";
+    for (let x = 0; x < W; x += 2) ctx.fillRect(x, SUPERFICIE_AGUA + Math.round(Math.sin((x + cam.x) * 0.08 + t * 2.5) * 1.5), 2, 1);
+    ctx.restore();
   }
 
   // Arenas movedizas: arena más oscura que el suelo, con ondas que giran despacio; tapan la parte hundida del jugador
@@ -8281,6 +8483,8 @@ class Game {
   }
   // Premio del poste de meta según la altura de los pies sobre el suelo; por encima del poste, una vida
   premioBandera(lvl, p) {
+    // Bajo el agua se llega nadando a cualquier altura: premio fijo
+    if (lvl.agua) { this.puntos(2000); lvl.textoFlotante("2000", p.x, p.y - 8); return 2000; }
     const altura = GY * TILE - (p.y + p.h);
     const premio = [[112, "1UP"], [88, 5000], [64, 2000], [40, 800], [16, 400], [-Infinity, 100]].find(([h]) => altura >= h)[1];
     if (premio === "1UP") { this.puntos(5000); this.ganarVida(p.x, p.y); }
@@ -9434,7 +9638,9 @@ for (const [m, f] of [[0, 1], [0, 2], [1, 0], [1, 6], [2, 0], [2, 1], [3, 0], [3
 // que saltan desde los huecos (además de todo el mundo del agua): [mundo, fase]
 for (const [m, f] of [[2, 4], [5, 5], [6, 5], [7, 3]]) MUNDOS[m].niveles[f].avance = 36;
 for (const [m, f] of [[0, 4], [7, 2], [7, 5], [7, 6]]) MUNDOS[m].niveles[f].nubarron = true;
-for (const [m, f] of [[2, 3], [3, 3]]) MUNDOS[m].niveles[f].peces = true;
+for (const [m, f] of [[2, 3]]) MUNDOS[m].niveles[f].peces = true;
+// Fases submarinas (se nada): el arrecife del mundo del agua y el lago de la cueva
+for (const [m, f] of [[5, 4], [3, 3]]) MUNDOS[m].niveles[f].agua = true;
 const game = new Game();
 KEYMAP.Backspace = "reset";  // para borrar el progreso desde el título
 
