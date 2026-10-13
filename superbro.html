@@ -2785,6 +2785,12 @@ function consume(action) {
     pez_saltarin    salta desde un hueco en un arco y vuelve a caer (el nivel lo crea con su vx y vy). Se pisa.
     bola_lava       salta desde la lava y vuelve a caer en ella. No se puede pisar.
     pez_nadador     nada bajo el agua de un lado a otro y, si te tiene cerca, se acerca a tu altura. No se puede pisar.
+    silla           se mueve a saltitos y se gira hacia ti si estás cerca. Se pisa.
+    estrella_fugaz  cae en diagonal desde el cielo y se apaga al tocar el suelo. No se puede pisar.
+    luna            gira en órbita alrededor de su sitio. No se puede pisar.
+    perro           trota y, si te tiene cerca, ladra y se lanza contra ti. Se pisa.
+    sol_negro       rebota por el suelo como una pelota. No se puede pisar.
+    serpiente       repta en onda por el suelo. Se pisa.
 */
 (function (global) {
   'use strict';
@@ -2828,7 +2834,15 @@ function consume(action) {
     pajaro_miro:    { w: 14, h: 12, vel: 54, pisable: true, vuela: true },
     personaje_miro: { w: 12, h: 22, vel: 36, pisable: true },
     // Gaudí: el lagarto de trencadís corre por el suelo de mosaico
-    lagarto:        { w: 22, h: 12, vel: 46, pisable: true }
+    lagarto:        { w: 22, h: 12, vel: 46, pisable: true },
+    // Van Gogh: silla con pipa que brinca, estrella fugaz que cae en diagonal y luna que gira en órbita
+    silla:          { w: 16, h: 18, vel: 26, pisable: true },
+    estrella_fugaz: { w: 16, h: 16, vel: 96, pisable: false, vuela: true },
+    luna:           { w: 20, h: 20, vel: 0,  pisable: false, vuela: true },
+    // Miró y Gaudí: perro que se lanza a ladrar, sol negro que rebota y serpiente de trencadís
+    perro:          { w: 26, h: 16, vel: 40, pisable: true },
+    sol_negro:      { w: 14, h: 14, vel: 46, pisable: false },
+    serpiente:      { w: 26, h: 10, vel: 30, pisable: true }
   };
 
   function clamp(v, a, b) { return v < a ? a : v > b ? b : v; }
@@ -3004,6 +3018,32 @@ function consume(action) {
         e.vx = e.dir * d.vel;
         break;
       }
+      case 'silla': {
+        // Silla con pipa: avanza y da brincos de vez en cuando; si estás cerca, se gira hacia ti
+        if (cerca < 160 && j) e.dir = haciaJ;
+        e.vx = e.dir * d.vel;
+        if (e.onGround && e.jumpT <= 0) { e.vy = -340; e.jumpT = 1.4 + Math.random() * 1.2; }
+        break;
+      }
+      case 'perro': {
+        // Perro de Miró: trota; si te tiene cerca, ladra y se lanza contra ti
+        if (e.lunging) {
+          e.lungeT -= dt;
+          e.vx = e.dir * 175;
+          if (e.lungeT <= 0) { e.lunging = false; e.cool = 2.2; e.vx = 0; }
+          break;
+        }
+        if (cerca < 120 && e.cool <= 0 && j) { e.lunging = true; e.lungeT = 0.45; e.dir = haciaJ; e.vx = e.dir * 175; break; }
+        if (cerca < 200 && j) e.dir = haciaJ;
+        e.vx = e.dir * d.vel;
+        break;
+      }
+      case 'sol_negro': {
+        // Sol negro de Miró: rebota en el suelo como una pelota, y cada salto tiene una altura distinta
+        e.vx = e.dir * d.vel;
+        if (e.onGround && e.jumpT <= 0) { e.vy = -(300 + Math.random() * 110); e.jumpT = 0.15; }
+        break;
+      }
       case 'arana': {
         // espera colgada; cuando pasas por debajo, salta sobre ti
         if (e.onGround && e.cool <= 0 && cerca < 60 && j) {
@@ -3124,6 +3164,30 @@ function consume(action) {
     e.homeY = e.base;
   }
 
+  // Estrella fugaz (Van Gogh): cae en diagonal desde el cielo, sin chocar con nada, y se apaga al tocar el suelo
+  function updEstrellaFugaz(e, dt, mundo) {
+    if (e.dead) { e.vy += GRAV * 0.6 * dt; e.y += e.vy * dt; if (e.y > mundo.abismo) e.remove = true; return; }
+    if (!e.caida) {
+      e.caida = true; e.timer = 8;
+      e.vy = DEFS.estrella_fugaz.vel * 0.8;
+      if (Math.random() < 0.5) { e.vx = -e.vx; e.dir = -e.dir; }   // a veces cae hacia la derecha
+    }
+    e.x += e.vx * dt;
+    e.y += e.vy * dt;
+    e.timer -= dt;
+    if (e.timer <= 0 || mundo.solid(e.x, e.y + e.h / 2)) e.remove = true;
+  }
+
+  // Luna creciente (Van Gogh, "La noche estrellada"): da vueltas en órbita alrededor del sitio donde aparece
+  function updLuna(e, dt, mundo) {
+    if (e.dead) { e.vy += GRAV * 0.6 * dt; e.y += e.vy * dt; if (e.y > mundo.abismo) e.remove = true; return; }
+    const a = e.t * 1.4 + e.ph;
+    const x = e.homeX + Math.cos(a) * 24;
+    e.dir = x >= e.x ? 1 : -1;
+    e.x = x;
+    e.y = e.homeY + Math.sin(a) * 12;
+  }
+
   // Saltarines (pez y bola de lava): tiro parabólico sin chocar con nada; desaparecen al volver a su altura de salida
   function updSaltarin(e, dt) {
     e.vy = Math.min(e.vy + 700 * dt, MAX_CAIDA);
@@ -3170,6 +3234,8 @@ function consume(action) {
     if (d.nube) { updNubarron(e, dt, j, mundo); return; }
     if (d.planta) { updPlanta(e, dt, j); return; }
     if (e.type === 'abeja') { updAbeja(e, dt, mundo, j); return; }
+    if (e.type === 'estrella_fugaz') { updEstrellaFugaz(e, dt, mundo); return; }
+    if (e.type === 'luna') { updLuna(e, dt, mundo); return; }
     if (d.vuela) { updVolador(e, dt, mundo, j); return; }
 
     if (e.dead) {
@@ -3958,6 +4024,12 @@ function consume(action) {
       case 'pajaro_miro':    return dibujarPajaroMiro(c, e, t);
       case 'personaje_miro': return dibujarPersonajeMiro(c, e, t);
       case 'lagarto':        return dibujarLagarto(c, e, t);
+      case 'silla':          return dibujarSilla(c, e, t);
+      case 'estrella_fugaz': return dibujarEstrellaFugaz(c, e, t);
+      case 'luna':           return dibujarLuna(c, e, t);
+      case 'perro':          return dibujarPerro(c, e, t);
+      case 'sol_negro':      return dibujarSolNegro(c, e, t);
+      case 'serpiente':      return dibujarSerpiente(c, e, t);
     }
   }
 
@@ -4135,6 +4207,175 @@ function consume(action) {
     c.strokeStyle = '#1d5a38'; c.lineWidth = 0.6;
     c.beginPath(); c.moveTo(9.6, -1.4); c.quadraticCurveTo(10.8, -0.9, 11.6, -1.9); c.stroke();
     c.fillStyle = '#ffd27a'; c.fillRect(6.2, -4.4, 1.6, 1.6);   // una tesela en la cabeza
+  }
+
+  // Silla con pipa (Van Gogh): silla de paja con su pipa humeante; al brincar recoge las patas
+  function dibujarSilla(c, e, t) {
+    const recogida = e.onGround ? 0 : 2.5;
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    c.lineCap = 'round';
+    // patas de atrás, más oscuras
+    c.strokeStyle = '#4a2f18'; c.lineWidth = 1.3;
+    c.beginPath(); c.moveTo(-6, 3); c.lineTo(-6.6, 8 - recogida); c.moveTo(6, 3); c.lineTo(6.6, 8 - recogida); c.stroke();
+    // respaldo: dos postes y dos listones
+    c.strokeStyle = '#5a3a1e'; c.lineWidth = 1.6;
+    c.beginPath(); c.moveTo(-6, 2); c.lineTo(-6, -9); c.moveTo(6, 2); c.lineTo(6, -9); c.stroke();
+    c.lineWidth = 1.2;
+    c.beginPath(); c.moveTo(-6, -8); c.lineTo(6, -8); c.moveTo(-6, -4.5); c.lineTo(6, -4.5); c.stroke();
+    // dos ojos en el respaldo
+    c.fillStyle = '#fffbe6';
+    c.beginPath(); c.arc(-2.4, -6.4, 1.6, 0, Math.PI * 2); c.arc(2.4, -6.4, 1.6, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#1a1a1a';
+    c.beginPath(); c.arc(-2.1, -6.2, 0.7, 0, Math.PI * 2); c.arc(2.7, -6.2, 0.7, 0, Math.PI * 2); c.fill();
+    // asiento de paja: amarillo con el tejido cruzado
+    c.fillStyle = '#e8c24a'; c.strokeStyle = '#b8901e'; c.lineWidth = 0.6;
+    c.beginPath(); c.ellipse(0, 2.5, 7.5, 2.8, 0, 0, Math.PI * 2); c.fill(); c.stroke();
+    c.beginPath(); c.moveTo(-5, 1.2); c.lineTo(-2, 3.8); c.moveTo(0, 0.8); c.lineTo(3, 3.8); c.moveTo(4.5, 1); c.lineTo(6.2, 2.6); c.stroke();
+    // patas de delante
+    c.strokeStyle = '#6b4424'; c.lineWidth = 1.8;
+    c.beginPath(); c.moveTo(-5, 4.5); c.lineTo(-5.4, 9 - recogida); c.moveTo(5, 4.5); c.lineTo(5.4, 9 - recogida); c.stroke();
+    // pipa sobre el asiento, con su humo
+    c.fillStyle = '#7a4522';
+    c.beginPath(); c.arc(4.5, 1, 1.9, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#4a2a14'; c.lineWidth = 1.3;
+    c.beginPath(); c.moveTo(5.9, 0.4); c.lineTo(9.4, -1.4); c.stroke();
+    for (let k = 0; k < 3; k++) {
+      c.fillStyle = 'rgba(235,235,235,' + (0.9 - k * 0.22) + ')';
+      c.beginPath(); c.arc(9.6 + Math.sin(t * 3 + k * 1.7) * 0.9, -2.6 - k * 2.8, 1.1 + k * 0.5, 0, Math.PI * 2); c.fill();
+    }
+  }
+
+  // Estrella fugaz (Van Gogh): estrella amarilla con halo y cola de luz; la cola va detrás del movimiento
+  function dibujarEstrellaFugaz(c, e, t) {
+    const sy = e.vy >= 0 ? 1 : -1;     // hacia dónde cae: la cola va hacia el lado contrario
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    const halo = c.createRadialGradient(0, 0, 1, 0, 0, 11);
+    halo.addColorStop(0, 'rgba(255,250,190,0.9)'); halo.addColorStop(1, 'rgba(255,250,190,0)');
+    c.fillStyle = halo;
+    c.beginPath(); c.arc(0, 0, 11, 0, Math.PI * 2); c.fill();
+    const cola = c.createLinearGradient(0, 0, -18, -9 * sy);
+    cola.addColorStop(0, 'rgba(255,236,140,0.95)'); cola.addColorStop(1, 'rgba(255,236,140,0)');
+    c.fillStyle = cola;
+    c.beginPath(); c.moveTo(-1, -3 * sy); c.lineTo(-18, -9 * sy); c.lineTo(-1, 3 * sy); c.closePath(); c.fill();
+    // cuerpo: estrella de cinco puntas que gira
+    c.save();
+    c.rotate(t * 2.5);
+    c.beginPath();
+    for (let i = 0; i < 10; i++) {
+      const r = i % 2 ? 2.9 : 6.4, a = i * Math.PI / 5 - Math.PI / 2;
+      if (i) c.lineTo(Math.cos(a) * r, Math.sin(a) * r); else c.moveTo(Math.cos(a) * r, Math.sin(a) * r);
+    }
+    c.closePath();
+    c.fillStyle = '#fff2a0'; c.fill();
+    c.strokeStyle = '#c98f10'; c.lineWidth = 0.9; c.lineJoin = 'round'; c.stroke();
+    c.restore();
+    // cara: dos ojos y una sonrisa torcida
+    c.fillStyle = '#5a3a0a';
+    c.beginPath(); c.arc(-1.9, -0.7, 0.7, 0, Math.PI * 2); c.arc(1.9, -0.7, 0.7, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#5a3a0a'; c.lineWidth = 0.7;
+    c.beginPath(); c.moveTo(-1.6, 1.4); c.quadraticCurveTo(0.2, 2.6, 1.6, 1.2); c.stroke();
+  }
+
+  // Luna creciente (Van Gogh): media luna amarilla con halo y cara de enfado; gira en órbita
+  function dibujarLuna(c, e, t) {
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    const halo = c.createRadialGradient(0, 0, 3, 0, 0, 14);
+    halo.addColorStop(0, 'rgba(255,246,170,' + (0.6 + 0.2 * Math.sin(t * 3)) + ')'); halo.addColorStop(1, 'rgba(255,246,170,0)');
+    c.fillStyle = halo;
+    c.beginPath(); c.arc(0, 0, 14, 0, Math.PI * 2); c.fill();
+    // la media luna: un círculo al que se le quita otro desplazado a la derecha
+    c.beginPath(); c.arc(0, 0, 8, -0.8, 0.8, true); c.arc(3, 0, 6.2, 1.14, -1.14, false); c.closePath();
+    c.fillStyle = '#f7e16a'; c.fill();
+    c.strokeStyle = '#8a6a10'; c.lineWidth = 0.9; c.stroke();
+    // cara: ojos y cejas de enfado
+    c.fillStyle = '#4a3408';
+    c.beginPath(); c.arc(-5, -1.8, 0.8, 0, Math.PI * 2); c.arc(-5, 1.8, 0.8, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#4a3408'; c.lineWidth = 0.7;
+    c.beginPath(); c.moveTo(-6.4, -3.6); c.lineTo(-4.2, -2.8); c.moveTo(-6.4, 3.6); c.lineTo(-4.2, 2.8); c.stroke();
+  }
+
+  // Perro que ladra a la luna (Miró): silueta negra con la cola y la oreja rojas y un ojo azul; se lanza ladrando
+  function dibujarPerro(c, e, t) {
+    const galope = Math.sin(t * 12) * 2.4;
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    c.lineCap = 'round'; c.lineJoin = 'round';
+    // cola en alto, roja
+    c.strokeStyle = '#d8322b'; c.lineWidth = 2.2;
+    c.beginPath(); c.moveTo(-9, -1.5); c.quadraticCurveTo(-13, -7, -11, -9.5); c.stroke();
+    // patas en contrafase: dos de delante y dos de atrás
+    c.strokeStyle = '#1a1a1a'; c.lineWidth = 1.8;
+    c.beginPath();
+    c.moveTo(-6, 1.5); c.lineTo(-7 + galope, 7.5);
+    c.moveTo(-3.5, 1.5); c.lineTo(-2.5 - galope, 7.5);
+    c.moveTo(4, 1.5); c.lineTo(3.5 - galope, 7.5);
+    c.moveTo(6.5, 1.5); c.lineTo(7.5 + galope, 7.5);
+    c.stroke();
+    // cuerpo alargado y cabeza con el hocico abierto
+    c.fillStyle = '#1a1a1a';
+    c.beginPath(); c.ellipse(-0.5, 0, 8.5, 4.4, 0, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.ellipse(7.6, -3.8, 4.2, 3.4, 0, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.moveTo(9.8, -4.6); c.lineTo(13.6, -3.2); c.lineTo(9.8, -1.6); c.closePath(); c.fill();
+    // oreja roja y ojo azul
+    c.fillStyle = '#d8322b';
+    c.beginPath(); c.moveTo(5.4, -6.4); c.lineTo(4.4, -10); c.lineTo(8.6, -7.4); c.closePath(); c.fill();
+    c.fillStyle = '#2f6fd8'; c.beginPath(); c.arc(8.2, -4.6, 1.1, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#ffffff'; c.beginPath(); c.arc(8.5, -4.9, 0.35, 0, Math.PI * 2); c.fill();
+    // ladridos: tres trazos delante del hocico cuando se lanza
+    if (e.lunging) {
+      c.strokeStyle = '#1a1a1a'; c.lineWidth = 1;
+      for (let k = 0; k < 3; k++) { c.beginPath(); c.moveTo(15 + k * 2, -6 + k * 2.6); c.lineTo(17 + k * 2, -6 + k * 2.6); c.stroke(); }
+    }
+  }
+
+  // Sol negro (Miró): disco negro con rayos amarillos y rojos; se estira al subir y se aplasta al caer
+  function dibujarSolNegro(c, e, t) {
+    const estira = Math.max(-0.22, Math.min(0.22, -e.vy / 700));
+    const rx = 6.2 * (1 - estira * 0.5), ry = 6.2 * (1 + estira);
+    c.translate(e.x, e.y);
+    c.save();
+    c.rotate(t * 2);
+    c.lineCap = 'round'; c.lineWidth = 1.5;
+    for (let k = 0; k < 8; k++) {
+      const a = k * Math.PI / 4;
+      c.strokeStyle = k % 2 ? '#ffc21a' : '#d8322b';
+      c.beginPath(); c.moveTo(Math.cos(a) * 7.4, Math.sin(a) * 7.4); c.lineTo(Math.cos(a) * 10.4, Math.sin(a) * 10.4); c.stroke();
+    }
+    c.restore();
+    esfera(c, 0, 0, rx, ry, ['#55555e', '#1a1a1a', '#050505']);
+    contorno(c, 0, 0, rx, ry, 0.9);
+    // motas blancas y un punto rojo, como en sus constelaciones
+    c.fillStyle = '#ffffff';
+    c.beginPath(); c.arc(-2.4, -2.2, 0.6, 0, Math.PI * 2); c.arc(2.5, 1.6, 0.5, 0, Math.PI * 2); c.arc(0.4, -3.6, 0.45, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#d8322b'; c.beginPath(); c.arc(0.8, 0.8, 1.2, 0, Math.PI * 2); c.fill();
+  }
+
+  // Serpiente de trencadís (Gaudí, el banco serpenteante del Park Güell): teselas de colores en onda; repta
+  function dibujarSerpiente(c, e, t) {
+    const teselas = ['#ffd27a', '#2f9fc8', '#ec6a4a', '#ffffff', '#5fc08a'];
+    c.translate(e.x, e.y);
+    c.scale(e.dir, 1);
+    // el cuerpo es una onda: cada segmento va un poco por detrás del anterior
+    for (let i = 0; i < 6; i++) {
+      const x = -11 + i * 3.3, y = Math.sin(t * 9 - i * 0.9) * 1.5;
+      c.fillStyle = teselas[i % teselas.length];
+      c.beginPath(); c.arc(x, y, 2.9 + i * 0.12, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = '#1d5a38'; c.lineWidth = 0.6; c.stroke();
+    }
+    // cabeza con ojo dorado y una lengua que se asoma de vez en cuando
+    const hy = Math.sin(t * 9 - 6 * 0.9) * 1.5;
+    c.fillStyle = '#3fa36b';
+    c.beginPath(); c.ellipse(9.4, hy, 4.2, 3.4, 0, 0, Math.PI * 2); c.fill();
+    contorno(c, 9.4, hy, 4.2, 3.4, 0.7);
+    c.fillStyle = '#ffd27a'; c.beginPath(); c.arc(10.6, hy - 1.2, 1.1, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#1a1a1a'; c.beginPath(); c.arc(10.8, hy - 1.2, 0.5, 0, Math.PI * 2); c.fill();
+    if (Math.sin(t * 6) > 0.2) {
+      c.strokeStyle = '#d8322b'; c.lineWidth = 0.8;
+      c.beginPath(); c.moveTo(13, hy + 0.5); c.lineTo(16, hy + 0.5); c.moveTo(16, hy + 0.5); c.lineTo(17.4, hy - 0.8); c.moveTo(16, hy + 0.5); c.lineTo(17.4, hy + 1.8); c.stroke();
+    }
   }
 
   // Sombra en el suelo: el enemigo "pisa" algo, así se nota la altura
@@ -5784,7 +6025,7 @@ const MUNDOS = [
     ruta: [[22, 150], [58, 124], [94, 146], [132, 104], [170, 124], [206, 84], [236, 58]],
     bonus: [2, 6],
     niveles: fases(9, ["Trigal", "Girasoles", "Cipreses", "Noche estrellada", "Café nocturno", "Cuervos", "Remolinos", "Casa amarilla"],
-      ["cuervo", "girasol", "cipres", "espiral"], { horas: [0.5, 0.5, 0.25, 0.75, 0.75, 0.5, 0.75], tiposIniciales: 4 }),
+      ["cuervo", "girasol", "cipres", "espiral", "silla", "estrella_fugaz", "luna"], { horas: [0.5, 0.5, 0.25, 0.75, 0.75, 0.5, 0.75], tiposIniciales: 4 }),
   },
   // Mundo 10: Imaginario. Relojes blandos y elefantes de Dalí, estrellas y figuras de Miró, trencadís de Gaudí
   {
@@ -5802,7 +6043,7 @@ const MUNDOS = [
     ruta: [[20, 150], [60, 118], [96, 146], [134, 100], [172, 126], [208, 80], [238, 58]],
     bonus: [3, 6],
     niveles: fases(10, ["Relojes", "Elefantes", "Estrellas", "Figuras", "Trencadís", "Parque", "Playa", "Dragón"],
-      ["reloj_blando", "elefante", "pajaro_miro", "personaje_miro", "lagarto"], {
+      ["reloj_blando", "elefante", "pajaro_miro", "personaje_miro", "lagarto", "perro", "sol_negro", "serpiente"], {
         horas: [0.5, 0.5, 0.25, 0.25, 0.5, 0.5, 0.25, 0.5],
         estilos: ["dali", "dali", "miro", "miro", "gaudi", "gaudi", "dali", "gaudi"],
         fondos: [undefined, undefined, undefined, undefined, undefined, undefined, "barco", undefined],
@@ -5888,7 +6129,7 @@ const POTENCIADORES = ["hongo", "hongo", "flor", "pluma"];
 // Monedas que da un ladrillo multimoneda (K) antes de quedarse vacío
 const MONEDAS_MULTI = 8;
 // Enemigos que vuelan: se colocan en el aire, no en el suelo
-const VOLADORES = ["flyer", "murcielago", "medusa", "fantasma", "pez_nadador", "cuervo", "pajaro_miro"];
+const VOLADORES = ["flyer", "murcielago", "medusa", "fantasma", "pez_nadador", "cuervo", "pajaro_miro", "estrella_fugaz", "luna"];
 
 // Generador pseudoaleatorio determinista (mulberry32): misma semilla = mismo nivel
 function prng(seed) {
@@ -9055,6 +9296,7 @@ const TIPO_ENEMIGO = {
   nubarron: "nubarron", pez_nadador: "pez_nadador",
   cuervo: "cuervo", girasol: "girasol", cipres: "cipres", espiral: "espiral",
   reloj_blando: "reloj_blando", elefante: "elefante", pajaro_miro: "pajaro_miro", personaje_miro: "personaje_miro", lagarto: "lagarto",
+  silla: "silla", estrella_fugaz: "estrella_fugaz", luna: "luna", perro: "perro", sol_negro: "sol_negro", serpiente: "serpiente",
 };
 
 // Crea el enemigo de enemigos.js sobre la entidad (e.x, e.y = esquina superior izquierda)
