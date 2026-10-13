@@ -5447,7 +5447,8 @@ const MECANICAS_MUNDO = {
 /* Crea las 8 fases de un mundo con sus nombres. w: número del mundo.
    Las dos primeras fases usan solo dos tipos de enemigo (salvo opc.tiposIniciales); la 8 es el castillo.
    opc.horas: momento del día de cada fase; opc.castillo: el castillo usa el escenario de piedra;
-   opc.estilos: estilo de arte de cada fase (def.estilo); opc.tiposIniciales: tipos de enemigo de las dos primeras fases (2 por defecto). */
+   opc.estilos: estilo de arte de cada fase (def.estilo); opc.fondos: escenario de fondo propio (def.fondo);
+   opc.tiposIniciales: tipos de enemigo de las dos primeras fases (2 por defecto). */
 function fases(w, nombres, enemigos, opc = {}) {
   return nombres.map((nombre, i) => {
     const k = i + 1, castillo = k === 8;
@@ -5463,6 +5464,7 @@ function fases(w, nombres, enemigos, opc = {}) {
     };
     if (opc.horas && opc.horas[i] !== undefined) lv.hora = opc.horas[i];
     if (opc.estilos && opc.estilos[i]) lv.estilo = opc.estilos[i];
+    if (opc.fondos && opc.fondos[i]) lv.fondo = opc.fondos[i];
     if (castillo) { lv.jefe = true; if (opc.castillo) lv.castillo = true; }
     return lv;
   });
@@ -5645,6 +5647,7 @@ const MUNDOS = [
       ["reloj_blando", "elefante", "pajaro_miro", "personaje_miro", "lagarto"], {
         horas: [0.5, 0.5, 0.25, 0.25, 0.5, 0.5, 0.25, 0.5],
         estilos: ["dali", "dali", "miro", "miro", "gaudi", "gaudi", "dali", "gaudi"],
+        fondos: [undefined, undefined, undefined, undefined, undefined, undefined, "barco", undefined],
         tiposIniciales: 5,
       }),
   },
@@ -5691,7 +5694,7 @@ const PALETA_CASTILLO = {
 };
 
 /* Carácter de bloques.js para el suelo de cada tema (ver LEYENDA en bloques.js) */
-const TERRENO_DE_TEMA = { pradera: "#", desierto: "A", bosque: "#", cueva: "R", hielo: "I", agua: "W", castillo: "R", cielo: "N", vangogh: "V", dali: "D", miro: "O", gaudi: "G" };
+const TERRENO_DE_TEMA = { pradera: "#", desierto: "A", bosque: "#", cueva: "R", hielo: "I", agua: "W", castillo: "R", cielo: "N", vangogh: "V", dali: "D", miro: "O", gaudi: "G", barco: "D" };
 // Estilos de los mundos de arte: paleta propia (los niveles de estilo la usan en vez de la del mundo) y prefijo de sus bloques
 const PALETA_ESTILO = {
   dali:  { cielo: "#7fc4e8", lejos: "#e9b98a", cerca: "#f0d2a0", arbusto: "#2f6f8a", G: "#c9a06a", g: "#f2dcb0", O: "#8a6a4a", Y: "#ffd23f", U: "#6a8ab0", tubo: "#2f7fb0", sol: "#ffe9a8" },
@@ -7866,8 +7869,8 @@ function dibujarSolVG(pal) {
 }
 
 // Luna creciente de la noche estrellada: un disco amarillo al que otro disco le quita el lado izquierdo
-function lunaVG() {
-  return textura("vg-luna", () => {
+function lunaVG(color = "#ffe98a") {
+  return textura("vg-luna-" + color, () => {
     const R = 9, rows = [];
     for (let y = -R; y <= R; y++) {
       let f = "";
@@ -7878,7 +7881,7 @@ function lunaVG() {
       }
       rows.push(f);
     }
-    return spriteFromRows(expandir(rows), { y: "#ffe98a" }, false, false, false);
+    return spriteFromRows(expandir(rows), { y: color }, false, false, false);
   });
 }
 
@@ -7924,13 +7927,183 @@ function escenaVanGogh(cam, pal, hora) {
 }
 
 /* =====================================================================
+   13f. FONDO DEL VELERO DE MARIPOSAS (inspirado en la pintura de un velero con velas de mariposas):
+   cielo de cúmulos y estelas, mar turquesa con olas, orilla con pescadores y un velero que avanza
+   despacio con sus velas hechas de mariposas que aletean
+   ===================================================================== */
+// Mariposa de píxeles: alas superiores grandes y alas inferiores más pequeñas, separadas del cuerpo,
+// con un ojo en cada ala superior y dos antenas. abierta: 1 con las alas abiertas, 0.55 a medio batir,
+// 0.15 casi cerradas; tam: medida de las alas
+function figuraMariposa(abierta, tam) {
+  const R = Math.ceil(tam * 1.6) + 2, filas = [], A = abierta;
+  const cuerpoTop = Math.round(tam * 0.9);
+  for (let y = -R; y <= R; y++) {
+    let f = "";
+    for (let x = -R; x <= R; x++) {
+      const ax = Math.abs(x);
+      const arriba = ((ax - tam * 1.0 * A) / (tam * 0.7 * A + 0.4)) ** 2 + ((y + tam * 0.6) / (tam * 0.6)) ** 2 <= 1;
+      const abajo = ((ax - tam * 0.65 * A) / (tam * 0.45 * A + 0.4)) ** 2 + ((y - tam * 0.75) / (tam * 0.4)) ** 2 <= 1;
+      const cuerpo = ax < 0.5 && Math.abs(y) <= cuerpoTop;
+      const antena = (ax === 1 && y === -cuerpoTop - 1) || (ax === 2 && y === -cuerpoTop - 2);
+      if (cuerpo || antena) f += "k";
+      else if (arriba || abajo) f += (ax - tam * 1.0 * A) ** 2 + (y + tam * 0.6) ** 2 < 0.9 ? "y" : "x";
+      else f += ".";
+    }
+    filas.push(f);
+  }
+  return filas;
+}
+
+// Mariposa lista para dibujar (cacheada por tamaño, color y fotograma: 0 con las alas abiertas, 1 a medio batir, 2 casi cerrada)
+const ALETEO_MARIPOSA = [1, 0.55, 0.15];
+const SECUENCIA_ALETEO = [0, 1, 2, 1];
+const COLORES_MARIPOSA = ["#f08a2c", "#ffd23f", "#3fa36b", "#f4f1e8", "#2f6fbf", "#d8422b", "#c066d8"];
+function mariposaBarco(color, tam, fotograma) {
+  return textura("mariposa-" + tam + "-" + color + "-" + fotograma, () =>
+    spriteFromRows(expandir(figuraMariposa(ALETEO_MARIPOSA[fotograma], tam)), { x: color, y: "#fff6e0", k: "#1d1d26" }));
+}
+
+// Cúmulos blancos con la base azulada, como los de la pintura (periódicos en X)
+function texNubesBarco() {
+  return textura("barco-nubes", () => {
+    const L = lienzoPixeles(512, 72);
+    for (const [cx, cy, k] of [[52, 40, 1], [190, 34, 0.8], [330, 44, 1.2], [440, 30, 0.7]]) {
+      for (const [dx, dy, r] of [[-16, 4, 11], [-4, -4, 14], [10, -2, 13], [22, 6, 9], [0, 8, 12], [-24, 10, 7], [28, 10, 7]]) {
+        const R = r * k;
+        for (let y = -R; y <= R; y++) for (let x = -R; x <= R; x++) {
+          if (x * x + y * y > R * R) continue;
+          const vy = Math.round(dy * k + y);   // la sombra depende de la altura dentro de la nube, no de cada bola
+          L.poner(Math.round(cx + dx * k + x), Math.round(cy + vy), vy > 7 * k ? "g" : vy > -3 * k ? "l" : "w");
+        }
+      }
+    }
+    return L.sprite({ w: "#ffffff", l: "#e3edf8", g: "#b7cadf" });
+  });
+}
+
+// Estelas finas y blancas, como las nubes alargadas del cielo (periódicas en X)
+function texEstelasBarco() {
+  return textura("barco-estelas", () => {
+    const L = lienzoPixeles(512, 40);
+    for (let k = 0; k < 16; k++) {
+      const x0 = (k * 131) % 480, y0 = 4 + ((k * 37) % 28), largo = 40 + (k % 4) * 18;
+      for (let d = 0; d < largo; d++) L.poner(x0 + d, y0 + Math.round(d * 0.08), d % 9 < 7 ? "w" : "l");
+    }
+    return L.sprite({ w: "#ffffff", l: "#d7e9f7" });
+  });
+}
+
+// Olas del mar turquesa: crestas blancas a tramos y pliegues azules (periódicas en X)
+function texOlasBarco() {
+  return textura("barco-olas", () => {
+    const L = lienzoPixeles(512, 64);
+    for (let y = 0; y < 64; y++) for (let x = 0; x < 512; x++) {
+      const fila = mod(y + Math.round(3 * Math.sin((x / 512) * Math.PI * 16 + y * 0.5)), 10);
+      const tramo = mod(Math.floor(x / 4) + y, 8);
+      if (fila <= 1 && tramo < 6) L.poner(x, y, "w");
+      else if (fila === 5 && tramo < 5) L.poner(x, y, "d");
+    }
+    return L.sprite({ w: "#e6fbff", d: "#1b5f86" });
+  });
+}
+
+// Orilla lejana a la derecha: una roca baja y pescadores de silueta con sus cañas (periódica en X)
+function texOrillaBarco() {
+  return textura("barco-orilla", () => {
+    const L = lienzoPixeles(512, 26), base = 22;
+    const roca = (x) => Math.round(7 * Math.sqrt(Math.max(0, Math.sin(((x - 180) / 116) * Math.PI))));
+    for (let x = 180; x < 296; x++) for (let y = base - roca(x); y < base; y++) L.poner(x, y, "r");
+    for (const fx of [204, 219, 234, 249]) {
+      const pie = base - roca(fx);
+      for (let y = pie - 7; y < pie; y++) L.poner(fx, y, "f");                                  // cuerpo
+      L.poner(fx - 1, pie - 9, "f"); L.poner(fx, pie - 9, "f"); L.poner(fx, pie - 10, "f");      // cabeza
+      for (let k = 0; k < 10; k++) L.poner(fx + 1 + Math.round(k * 0.6), pie - 9 - k, "f");      // caña inclinada
+    }
+    return L.sprite({ r: "#4a4a3a", f: "#1d2026" });
+  });
+}
+
+// Casco de madera con banda crema, castillo de popa, tres mástiles con vergas y una bandera.
+// La matriz mide 84×70 y su origen (el centro de la quilla) está en la columna 42 y la fila 66
+function texVeleroBarco() {
+  return textura("barco-velero", () => {
+    const L = lienzoPixeles(84, 70), ox = 42, oy = 66;
+    for (let x = -36; x <= 34; x++) {
+      const u = (x + 1) / 35, fondo = Math.round(10 * Math.sqrt(Math.max(0, 1 - u * u)));   // profundo en el centro y afinado en los extremos
+      for (let y = -10; y <= -10 + fondo; y++) L.poner(ox + x, oy + y, y === -10 ? "l" : y === -7 ? "c" : y === -10 + fondo ? "d" : "w");
+    }
+    for (let x = 18; x <= 32; x++) for (let y = -19; y <= -11; y++) L.poner(ox + x, oy + y, y === -19 ? "l" : "w");   // castillo de popa
+    for (const [x, y] of [[21, -16], [22, -16], [27, -16], [28, -16]]) L.poner(ox + x, oy + y, "k");                    // ventanas
+    for (const mx of [-18, 2, 20]) {
+      for (let y = -62; y <= -11; y++) { L.poner(ox + mx, oy + y, "d"); L.poner(ox + mx + 1, oy + y, "d"); }          // mástil
+      for (const vy of [-52, -40, -28]) for (let x = mx - 10; x <= mx + 10; x++) L.poner(ox + x, oy + vy, "d");       // vergas
+    }
+    for (let k = 0; k < 6; k++) for (let x = 2; x <= 2 + (5 - k); x++) L.poner(ox + x, oy - 62 + k, "r");            // bandera
+    return L.sprite({ l: "#c9955a", w: "#8a5a2a", d: "#4a2e16", c: "#f2e6c8", k: "#1d1d26", r: "#d8422b" }, true);
+  });
+}
+
+// Velero: sus velas son mariposas (tres mástiles, una rejilla de quince por mástil) que aletean, cada una con su propio momento
+function dibujarVeleroBarco(sx, sy, t) {
+  drawSprite(texVeleroBarco(), sx - 42, sy - 66);
+  let i = 0;
+  for (const mx of [-18, 2, 20]) for (const dx of [-7, 0, 7]) for (const dy of [-54, -46, -38, -30, -22]) {
+    const sp = mariposaBarco(COLORES_MARIPOSA[i % COLORES_MARIPOSA.length], 3, SECUENCIA_ALETEO[(Math.floor(t * 7) + i) % 4]);
+    drawSprite(sp, sx + mx + dx - sp.lw / 2, sy + dy - sp.lh / 2);
+    i++;
+  }
+}
+
+// Escenario del velero de mariposas: cielo de cúmulos, luna pálida, orilla con pescadores, mar turquesa con olas,
+// un velero que avanza despacio hacia la izquierda y mariposas que vuelan y que nadan
+function escenaBarco(cam) {
+  const t = performance.now() / 1000;
+  const cielo = ctx.createLinearGradient(0, 0, 0, OY + 112);
+  cielo.addColorStop(0, "#2b6cb8");
+  cielo.addColorStop(0.35, "#4f8fd0");
+  cielo.addColorStop(0.7, "#8ec3e6");
+  cielo.addColorStop(1, "#d2ecf6");
+  ctx.fillStyle = cielo;
+  ctx.fillRect(0, 0, W, H);
+  ctx.save();
+  ctx.translate(0, OY);
+  // Estelas y nubes: el cielo se repite hacia arriba en los visores altos, cada copia desplazada
+  const estelas = texEstelasBarco(), nubes = texNubesBarco();
+  for (let k = 0; k <= Math.ceil(OY / 112); k++) {
+    capaPeriodica(estelas, cam.x * 0.1 + t * 4 + k * 173, 1, 14 - 112 * k);
+    capaPeriodica(nubes, cam.x * 0.15 + t * 5 + k * 211, 1, 4 - 112 * k);
+  }
+  drawSprite(lunaVG("#f4f1e8"), W - 46, 14);
+  capaPeriodica(texOrillaBarco(), cam.x * 0.5, 1, 90);
+  // Mar turquesa con olas que avanzan hacia la derecha
+  const mar = ctx.createLinearGradient(0, 112, 0, 176);
+  mar.addColorStop(0, "#3aaec0");
+  mar.addColorStop(1, "#15708a");
+  ctx.fillStyle = mar;
+  ctx.fillRect(0, 112, W, 64);
+  capaPeriodica(texOlasBarco(), cam.x * 0.35 + t * 14, 1, 112);
+  // Velero: avanza despacio hacia la izquierda y se mece con las olas
+  const sx = W + 90 - mod(t * 10 + cam.x * 0.3, W + 180);
+  dibujarVeleroBarco(sx, 116 + 1.2 * Math.sin(t * 1.6), t);
+  // Mariposas que cruzan el cielo y una grande que nada en la superficie
+  [[0, "#f08a2c", 3], [1, "#ffd23f", 3], [2, "#2f6fbf", 3]].forEach(([v, color, tam]) => {
+    const x = mod(t * (16 - v * 3) + v * 97, W + 40) - 20, y = 52 + v * 14 + 10 * Math.sin(t * 1.1 + v);
+    const sp = mariposaBarco(color, tam, SECUENCIA_ALETEO[(Math.floor(t * 9) + v) % 4]);
+    drawSprite(sp, x - sp.lw / 2, y - sp.lh / 2);
+  });
+  const nadadora = mariposaBarco("#3fa36b", 4, SECUENCIA_ALETEO[Math.floor(t * 6) % 4]);
+  drawSprite(nadadora, 26 + 3 * Math.sin(t * 0.7) - nadadora.lw / 2, 134 + 2 * Math.sin(t * 1.9) - nadadora.lh / 2);
+  ctx.restore();
+}
+
+/* =====================================================================
    13e. ESCENARIOS DEL MUNDO 10: Dalí (inspirado en "La persistencia de la memoria": cielo que se dora,
    bahía con pueblo, acantilados de ocre, llano oscuro y relojes que se derriten), Miró (fondo crema con
    estrellas y colores primarios) y Gaudí (cielo azul y torres de trencadís)
    ===================================================================== */
-// Lienzo de caracteres para las texturas de Dalí. poner() pinta un píxel; pegar() copia una figura;
+// Lienzo de caracteres para las texturas de los escenarios. poner() pinta un píxel; pegar() copia una figura;
 // trazo() dibuja un grosor que se estrecha de un extremo al otro, con luz, medio y sombra
-function lienzoDali(ancho, alto) {
+function lienzoPixeles(ancho, alto) {
   const filas = Array.from({ length: alto }, () => Array(ancho).fill("."));
   const poner = (x, y, ch) => { if (x >= 0 && x < ancho && y >= 0 && y < alto) filas[y][x] = ch; };
   const pegar = (figura, x0, y0) => figura.forEach((r, dy) => [...r].forEach((ch, dx) => { if (ch !== ".") poner(x0 + dx, y0 + dy, ch); }));
@@ -7987,7 +8160,7 @@ function figuraRelojRedondo(r) {
 // Cielo: estrellas pálidas, un reloj de bolsillo que flota y un globo azul colgado de un paracaídas
 function texCieloDali() {
   return textura("dl-cielo", () => {
-    const L = lienzoDali(512, 96);
+    const L = lienzoPixeles(512, 96);
     for (let k = 0; k < 30; k++) L.poner((k * 157 + 40) % 512, (k * 53 + 7) % 30, "w");
     L.pegar(figuraRelojDali(12, 8, 3), 146, 36);
     // Paracaídas a rayas, con dos cuerdas que bajan hasta el globo
@@ -8002,7 +8175,7 @@ function texCieloDali() {
 // que sube hacia la derecha recibe la luz; la que baja, la sombra), estratos que ondulan y la base en sombra
 function texAcantiladosDali() {
   return textura("dl-acantilados", () => {
-    const L = lienzoDali(512, 104), base = 96, ancho = 230;
+    const L = lienzoPixeles(512, 104), base = 96, ancho = 230;
     const cumbres = [];
     for (let i = 0; i <= ancho + 8; i++) {
       const u = Math.min(1, i / ancho);
@@ -8024,7 +8197,7 @@ function texAcantiladosDali() {
 // Reflejos de la bahía: trazos finos y claros que se desplazan con el parallax
 function texReflejosDali() {
   return textura("dl-reflejos", () => {
-    const L = lienzoDali(512, 12);
+    const L = lienzoPixeles(512, 12);
     for (let k = 0; k < 40; k++) {
       const x = (k * 97) % 500, y = (k * 5) % 11, largo = 6 + (k % 4) * 3;
       for (let dx = 0; dx < largo; dx++) if (dx % 5 < 4) L.poner(x + dx, y, k % 3 ? "l" : "m");
@@ -8036,7 +8209,7 @@ function texReflejosDali() {
 // Pueblo al otro lado de la bahía: casas de paredes claras y tejados rojos, ventanas encendidas y una iglesia con aguja
 function texCiudadDali() {
   return textura("dl-ciudad", () => {
-    const L = lienzoDali(512, 120), base = 112;
+    const L = lienzoPixeles(512, 120), base = 112;
     // Un edificio: x, ancho, alto del muro y alto del tejado a dos aguas (el tejado de la iglesia es oscuro)
     const edificio = (x0, w, muro, techo, tejado = "r") => {
       for (let x = x0; x < x0 + w; x++) {
@@ -8060,7 +8233,7 @@ function texCiudadDali() {
 // y una repisa con otro reloj que cuelga de su borde. Periódica en X (512): cada cosa cabe en su tramo
 function texEscenarioDali() {
   return textura("dl-escenario", () => {
-    const L = lienzoDali(512, 176), luz = ["h", "b", "s"];
+    const L = lienzoPixeles(512, 176), luz = ["h", "b", "s"];
     L.trazo(46, 152, 50, 126, 3.5, 3, luz);     // tronco
     L.trazo(50, 126, 53, 100, 3, 2.2, luz);
     L.trazo(53, 100, 52, 80, 2.2, 1.6, luz);
@@ -8201,7 +8374,7 @@ function escenaGaudi(cam, pal) {
 }
 
 // Escenarios de los mundos de arte, por el tema de su estilo (ver TERRENO_DE_TEMA)
-const ESCENAS_ESTILO = { vangogh: escenaVanGogh, dali: escenaDali, miro: escenaMiro, gaudi: escenaGaudi };
+const ESCENAS_ESTILO = { vangogh: escenaVanGogh, dali: escenaDali, miro: escenaMiro, gaudi: escenaGaudi, barco: escenaBarco };
 
 // Fondo del escenario. El cielo, el sol o la luna, las nubes y las montañas vienen de bloques.js
 // y cambian con la hora (0 amanecer, 0.25 día, 0.5 atardecer, 0.75 noche); la cueva usa roca.
@@ -8858,6 +9031,7 @@ class Level {
     this.castillo = !!def.castillo;
     // Un estilo de mundo (los niveles de Dalí, Miró y Gaudí) pone su propio tema; si no, el del mundo
     this.temaKey = this.castillo ? "castillo" : (def.estilo || mundo.tema);   // separa la caché de sprites por tema
+    this.fondo = def.fondo || this.temaKey;   // escenario de fondo: el propio de la fase (el velero) o el del tema
     this.pal = this.castillo ? PALETA_CASTILLO : (PALETA_ESTILO[this.temaKey] || mundo.paleta);
     this.hora = def.hora !== undefined ? def.hora : mundo.hora;   // momento del día del fondo
     this.clima = def.clima || null;          // lluvia, nieve, niebla... (bloques.js)
@@ -9136,7 +9310,7 @@ class Level {
     const cam = this.cam;
     // En el mar, fondo submarino propio; en los demás, el escenario del tema (la cueva, en el lago de la cueva)
     if (this.agua && this.temaKey === "agua") fondoMarino(cam);
-    else dibujarFondo(cam, this.pal, this.temaKey, this.hora, this);
+    else dibujarFondo(cam, this.pal, this.fondo, this.hora, this);
     if (this.tinte) rect(0, 0, W, H, this.tinte);   // las salas secretas toman el color de su mundo
     if (this.agua) this.dibujarAgua(cam);
     // El área de diseño se desplaza según la pantalla (OY); el HUD se dibuja aparte, arriba
