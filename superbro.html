@@ -7936,7 +7936,7 @@ function escenaVanGogh(cam, pal, hora) {
 // 0.15 casi cerradas; tam: medida de las alas
 function figuraMariposa(abierta, tam) {
   const R = Math.ceil(tam * 1.6) + 2, filas = [], A = abierta;
-  const cuerpoTop = Math.round(tam * 0.9);
+  const cuerpoTop = Math.round(tam * 0.9), antenaLarga = Math.max(2, Math.round(tam * 0.4));
   for (let y = -R; y <= R; y++) {
     let f = "";
     for (let x = -R; x <= R; x++) {
@@ -7944,9 +7944,9 @@ function figuraMariposa(abierta, tam) {
       const arriba = ((ax - tam * 1.0 * A) / (tam * 0.7 * A + 0.4)) ** 2 + ((y + tam * 0.6) / (tam * 0.6)) ** 2 <= 1;
       const abajo = ((ax - tam * 0.65 * A) / (tam * 0.45 * A + 0.4)) ** 2 + ((y - tam * 0.75) / (tam * 0.4)) ** 2 <= 1;
       const cuerpo = ax < 0.5 && Math.abs(y) <= cuerpoTop;
-      const antena = (ax === 1 && y === -cuerpoTop - 1) || (ax === 2 && y === -cuerpoTop - 2);
+      const antena = ax >= 1 && ax <= antenaLarga && y === -cuerpoTop - ax;
       if (cuerpo || antena) f += "k";
-      else if (arriba || abajo) f += (ax - tam * 1.0 * A) ** 2 + (y + tam * 0.6) ** 2 < 0.9 ? "y" : "x";
+      else if (arriba || abajo) f += (ax - tam * 1.0 * A) ** 2 + (y + tam * 0.6) ** 2 < 0.1 * tam * tam ? "y" : "x";
       else f += ".";
     }
     filas.push(f);
@@ -8043,13 +8043,14 @@ function texVeleroBarco() {
   });
 }
 
-// Velero: sus velas son mariposas (tres mástiles, una rejilla de quince por mástil) que aletean, cada una con su propio momento
+// Velero: sus velas son mariposas grandes (dos por mástil, una encima de otra, centradas en el mástil) que
+// aletean; cada una tiene su propio momento
 function dibujarVeleroBarco(sx, sy, t) {
   drawSprite(texVeleroBarco(), sx - 42, sy - 66);
   let i = 0;
-  for (const mx of [-18, 2, 20]) for (const dx of [-7, 0, 7]) for (const dy of [-54, -46, -38, -30, -22]) {
-    const sp = mariposaBarco(COLORES_MARIPOSA[i % COLORES_MARIPOSA.length], 3, SECUENCIA_ALETEO[(Math.floor(t * 7) + i) % 4]);
-    drawSprite(sp, sx + mx + dx - sp.lw / 2, sy + dy - sp.lh / 2);
+  for (const mx of [-18, 2, 20]) for (const dy of [-46, -28]) {
+    const sp = mariposaBarco(COLORES_MARIPOSA[i % COLORES_MARIPOSA.length], 7.5, SECUENCIA_ALETEO[(Math.floor(t * 7) + i) % 4]);
+    drawSprite(sp, sx + mx - sp.lw / 2, sy + dy - sp.lh / 2);
     i++;
   }
 }
