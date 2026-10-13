@@ -5714,7 +5714,7 @@ function objetoSprite(tipo) {
 
   // Posición de brazos (ángulos) y piernas (desplazamiento y levantamiento) según el estado
   function pose(estado, t) {
-    const ph = Math.sin(t * 12), ph2 = Math.sin(t * 7);
+    const ph = Math.sin(t * 12);
     switch (estado) {
       case 'andar':
         return { bI: -ph * 0.6, bD: ph * 0.6,
@@ -5724,10 +5724,14 @@ function objetoSprite(tipo) {
         return { bI: 2.5, bD: -2.5, pI: { dx: -1.2, lift: 0.8 }, pD: { dx: 1, lift: 0.4 } };
       case 'caer':
         return { bI: 1.3, bD: -1.3, pI: { dx: -0.6, lift: 0 }, pD: { dx: 0.6, lift: 0 } };
-      case 'escalera':
-        return { bI: 2.2 + ph2 * 0.5, bD: -2.2 - ph2 * 0.5,
-                 pI: { dx: ph2 * 0.8, lift: Math.max(0, ph2) * 0.8 },
-                 pD: { dx: -ph2 * 0.8, lift: Math.max(0, -ph2) * 0.8 } };
+      case 'escalera': {
+        // Trepar: una mano sube mientras la otra se agarra más abajo; los pies se apoyan en peldaños alternos.
+        // t avanza con la distancia subida: un ciclo cada dos peldaños (32 px)
+        const sube = Math.sin(t * 11.8), arriba = Math.max(0, sube), abajo = Math.max(0, -sube);
+        return { bI: 0.15 + arriba * 2.4, bD: -0.15 - abajo * 2.4,
+                 pI: { dx: -abajo * 0.9, lift: abajo * 2.2 },
+                 pD: { dx: arriba * 0.9, lift: arriba * 2.2 } };
+      }
       case 'muerto':
         return { bI: 2.6, bD: -2.6, pI: { dx: -1.5, lift: 0 }, pD: { dx: 1.5, lift: 0 } };
       default:
@@ -5753,6 +5757,9 @@ function objetoSprite(tipo) {
     pierna(g, 6.3, p.pI.dx, p.pI.lift);
     pierna(g, 9.7, p.pD.dx, p.pD.lift);
     torso(g, camisa);
+    // Con el dibujo estirado (grande), la cabeza conserva sus proporciones y sube con el cuello
+    const k = opt.k || 1;
+    if (k !== 1) { g.translate(0, 10.2 - 3 / k); g.scale(1, 1 / k); g.translate(0, -7.2); }
     cabeza(g, estado);
 
     g.restore();
@@ -5770,7 +5777,7 @@ function objetoSprite(tipo) {
 // Pose de protagonista.js para cada pose del jugador (ver calcularPose en Player)
 const POSE_PROTA = {
   quieto: "quieto", andar: "andar", correr: "andar", giro: "salto", salto: "salto",
-  caida: "caer", frenado: "quieto", agachado: "quieto", dano: "quieto", muerto: "muerto",
+  caida: "caer", frenado: "quieto", agachado: "quieto", dano: "quieto", muerto: "muerto", trepar: "escalera",
 };
 
 // Dibuja al protagonista con los pies en (px, py), centrado en px.
@@ -5778,12 +5785,12 @@ const POSE_PROTA = {
 // opt: estado, dir, tiempo (avance de las piernas), sx/sy (escala extra), inclina (radianes), camisa
 function dibujarProtagonista(px, py, alto, opt) {
   const { sx = 1, sy = 1, inclina = 0 } = opt;
-  const s = alto / 14;
+  // La anchura es la del personaje pequeño (16 / 14) aunque sea grande: así cabe en su caja y en los huecos
   ctx.save();
   ctx.translate(Math.round(px), Math.round(py));
   ctx.rotate(inclina);
-  ctx.scale(s * sx, s * sy);
-  Protagonista.dibujar(ctx, -6, -14, { dir: opt.dir, estado: opt.estado, tiempo: opt.tiempo, camisa: opt.camisa });
+  ctx.scale((16 / 14) * sx, (alto / 14) * sy);
+  Protagonista.dibujar(ctx, -6, -14, { dir: opt.dir, estado: opt.estado, tiempo: opt.tiempo, camisa: opt.camisa, k: alto / 16 });
   ctx.restore();
 }
 
@@ -6229,6 +6236,66 @@ const PIEZAS = [
     ".....e.........",
     "GGGGGGGGGGGGGGG",
   ] },
+  // Escalones de ladrillo que suben a la derecha, con un ? sobre el último
+  { id: "inicio_escalones", tipo: "inicio", mapa: [
+    ".............",
+    ".............",
+    ".............",
+    "..........Q..",
+    ".............",
+    "..........B..",
+    ".........BB..",
+    "........BBB..",
+    "GGGGGGGGGGGGG",
+  ] },
+  // Una fila de bloques a media altura y monedas por debajo
+  { id: "inicio_fila_alta", tipo: "inicio", mapa: [
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "...BBQBBB.....",
+    "....c.c.c.....",
+    "..............",
+    "..............",
+    "GGGGGGGGGGGGGG",
+  ] },
+  // Tubería baja que se salta, con un ? encima
+  { id: "inicio_tuberia", tipo: "inicio", mapa: [
+    "..............",
+    "..............",
+    "..............",
+    "..............",
+    "......Q.......",
+    "..............",
+    "......TT......",
+    "......TT......",
+    "GGGGGGGGGGGGGG",
+  ] },
+  // Arco de monedas sobre una fila de ladrillos
+  { id: "inicio_monedas", tipo: "inicio", mapa: [
+    "..............",
+    "..............",
+    "..............",
+    "...c.c.c.c....",
+    "..BBBBBBB.....",
+    "...c.c.c.c....",
+    "..............",
+    "..............",
+    "GGGGGGGGGGGGGG",
+  ] },
+  // Plataforma de una dirección sobre el paso, con monedas encima
+  { id: "inicio_plataforma", tipo: "inicio", mapa: [
+    "..............",
+    "..............",
+    "..............",
+    "....c.c.c.....",
+    "..............",
+    "....DDDDD.....",
+    "..............",
+    "..............",
+    "GGGGGGGGGGGGGG",
+  ] },
   // Tuberías cada vez más altas (con planta si el mundo la tiene); las monedas marcan los saltos
   { id: "tubos", tipo: "reto", mapa: [
     "................g...",
@@ -6241,6 +6308,30 @@ const PIEZAS = [
     "GGGGGGGGGGGGGGGGGGGG",
   ] },
   // Escalinata de subida y bajada; con más dificultad, con hueco entre las dos
+  // Un hoyo de dos bloques con monedas encima: se salta de un borde al otro
+  { id: "hoyo_doble", tipo: "reto", mapa: [
+    "........",
+    "........",
+    "........",
+    "........",
+    "........",
+    "...cc...",
+    "........",
+    "........",
+    "GGG..GGG",
+  ] },
+  // Un escalón de dos bloques con un ? encima, en el sitio donde se salta
+  { id: "escalon_bloques", tipo: "reto", mapa: [
+    ".........",
+    ".........",
+    ".........",
+    ".........",
+    "...Q.....",
+    ".........",
+    "...BB....",
+    "...BB....",
+    "GGGGGGGGG",
+  ] },
   { id: "escalinata", tipo: "reto", max: 2, mapa: [
     ".....cc.....",
     "............",
@@ -6752,6 +6843,10 @@ function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance, agua) {
   // Con avance automático no hay ascensor: esperarlo con la pantalla empujando sería una trampa
   const vale = (p) => (!p.req || mecanicas.includes(p.req)) && dif >= (p.min || 1) && dif <= (p.max || 8) && !(avance && p.id === "ascensor");
   const pool = PIEZAS.filter((p) => (p.tipo === "reto" || p.tipo === "puerta") && vale(p));
+  // Las piezas de reto también salen en espejo (izquierda y derecha cambian, y los cañones miran al otro lado):
+  // así hay más combinaciones con las mismas piezas, sobre todo en las primeras fases
+  const enEspejo = (p) => ({ ...p, id: p.id + "~", mapa: p.mapa.map((f) => [...f].reverse().map((ch) => (ch === "(" ? ")" : ch === ")" ? "(" : ch)).join("")) });
+  for (const p of pool.filter((q) => q.tipo === "reto" && q.mapa.every((f) => f.length === q.mapa[0].length))) pool.push(enEspejo(p));
   const puertas = pool.filter((p) => p.tipo === "puerta");
   const n = 6 + Math.ceil(dif / 2);
   const nPuertas = Math.min(3, 1 + (dif >= 4) + (dif >= 7));
@@ -6789,11 +6884,12 @@ function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance, agua) {
   }
   // La fase empieza con una pieza tranquila de bloques
   elegidas.unshift(azar(PIEZAS.filter((p) => p.tipo === "inicio")));
-  // Zona secreta: la entrada hacia un tercio de la fase y la salida dos piezas después (es un atajo)
+  // Zona secreta (es un atajo): la entrada cae en un sitio distinto en cada fase, tras la primera pieza
+  // y antes del final, y la salida va dos, tres o cuatro piezas después
   if (secreta !== undefined && !jefe) {
-    const i = Math.max(2, Math.floor(elegidas.length * 0.35));
+    const i = 1 + Math.floor(rnd() * Math.max(1, elegidas.length - 2));
     elegidas.splice(i, 0, azar(PIEZAS.filter((p) => p.tipo === "entrada")));
-    elegidas.splice(Math.min(elegidas.length, i + 3), 0, PIEZAS.find((p) => p.tipo === "salida"));
+    elegidas.splice(Math.min(elegidas.length, i + 2 + Math.floor(rnd() * 3)), 0, PIEZAS.find((p) => p.tipo === "salida"));
   }
   return elegidas;
 }
@@ -6857,17 +6953,34 @@ function elegirPiezasAgua(rnd, dif, secreta) {
   return elegidas;
 }
 
+// Secuencias de bloques de los tramos llanos, de arriba abajo. Las de escalera van pegadas al suelo (se sube de
+// un bloque al siguiente); las demás van a media altura, por encima de la cabeza de cualquier personaje
+const SECUENCIAS_TRAMO = [
+  { filas: ["Q"] }, { filas: ["BQB"] }, { filas: ["QQ"] }, { filas: ["BPB"] }, { filas: ["BKB"] },
+  { filas: ["BBBB"] }, { filas: ["QBQBQ"] }, { filas: ["QQQ", "B.B"] }, { filas: ["..Q..", ".QBQ."] },
+  { filas: [".c.c.c.", "BBBBBBB"] }, { filas: ["..B", ".BB", "BBB"], escalera: true },
+];
+
 // Tramo llano entre dos piezas: a veces un enemigo, un grupo de bloques o un volador.
 // El tramo del punto de control queda sin enemigos
 function ponerTramo(N, x, w, tranquilo) {
   const rnd = N.rnd;
   if (tranquilo) return;
   // Bajo el agua las piezas ya traen sus peces y medusas: en los tramos hay menos enemigos
+  const antes = N.ents.length;
   if (rnd() < (0.3 + N.dif * 0.07) * (N.agua ? 0.4 : 1)) ponerEnemigo(N, x + 1 + Math.floor(rnd() * (w - 1)), N.gy - 1, false);
-  if (w >= 5 && rnd() < 0.35) {
-    const forma = ["Q", "BQB", "QQ", "BPB", "BKB"][Math.floor(rnd() * 5)];
-    const c0 = x + Math.floor((w - forma.length) / 2);
-    [...forma].forEach((ch, k) => ponerCelda(N, ch, c0 + k, N.gy - 4));
+  const hayEnemigo = N.ents.length > antes;
+  if (w >= 5 && rnd() < 0.5) {
+    const sec = SECUENCIAS_TRAMO[Math.floor(rnd() * SECUENCIAS_TRAMO.length)];
+    const ancho = Math.max(...sec.filas.map((f) => f.length));
+    // Una escalera no se pone en un tramo con enemigo (quedaría dentro de él)
+    if (ancho <= w && !(sec.escalera && hayEnemigo)) {
+      const c0 = x + Math.floor(rnd() * (w - ancho + 1));
+      const base = sec.escalera ? N.gy - 1 : N.gy - 4 - (sec.filas.length === 1 && rnd() < 0.4 ? 1 : 0);
+      sec.filas.forEach((fila, k) => [...fila].forEach((ch, j) => {
+        if (ch !== ".") ponerCelda(N, ch, c0 + j, base - (sec.filas.length - 1 - k));
+      }));
+    }
   } else if (N.dif >= 3 && N.voladores.length && !N.agua && rnd() < 0.25) {
     ponerEnemigo(N, x + Math.floor(w / 2), 5 + Math.floor(rnd() * 3), true);
   }
@@ -6894,7 +7007,7 @@ function generarNivel(gen, mecanicas = []) {
   const tipos = gen.agua ? ["cangrejo", "pez_nadador", "medusa"] : gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"];
   const piezas = elegirPiezas(rnd, dif, mecanicas, gen.secreta, gen.jefe, gen.avance, gen.agua);
   const separaciones = piezas.map(() => ri(3, 6));
-  const INICIO = 12, ARENA = gen.jefe ? 34 : 0, FINAL = 22;
+  const INICIO = 9 + Math.floor(rnd() * 10), ARENA = gen.jefe ? 34 : 0, FINAL = 22;   // tramo llano inicial
   const anchoPiezas = piezas.reduce((s, p, i) => s + separaciones[i] + Math.max(...p.mapa.map((f) => f.length)), 0);
   const cols = INICIO + anchoPiezas + 4 + ARENA + FINAL;
   const N = nuevoNivel(cols, rnd, dif, tipos);
@@ -7282,9 +7395,13 @@ function generarColinas(gen) {
     }
     return false;
   };
-  if (gen.secreta !== undefined && tuberia(Math.floor(META * 0.3), Math.floor(META * 0.55), "X")) {
-    if (!tuberia(Math.floor(META * 0.65), META - 14, "R") && !tuberia(Math.floor(META * 0.58), META - 5, "R")) {
-      tuberia(Math.floor(META * 0.58), META - 5, "R", true);   // sin tramo llano en todo el nivel, la salida va sobre un trozo casi llano
+  // La entrada de la zona secreta cae en un sitio distinto de cada fase, y la salida, después de ella
+  const entrada0 = Math.floor(META * (0.12 + rnd() * 0.4));
+  const salida0 = Math.min(META - 14, entrada0 + Math.floor(META * (0.2 + rnd() * 0.2)));
+  const salidaMin = Math.max(entrada0 + 4, Math.floor(META * 0.58));
+  if (gen.secreta !== undefined && tuberia(entrada0, entrada0 + Math.floor(META * 0.25), "X")) {
+    if (!tuberia(salida0, META - 14, "R") && !tuberia(salidaMin, META - 5, "R")) {
+      tuberia(salidaMin, META - 5, "R", true);   // sin tramo llano en todo el nivel, la salida va sobre un trozo casi llano
     }
   }
   // Monedas: guías sobre los huecos (tres bloques por encima del borde más alto) y arcos sobre las colinas
@@ -7812,12 +7929,14 @@ class Player {
     else if (this.hurtT > 0) this.pose = "dano";
     else if (this.spinT > 0) this.pose = "giro";
     else if (this.duck) this.pose = "agachado";
+    else if (this.trepando) this.pose = "trepar";
     else if (!this.onGround) this.pose = this.vy < 0 ? "salto" : "caida";
     else if (this.frenadoT > 0) this.pose = "frenado";
     else if (Math.abs(this.vx) > 120 && held.run) this.pose = "correr";
     else if (Math.abs(this.vx) > 25) this.pose = "andar";
     else this.pose = "quieto";
     if (this.onGround && (this.pose === "andar" || this.pose === "correr")) this.zancada += Math.abs(this.vx) * dt;
+    if (this.trepando) this.zancada += Math.abs(this.vy) * dt;   // al trepar, las manos y los pies avanzan con la subida
   }
 }
 
@@ -10623,11 +10742,20 @@ class Game {
     else { this.transicion = null; this.estado = "nivel"; this.esperarSoltar = true; }
   }
 
+  // Lo que el jugador lleva encima (seta, pluma, flor y estrella) pasa de un nivel a otro
+  pasarPoder(de, a) {
+    a.setBig(de.big);
+    a.fire = de.fire;
+    a.cape = de.cape;
+    a.star = de.star;
+  }
+
   entrarSala(t) {
     const padre = this.lvl;
     const k = padre.entradaSecreta.sala;
     this.secreta = { lvl: padre, tuberia: t, sala: k };
     this.lvl = new Level(SALAS[k], MUNDOS[3], MUNDOS[this.mundoIdx]);
+    this.pasarPoder(padre.player, this.lvl.player);
     this.prepararGrandes(this.lvl);   // la moneda estrella de la sala es la tercera de la fase
     this.irisAbre = performance.now();
     // La primera vez que se halla cada zona: puntos, y queda marcada en el mapa
@@ -10646,12 +10774,14 @@ class Game {
 
   salirSala() {
     const { lvl: padre, tuberia: entrada } = this.secreta;
+    const sala = this.lvl;
     this.secreta = null;
     this.lvl = padre;
     // Se sale por la tubería de salida, más adelante en la fase; la entrada queda cerrada (sin flecha)
     const e = padre.salidaSecreta || entrada;
     padre.entradaSecreta = null;
     const p = padre.player;
+    this.pasarPoder(sala.player, p);             // lo que se consiguió (o se perdió) dentro de la zona se queda
     p.x = e.col * TILE + (2 * TILE - p.w) / 2;   // centrado sobre la boca (dos bloques)
     p.y = e.row * TILE + TILE - p.h;             // dentro del tubo: sale hacia arriba
     p.vx = 0; p.vy = 0;
@@ -11412,7 +11542,8 @@ function dibujarPantalla(game) {
    ===================================================================== */
 // Zonas secretas: cada fase que no es castillo tiene una tubería que lleva a una sala bajo tierra
 // (las salas se reparten por turnos) y otra, más adelante, por la que se vuelve
-MUNDOS.forEach((m, mi) => m.niveles.forEach((nv, f) => { if (!nv.jefe) nv.secreta = (mi * 7 + f) % SALAS.length; }));
+// Sala de cada zona secreta: fija para cada fase, pero sin seguir un orden (cada mundo y fase cae en otra sala)
+MUNDOS.forEach((m, mi) => m.niveles.forEach((nv, f) => { if (!nv.jefe) nv.secreta = Math.floor(Math.abs(Math.sin((mi + 1) * 12.9898 + (f + 1) * 78.233)) * 1000) % SALAS.length; }));
 // Fases de relieve suave (estilo Super Mario Bros. 3): dos por mundo, en lugar de las del generador normal
 for (const [m, f] of [[0, 1], [0, 2], [1, 0], [1, 6], [2, 0], [2, 1], [3, 0], [3, 4], [4, 0], [4, 3], [5, 0], [5, 2], [6, 0], [6, 3], [7, 0], [7, 1]]) MUNDOS[m].niveles[f].colinas = true;
 // Fases con avance automático (la pantalla avanza sola), con nubarrón (te sigue y lanza erizos) y con peces
