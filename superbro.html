@@ -144,6 +144,7 @@
     #zonas.gestos, #zonas.joystick { display: block; }
     #hint { display: none; }
   }
+  .dev #hint { display: none; }   /* modo desarrollador (?dev): la paleta ocupa esa franja */
   #hint {
     position: fixed;
     bottom: 6px;
@@ -247,6 +248,11 @@ const GRAVITY = 900;       // px/s²
 const MAX_FALL = 360;      // velocidad máxima de caída
 const SAVE_KEY = "superbro_save_v2";
 
+// Modo desarrollador (?dev): la paleta va en una franja propia bajo el área de juego (51 px + 10 de avisos)
+const devActivo = new URLSearchParams(location.search).has("dev");
+if (devActivo) document.documentElement.classList.add("dev");
+const DEV_FRANJA = 61;
+
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
 ctx.imageSmoothingEnabled = false;
@@ -260,11 +266,13 @@ function resize() {
   const sw = Math.max(1, Math.round(vv ? vv.width : innerWidth));
   const sh = Math.max(1, Math.round(vv ? vv.height : innerHeight));
   const a = sw / sh;
-  if (a >= W_MIN / H_MIN) { H = H_MIN; W = Math.round(H_MIN * a); }
+  const franja = devActivo ? DEV_FRANJA : 0;   // franja de la paleta del modo desarrollador
+  const hMin = H_MIN + franja;
+  if (a >= W_MIN / hMin) { H = hMin; W = Math.round(hMin * a); }
   else { W = W_MIN; H = Math.round(W_MIN / a); }
   // En vertical con botones táctiles se reserva una franja inferior (suelo) para ellos.
   // Con gestos no hay botones, así que el juego ocupa toda la pantalla.
-  const reserva = TOUCH && H > H_MIN && ajustes.esquema !== "gestos" ? Math.round(ALTO_BOTONES_PX * H / sh) : 0;
+  const reserva = (TOUCH && H > hMin && ajustes.esquema !== "gestos" ? Math.round(ALTO_BOTONES_PX * H / sh) : 0) + franja;
   OY = Math.max(0, H - H_MIN - reserva);
   canvas.width = W * U;
   canvas.height = H * U;
@@ -9557,8 +9565,13 @@ function fondoMarino(cam) {
 
 class Level {
   // origen: en una sala secreta, el mundo desde el que se ha entrado (da el suelo y el tinte de la sala)
-  constructor(def, mundo, origen) {
+  constructor(def, mundo, origen, clave) {
     const data = construirNivel(def, mundo.tema);
+    // clave: "mundo:fase" o "sala:k". Con ?dev, las ediciones de la fase cambian sus datos antes de montarla
+    this.clave = clave || null;
+    this.ed = devActivo && clave ? devEdicion(clave) : null;
+    if (this.ed) aplicarEdiciones(data, this.ed);
+    this.colores = this.ed ? this.ed.colores : {};   // color de cada casilla "c,r" (modo desarrollador)
     this.def = def;
     this.nombre = data.nombre;
     this.cols = data.cols;
@@ -9620,7 +9633,8 @@ class Level {
     this.bolas = [];           // bolas de fuego del jugador (flor de fuego)
     // Cañones de pared: disparan a su altura; la bala para en el primer bloque sólido
     this.canones = (data.canones || []).map((c) => ({ col: c.col, row: c.row, dir: c.dir || 1, cada: c.cada || 2.4,
-                                                       velocidad: c.velocidad || 90, t: c.inicio !== undefined ? c.inicio : 1.2 }));
+                                                       velocidad: c.velocidad || 90, t: c.inicio !== undefined ? c.inicio : 1.2,
+                                                       clave: claveEnt({ t: "canon", x: c.col * TILE, y: c.row * TILE }) }));
     this.balas = [];
     this.jefeTipo = mundo.jefeTipo || "koopa";   // jefe de este mundo (jefes.js)
     this.arenaX0 = data.arenaX0 || 0;            // el jefe no sale por la izquierda de su arena
@@ -9634,12 +9648,13 @@ class Level {
   }
 
   spawn(e) {
-    if (e.t === "coin") this.coins.push(new Coin(e.x, e.y));
+    const k = claveEnt(e);   // identifica la entidad en las ediciones del modo desarrollador
+    if (e.t === "coin") this.coins.push(Object.assign(new Coin(e.x, e.y), { clave: k }));
     else if (e.t === "qitem" && e.item === "multi") this.multi.set(Math.floor(e.x / TILE) + "," + Math.floor(e.y / TILE), MONEDAS_MULTI);
     else if (e.t === "qitem") this.qItems.set(Math.floor(e.x / TILE) + "," + Math.floor(e.y / TILE), e.item);
     else if (e.t === "boss") this.bossRef = new Boss(e.x, e.y, this.jefeTipo);
-    else if (e.t === "grande") this.grandes.push({ x: e.x + 2, y: e.y + 1, w: 12, h: 14, idx: e.idx, fantasma: false, cogida: false });
-    else this.enemigos.push({ e: crearEnemigo(e), llevado: false });
+    else if (e.t === "grande") this.grandes.push({ x: e.x + 2, y: e.y + 1, w: 12, h: 14, idx: e.idx, fantasma: false, cogida: false, clave: k });
+    else this.enemigos.push({ e: crearEnemigo(e), llevado: false, clave: k });
   }
 
   // Suelo para los enemigos: a los lados hay pared; por debajo, vacío (y caen)
@@ -9994,10 +10009,11 @@ class Level {
 
   // Bloques con el arte de bloques.js. El borde de un terreno depende de los vecinos que dan al aire
   dibujarTile(t, x, y, c, r) {
+    const tc = this.colores[c + "," + r] || null;   // color del bloque (modo desarrollador)
     if (t === "T") {
       // Tubería: boca arriba (P/Q) y cuerpo debajo (p/q); la mitad derecha tiene tubo a la izquierda
       const cuerpo = tileAt(this, c, r - 1) === "T", derecha = tileAt(this, c - 1, r) === "T";
-      drawSprite(Bloques.sprite(cuerpo ? (derecha ? "q" : "p") : (derecha ? "Q" : "P")), x, y);
+      drawSprite(tintado(Bloques.sprite(cuerpo ? (derecha ? "q" : "p") : (derecha ? "Q" : "P")), tc), x, y);
     } else if (t === "F") {
       // Poste de meta: la bandera va en el bloque de arriba; el resto es poste. Al tocarlo, la bandera baja
       if (tileAt(this, c, r - 1) === "F") this.dibujarPoste(x, y);
@@ -10011,22 +10027,22 @@ class Level {
         drawSprite(Bloques.sprite("E"), x, y + bajada);
       }
     } else if (t === "G") {
-      drawSprite(Bloques.sprite(this.terreno + "|" + this.aireDe(c, r)), x, y);
+      drawSprite(tintado(Bloques.sprite(this.terreno + "|" + this.aireDe(c, r)), tc), x, y);
     } else if (t === "S") {
-      drawSprite(Bloques.sprite("X"), x, y);        // piedra suelta
+      drawSprite(tintado(Bloques.sprite("X"), tc), x, y);        // piedra suelta
     } else if (t === "H") {
-      drawSprite(Bloques.sprite("^"), x, y);        // pinchos
+      drawSprite(tintado(Bloques.sprite("^"), tc), x, y);        // pinchos
     } else if (t === "V") {
-      drawSprite(Bloques.sprite("~"), x, y);        // lava
+      drawSprite(tintado(Bloques.sprite("~"), tc), x, y);        // lava
     } else if (t === "L") {
-      drawSprite(Bloques.sprite("L"), x, y);        // escalera
+      drawSprite(tintado(Bloques.sprite("L"), tc), x, y);        // escalera
     } else if (t === "D") {
-      drawSprite(Bloques.sprite("-"), x, y);        // plataforma de una dirección
+      drawSprite(tintado(Bloques.sprite("-"), tc), x, y);        // plataforma de una dirección
     } else if (t === "M") {
-      drawSprite(muelleSprite(), x, y);             // muelle
+      drawSprite(tintado(muelleSprite(), tc), x, y);             // muelle
     } else {
       const pre = PREFIJO_BLOQUE[this.temaKey] || "";   // bloques con estilo del mundo: 'vg=' (ladrillo de Van Gogh), 'vg?'...
-      drawSprite(Bloques.sprite(t === "U" ? "x" : pre + { B: "=", Q: "?" }[t]), x, y);   // ladrillo, interrogación, usado
+      drawSprite(tintado(Bloques.sprite(t === "U" ? "x" : pre + { B: "=", Q: "?" }[t]), tc), x, y);   // ladrillo, interrogación, usado
     }
     this.destelloBloque(t, x, y, c, r);
   }
@@ -10621,7 +10637,7 @@ class Game {
     const mundo = MUNDOS[mIdx];
     const clave = mIdx + ":" + nIdx;
     if (!reintento || !this.intento || this.intento.clave !== clave) this.intento = { clave, grandes: new Set(), control: null };
-    this.lvl = new Level(mundo.niveles[nIdx], mundo);
+    this.lvl = new Level(mundo.niveles[nIdx], mundo, undefined, clave);
     this.prepararGrandes(this.lvl);
     this.irisAbre = performance.now();
     if (this.intento.control && this.lvl.control) {
@@ -10754,7 +10770,7 @@ class Game {
     const padre = this.lvl;
     const k = padre.entradaSecreta.sala;
     this.secreta = { lvl: padre, tuberia: t, sala: k };
-    this.lvl = new Level(SALAS[k], MUNDOS[3], MUNDOS[this.mundoIdx]);
+    this.lvl = new Level(SALAS[k], MUNDOS[3], MUNDOS[this.mundoIdx], "sala:" + k);
     this.pasarPoder(padre.player, this.lvl.player);
     this.prepararGrandes(this.lvl);   // la moneda estrella de la sala es la tercera de la fase
     this.irisAbre = performance.now();
@@ -11561,6 +11577,493 @@ for (const [m, f, bajada, semilla] of [[2, 2, true, 5022], [3, 1, false, 6031], 
   Object.assign(MUNDOS[m].niveles[f], { torre: true, bajada, alto: 42 });
   MUNDOS[m].niveles[f].gen.seed = semilla;
 }
+/* =====================================================================
+   15. MODO DESARROLLADOR: se activa con ?dev en la dirección (superbro.html?dev)
+   F2: editor activado o no. Con el editor activo, una pulsación corta pone lo seleccionado en la
+   casilla y una larga (medio segundo) quita lo que hay: enemigo, moneda, cañón o bloque.
+   La paleta de abajo tiene los bloques, los objetos, los enemigos y los colores (con el PINCEL se
+   recolorean los bloques que ya hay). [ y ]: enemigo anterior o siguiente. RePág y AvPág: fase
+   anterior o siguiente. F3: exporta las ediciones (JSON). F4: borra las de esta fase y la reinicia.
+   Las ediciones se guardan en este navegador y solo se aplican con ?dev.
+   ===================================================================== */
+const DEV_CLAVE = "superbro_dev_v1";
+const DEV_LARGA_MS = 450;      // desde este tiempo pulsado, la pulsación quita en vez de poner
+const DEV_PANEL = 51;          // alto de la paleta, en la franja de abajo
+let devEstado = { niveles: {} };   // ediciones por fase: { "mundo:fase" o "sala:k": { tiles, colores, ents, quitados } }
+try { devEstado = JSON.parse(localStorage.getItem(DEV_CLAVE)) || devEstado; } catch (e) { /* sin almacenamiento: se empieza vacío */ }
+if (!devEstado.niveles) devEstado.niveles = {};
+let devEditor = false;                    // F2: con el editor activo, los toques del nivel ponen y quitan
+let devSel = { tipo: "bloque", i: 0 };    // lo que se pone con una pulsación corta: bloque, objeto o enemigo
+let devColor = 0;                         // índice en DEV_COLORES
+let devEnem = 0;                          // índice en DEV_ENEMIGOS
+let devItemQ = 0, devItemZ = 0;           // premio de los bloques ? y ocultos (índices en DEV_ITEMS_Q y DEV_ITEMS_Z)
+let devPulsa = null;                      // pulsación en curso sobre el nivel: { c, r, t0, hecho, mueve, hit (lo que hay bajo el dedo) }
+let devMira = null;                       // casilla bajo el puntero: { c, r }
+let devAvisoTxt = "", devAvisoHasta = 0;
+
+// Bloques de la paleta. ch: carácter de tiles. item: lleva premio (? u oculto). multi: ladrillo multimoneda
+const DEV_BLOQUES = [
+  { ch: "G", nombre: "SUELO" }, { ch: "B", nombre: "LADRILLO" }, { ch: "Q", nombre: "?", item: true },
+  { ch: "Z", nombre: "OCULTO", item: true }, { ch: "S", nombre: "PIEDRA" }, { ch: "T", nombre: "TUBERIA" },
+  { ch: "H", nombre: "PINCHOS" }, { ch: "V", nombre: "LAVA" }, { ch: "L", nombre: "ESCALERA" },
+  { ch: "D", nombre: "PLATAFORMA" }, { ch: "M", nombre: "MUELLE" }, { ch: "Y", nombre: "ARENA" },
+  { ch: "B", nombre: "MULTIMONEDA", multi: true }, { ch: "U", nombre: "USADO" }, { pincel: true, nombre: "PINCEL" },
+];
+const DEV_ITEMS_Q = ["moneda", "hongo", "flor", "pluma", "estrella", "vida"];
+const DEV_ITEMS_Z = ["vida", "moneda"];
+const DEV_OBJETOS = [
+  { obj: "moneda", nombre: "MONEDA" }, { obj: "estrella", nombre: "MONEDA ESTRELLA" },
+  { obj: "canon", dir: -1, nombre: "CANON IZQUIERDA" }, { obj: "canon", dir: 1, nombre: "CANON DERECHA" },
+];
+const DEV_ENEMIGOS = Object.keys(TIPO_ENEMIGO);
+const DEV_PLANTAS = ["plant", "planta_zombie", "girasol"];   // salen de una tubería: solo se ponen en su boca
+// Colores: modo es el mezclado con el sprite (color: cambia el tono y deja las sombras; screen aclara; multiply oscurece)
+const DEV_COLORES = [
+  { id: null, nombre: "NORMAL" },
+  { id: "rojo", nombre: "ROJO", color: "#e53935", modo: "color" },
+  { id: "naranja", nombre: "NARANJA", color: "#fb8c00", modo: "color" },
+  { id: "amarillo", nombre: "AMARILLO", color: "#fdd835", modo: "color" },
+  { id: "verde", nombre: "VERDE", color: "#43a047", modo: "color" },
+  { id: "azul", nombre: "AZUL", color: "#1e88e5", modo: "color" },
+  { id: "morado", nombre: "MORADO", color: "#8e24aa", modo: "color" },
+  { id: "rosa", nombre: "ROSA", color: "#ec407a", modo: "color" },
+  { id: "blanco", nombre: "BLANCO", color: "#8c8c8c", muestra: "#f2f2f2", modo: "screen" },
+  { id: "gris", nombre: "GRIS", color: "#808080", modo: "saturation" },
+  { id: "negro", nombre: "NEGRO", color: "#303030", modo: "multiply" },
+  { id: "cian", nombre: "CIAN", color: "#00bcd4", modo: "color" },
+];
+const DEV_TINTES = {};
+for (const c of DEV_COLORES) if (c.id) DEV_TINTES[c.id] = c;
+
+// Clave de una entidad (tipo y posición): permite recordar cuál se quitó o se añadió en la fase
+function claveEnt(e) { return e.t + "@" + e.x + "," + e.y; }
+
+// Ediciones de una fase (se crean vacías la primera vez)
+function devEdicion(clave) {
+  const niveles = devEstado.niveles;
+  if (!niveles[clave]) niveles[clave] = { tiles: {}, colores: {}, ents: [], quitados: [] };
+  return niveles[clave];
+}
+function devGuardar() {
+  try { localStorage.setItem(DEV_CLAVE, JSON.stringify(devEstado)); } catch (e) { /* sin almacenamiento: las ediciones solo viven en esta pestaña */ }
+}
+
+// Aplica a los datos de una fase, antes de montarla, las ediciones guardadas
+function aplicarEdiciones(data, ed) {
+  const cambiadas = new Set();   // casillas con un bloque nuevo: su premio de base ya no vale
+  for (const k in ed.tiles) {
+    const [c, r] = k.split(",").map(Number);
+    if (!data.tiles[r] || data.tiles[r][c] === undefined) continue;   // fuera de la fase
+    data.tiles[r][c] = ed.tiles[k];
+    cambiadas.add(k);
+  }
+  data.ents = data.ents.filter((e) => !(e.t === "qitem" && cambiadas.has(e.x / TILE + "," + e.y / TILE)) && !ed.quitados.includes(claveEnt(e)));
+  data.canones = data.canones.filter((cn) => !ed.quitados.includes(claveEnt({ t: "canon", x: cn.col * TILE, y: cn.row * TILE })));
+  for (const e of ed.ents) {
+    if (e.t === "canon") data.canones.push({ col: e.x / TILE, row: e.y / TILE, dir: e.dir });
+    else data.ents.push(e);
+  }
+}
+
+// Copia de un sprite de bloque con otro color (cacheada por sprite y color). Sin color, el mismo sprite
+const tintesCache = new WeakMap();
+function tintado(sp, id) {
+  const t = id ? DEV_TINTES[id] : null;
+  if (!t) return sp;
+  let mapa = tintesCache.get(sp);
+  if (!mapa) { mapa = {}; tintesCache.set(sp, mapa); }
+  if (!mapa[id]) {
+    const c = document.createElement("canvas");
+    c.width = sp.width; c.height = sp.height; c.pad = sp.pad; c.lw = sp.lw; c.lh = sp.lh;
+    const g = c.getContext("2d");
+    g.drawImage(sp, 0, 0);
+    g.globalCompositeOperation = t.modo;
+    g.fillStyle = t.color;
+    g.fillRect(0, 0, c.width, c.height);
+    g.globalCompositeOperation = "destination-in";   // solo donde el sprite tiene dibujo
+    g.drawImage(sp, 0, 0);
+    mapa[id] = c;
+  }
+  return mapa[id];
+}
+
+// Un bloque nuevo (o un cambio de bloque) en una casilla: se pone en la fase y en lo guardado
+function devPonerBloque(lv, c, r, ch, item, color) {
+  const k = c + "," + r, x = c * TILE, y = r * TILE, ed = lv.ed;
+  lv.tiles[r][c] = ch;
+  ed.tiles[k] = ch;
+  lv.qItems.delete(k);
+  lv.multi.delete(k);
+  ed.ents = ed.ents.filter((e) => !(e.t === "qitem" && e.x === x && e.y === y));
+  if (item) { const q = { t: "qitem", x, y, item }; lv.spawn(q); ed.ents.push(q); }
+  devColorear(lv, c, r, color);
+  lv.tuberias = encontrarTuberias(lv.tiles);
+  devGuardar();
+}
+// Color de una casilla (lv.colores es el mismo objeto que lv.ed.colores)
+function devColorear(lv, c, r, color) {
+  const k = c + "," + r;
+  if (color) lv.colores[k] = color; else delete lv.colores[k];
+}
+
+// Un enemigo, una moneda, una moneda estrella o un cañón en una casilla (ent: como en los datos de la fase)
+function devPonerEntidad(lv, ent) {
+  const k = claveEnt(ent);
+  if (devHayClave(lv, k)) return devAviso("YA HAY ALGO AQUI");
+  if (ent.t === "canon") {
+    devPonerBloque(lv, ent.x / TILE, ent.y / TILE, "S", null, null);   // el cañón va sobre piedra
+    lv.canones.push({ col: ent.x / TILE, row: ent.y / TILE, dir: ent.dir, cada: 2.4, velocidad: 90, t: 1.2, clave: k });
+  } else lv.spawn(ent);
+  lv.ed.ents.push(ent);
+  devGuardar();
+}
+function devHayClave(lv, k) {
+  return lv.enemigos.some((w) => w.clave === k) || lv.coins.some((m) => m.clave === k) ||
+    lv.grandes.some((g) => g.clave === k) || lv.canones.some((cn) => cn.clave === k);
+}
+// Lo que hay en la casilla, por prioridad: enemigo (el más cercano), cañón, moneda y moneda estrella
+function devEntidadEn(lv, c, r) {
+  const x0 = c * TILE, y0 = r * TILE, cx = x0 + TILE / 2, cy = y0 + TILE / 2;
+  let mejor = null, d2 = Infinity;
+  for (const w of lv.enemigos) {
+    const e = w.e;
+    if (w.llevado || e.remove || e.dead) continue;
+    if (Math.abs(e.x - cx) > e.w / 2 + TILE / 2 || Math.abs(e.y - cy) > e.h / 2 + TILE / 2) continue;
+    const d = (e.x - cx) ** 2 + (e.y - cy) ** 2;
+    if (d < d2) { d2 = d; mejor = w; }
+  }
+  if (mejor) return { campo: "enemigos", obj: mejor, clave: mejor.clave };
+  const cn = lv.canones.find((k) => k.col === c && k.row === r);
+  if (cn) return { campo: "canones", obj: cn, clave: cn.clave };
+  const toca = (o) => o.x < x0 + TILE && o.x + o.w > x0 && o.y < y0 + TILE && o.y + o.h > y0;
+  const m = lv.coins.find(toca);
+  if (m) return { campo: "coins", obj: m, clave: m.clave };
+  const g = lv.grandes.find(toca);
+  if (g) return { campo: "grandes", obj: g, clave: g.clave };
+  return null;
+}
+// Anota en lo guardado que la entidad ya no está (si era de la fase) o que se quita lo añadido
+function devOlvidarEntidad(lv, k) {
+  const ed = lv.ed, i = ed.ents.findIndex((e) => claveEnt(e) === k);
+  if (i >= 0) ed.ents.splice(i, 1);
+  else if (!ed.quitados.includes(k)) ed.quitados.push(k);
+  devGuardar();
+}
+// Quita lo que había bajo el dedo al empezar la pulsación (hit); si no había nada, quita el bloque
+function devQuitar(lv, c, r, hit) {
+  if (hit) {
+    const lista = lv[hit.campo], i = lista.indexOf(hit.obj);   // la lista se renueva en la partida: se toma la actual
+    if (i < 0) return;   // ya no está (murió o se fue): no se toca el bloque
+    lista.splice(i, 1);
+    if (hit.clave) devOlvidarEntidad(lv, hit.clave);
+    return devAviso("QUITADO");
+  }
+  if (lv.tiles[r][c] !== ".") devPonerBloque(lv, c, r, ".", null, null);
+}
+// Primer estrella libre de la fase (0 a 2), o -1 si ya hay tres
+function devIdxEstrella(lv) {
+  const usados = new Set([...lv.grandes.map((g) => g.idx), ...(game.intento ? game.intento.grandes : [])]);
+  for (let i = 0; i < 3; i++) if (!usados.has(i)) return i;
+  return -1;
+}
+function devLibre(lv, c, r) { return !SOLIDOS[lv.tiles[r][c]]; }
+function devCasillaValida(lv, c, r) { return c >= 0 && c < lv.cols && r >= 0 && r < lv.rows; }
+
+// Pulsación corta: pone lo seleccionado en la casilla
+function devPoner(c, r) {
+  const lv = game.lvl;
+  if (!devCasillaValida(lv, c, r)) return;
+  const s = devSel, b = DEV_BLOQUES[s.i], color = DEV_COLORES[devColor].id;
+  if (s.tipo === "bloque" && b.pincel) {
+    if (lv.tiles[r][c] === ".") return devAviso("NO HAY BLOQUE AQUI");
+    devColorear(lv, c, r, color);
+    devGuardar();
+  } else if (s.tipo === "bloque") {
+    const item = !b.item ? (b.multi ? "multi" : null) : b.ch === "Q" ? DEV_ITEMS_Q[devItemQ] : DEV_ITEMS_Z[devItemZ];
+    devPonerBloque(lv, c, r, b.ch, item, color);
+  } else if (s.tipo === "objeto") {
+    const o = DEV_OBJETOS[s.i];
+    if (o.obj === "canon") return devPonerEntidad(lv, { t: "canon", x: c * TILE, y: r * TILE, dir: o.dir });
+    if (!devLibre(lv, c, r)) return devAviso("HAY UN BLOQUE AQUI");
+    if (o.obj === "moneda") return devPonerEntidad(lv, { t: "coin", x: c * TILE + 4, y: r * TILE + 4 });
+    const idx = devIdxEstrella(lv);
+    if (idx < 0) return devAviso("YA HAY 3 MONEDAS ESTRELLA");
+    devPonerEntidad(lv, { t: "grande", x: c * TILE, y: r * TILE, idx });
+  } else {
+    const tipo = DEV_ENEMIGOS[devEnem];
+    let ent = { t: tipo, x: c * TILE, y: r * TILE };
+    if (DEV_PLANTAS.includes(tipo)) {
+      const tub = lv.tuberias.find((p) => p.row === r && (c === p.col || c === p.col + 1));
+      if (!tub) return devAviso("ESTA PLANTA SALE DE UNA TUBERIA");
+      ent = { t: tipo, x: tub.col * TILE + 1, y: tub.row * TILE - 8 };
+    } else if (!devLibre(lv, c, r)) return devAviso("HAY UN BLOQUE AQUI");
+    devPonerEntidad(lv, ent);
+  }
+}
+
+function devAviso(texto) { devAvisoTxt = texto; devAvisoHasta = performance.now() + 1500; }
+function devEditorActivo() { return devActivo && devEditor && game.estado === "nivel" && !!game.lvl && !hojaAbierta; }
+
+// Coordenadas de un evento dentro de la pantalla lógica
+function devCoordenadas(e) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) * W / r.width, y: (e.clientY - r.top) * H / r.height };
+}
+// Casilla bajo un punto de la pantalla (con la cámara y el desplazamiento vertical del área de juego)
+function devCasilla(p) {
+  const cam = game.lvl.cam;
+  return { c: Math.floor((p.x + cam.x) / TILE), r: Math.floor((p.y - OY + cam.y) / TILE) };
+}
+function devEnPanel(p) { return p.y >= H - DEV_PANEL - 10; }
+
+addEventListener("pointerdown", (e) => {
+  if (!devEditorActivo()) return;
+  const p = devCoordenadas(e);
+  if (devEnPanel(p)) return devClicPanel(p.x, p.y);
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  const t = devCasilla(p);
+  devMira = t;
+  devPulsa = { c: t.c, r: t.r, t0: performance.now(), hecho: false, mueve: false, hit: devEntidadEn(game.lvl, t.c, t.r) };
+});
+addEventListener("pointermove", (e) => {
+  if (!devEditorActivo()) { devMira = null; return; }
+  const p = devCoordenadas(e);
+  if (devEnPanel(p)) { devMira = null; return; }
+  const t = devCasilla(p);
+  devMira = t;
+  if (devPulsa && (t.c !== devPulsa.c || t.r !== devPulsa.r)) devPulsa.mueve = true;   // arrastrar no pone ni quita
+});
+function devSoltar() {
+  const p = devPulsa;
+  devPulsa = null;
+  if (p && !p.hecho && !p.mueve && devEditorActivo()) devPoner(p.c, p.r);
+}
+addEventListener("pointerup", devSoltar);
+addEventListener("pointercancel", () => { devPulsa = null; });
+
+// La pulsación larga quita al cumplir el tiempo (sin esperar a soltar)
+function devActualizar() {
+  if (!devEditorActivo() || !devPulsa || devPulsa.hecho || devPulsa.mueve) return;
+  if (performance.now() - devPulsa.t0 < DEV_LARGA_MS) return;
+  devPulsa.hecho = true;
+  devQuitar(game.lvl, devPulsa.c, devPulsa.r, devPulsa.hit);
+}
+
+function devCiclarEnemigo(d) {
+  const n = DEV_ENEMIGOS.length;
+  devEnem = (devEnem + d + n) % n;
+  devSel = { tipo: "enemigo", i: 0 };
+  devAviso("ENEMIGO " + DEV_ENEMIGOS[devEnem].replace(/_/g, " ").toUpperCase());
+}
+// Clic en la paleta: fila de bloques (un segundo clic en ? u oculto cambia su premio), fila de objetos y enemigos, colores
+function devClicPanel(x, y) {
+  const y0 = H - DEV_PANEL, i = Math.floor((x - 2) / 16);
+  if (x < 2) return;
+  if (y >= y0 + 2 && y < y0 + 18) {
+    if (i >= DEV_BLOQUES.length) return;
+    const b = DEV_BLOQUES[i], repetido = devSel.tipo === "bloque" && devSel.i === i;
+    devSel = { tipo: "bloque", i };
+    if (repetido && b.item) { if (b.ch === "Q") devItemQ = (devItemQ + 1) % DEV_ITEMS_Q.length; else devItemZ = (devItemZ + 1) % DEV_ITEMS_Z.length; }
+  } else if (y >= y0 + 20 && y < y0 + 36) {
+    if (i < 4) devSel = { tipo: "objeto", i };
+    else if (i === 4) devCiclarEnemigo(-1);
+    else if (i === 6) devCiclarEnemigo(1);
+    else devSel = { tipo: "enemigo", i: 0 };
+  } else if (y >= y0 + 38 && y < y0 + 48 && i < DEV_COLORES.length) devColor = i;
+}
+
+// Fase anterior o siguiente (RePág y AvPág); en una sala secreta no se cambia
+function devIrNivel(d) {
+  const g = game;
+  if (g.secreta || !["nivel", "pausa", "muerte", "nivelOK"].includes(g.estado)) return;
+  let m = g.mundoIdx, n = g.nivelIdx + d;
+  if (n < 0) { m--; if (m >= 0) n = MUNDOS[m].niveles.length - 1; }
+  else if (n >= MUNDOS[m].niveles.length) { m++; n = 0; }
+  if (m < 0 || m >= MUNDOS.length) return;
+  devPulsa = null;
+  g.empezarNivel(m, n);
+}
+// Vuelve a montar la fase (o la sala) con sus ediciones: por ejemplo, tras borrarlas
+function devRecargarNivel() {
+  const g = game, lv = g.lvl;
+  if (g.secreta) {
+    g.lvl = new Level(SALAS[g.secreta.sala], MUNDOS[3], MUNDOS[g.mundoIdx], lv.clave);
+    g.pasarPoder(lv.player, g.lvl.player);
+    g.prepararGrandes(g.lvl);
+  } else g.empezarNivel(g.mundoIdx, g.nivelIdx, true);
+}
+function devBorrarNivel() {
+  const lv = game.lvl;
+  if (!lv || !lv.clave || !confirm("¿Borrar las ediciones de esta fase?")) return;
+  delete devEstado.niveles[lv.clave];
+  devGuardar();
+  devRecargarNivel();
+  devAviso("EDICIONES BORRADAS");
+}
+// Exporta las ediciones (JSON): se descarga y queda también en la consola
+function devExportar() {
+  const niveles = {};
+  for (const k in devEstado.niveles) {
+    const ed = devEstado.niveles[k];
+    if (Object.keys(ed.tiles).length || Object.keys(ed.colores).length || ed.ents.length || ed.quitados.length) niveles[k] = ed;
+  }
+  const texto = JSON.stringify({ version: 1, niveles }, null, 1);
+  console.log(texto);
+  try {
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([texto], { type: "application/json" }));
+    a.download = "superbro-ediciones.json";
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+  } catch (e) { /* sin descarga: el JSON queda en la consola */ }
+  devAviso("EXPORTADAS " + Object.keys(niveles).length + " FASES");
+}
+
+addEventListener("keydown", (e) => {
+  if (!devActivo) return;
+  const accion = { F2: "editor", F3: "exportar", F4: "borrar", PageUp: "anterior", PageDown: "siguiente", BracketLeft: "enemAnt", BracketRight: "enemSig" }[e.code];
+  if (!accion || (accion === "editor" && e.repeat)) return;
+  e.preventDefault();
+  if (accion === "editor") { devEditor = !devEditor; devPulsa = null; devAviso(devEditor ? "EDITOR ACTIVO" : "EDITOR OCULTO"); }
+  else if (accion === "exportar") devExportar();
+  else if (accion === "borrar") devBorrarNivel();
+  else if (accion === "anterior" || accion === "siguiente") devIrNivel(accion === "siguiente" ? 1 : -1);
+  else devCiclarEnemigo(accion === "enemSig" ? 1 : -1);
+});
+
+// ---- Dibujo de la paleta y de las ayudas ----
+// Sprite de un bloque de la paleta, con el estilo del nivel (null: la arena, que se dibuja aparte)
+function devSpriteBloque(b, lv) {
+  const pre = PREFIJO_BLOQUE[lv.temaKey] || "";
+  switch (b.ch) {
+    case "G": return Bloques.sprite(lv.terreno + "|0000");
+    case "B": return Bloques.sprite(pre + "=");
+    case "Q": case "Z": return Bloques.sprite(pre + "?");
+    case "S": return Bloques.sprite("X");
+    case "T": return Bloques.sprite("P");
+    case "H": return Bloques.sprite("^");
+    case "V": return Bloques.sprite("~");
+    case "L": return Bloques.sprite("L");
+    case "D": return Bloques.sprite("-");
+    case "M": return muelleSprite();
+    case "U": return Bloques.sprite("x");
+    default: return null;
+  }
+}
+function devIconoBloque(b, lv, x, y) {
+  if (b.pincel) { txt("PIN", x + 1, y + 5, PAL.y); return; }
+  const sp = devSpriteBloque(b, lv);
+  ctx.globalAlpha = b.ch === "Z" ? 0.45 : 1;   // el oculto se ve apagado (en el juego no se ve)
+  if (sp) drawSprite(sp, x, y);
+  else rect(x, y + 2, 16, 12, "#c98a3e");
+  ctx.globalAlpha = 1;
+  if (b.multi) rect(x + 11, y + 2, 3, 3, PAL.y);
+}
+function devIconoObjeto(o, x, y) {
+  if (o.obj === "moneda") drawSprite(Bloques.sprite("o0"), x, y);
+  else if (o.obj === "estrella") dibujarGrande(x, y, 0);
+  else { ctx.save(); ctx.translate(x, y); Bloques.canon(ctx, o.dir); ctx.restore(); }
+}
+// Un enemigo de muestra por tipo, dibujado con su propio código de enemigos.js y recortado a la celda
+const devEnemigosIcono = new Map();
+function devIconoEnemigo(tipo, x, y) {
+  let en = devEnemigosIcono.get(tipo);
+  if (!en) { en = Enemigos.create(TIPO_ENEMIGO[tipo], 0, 0); devEnemigosIcono.set(tipo, en); }
+  en.x = x + 8; en.y = y + 9;
+  ctx.save();
+  ctx.beginPath(); ctx.rect(x, y, 16, 16); ctx.clip();
+  Enemigos.draw(ctx, en);
+  ctx.restore();
+}
+function devSwatch(c, x, y) {
+  if (c.id) { rect(x + 1, y, 14, 10, c.muestra || c.color); return; }
+  rect(x + 1, y, 14, 10, "#4a4f66");
+  ctx.strokeStyle = "#dfe3f0"; ctx.lineWidth = 1;
+  ctx.beginPath(); ctx.moveTo(x + 2, y + 9); ctx.lineTo(x + 14, y + 1); ctx.stroke();
+}
+function devMarco(x, y, w = 16, h = 16) {
+  ctx.strokeStyle = PAL.y; ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, h - 1);
+}
+function devFlecha(x, y, d) {
+  ctx.fillStyle = PAL.w;
+  ctx.beginPath();
+  if (d < 0) { ctx.moveTo(x + 11, y + 4); ctx.lineTo(x + 5, y + 8); ctx.lineTo(x + 11, y + 12); }
+  else { ctx.moveTo(x + 5, y + 4); ctx.lineTo(x + 11, y + 8); ctx.lineTo(x + 5, y + 12); }
+  ctx.fill();
+}
+// Texto de la selección (y del color, si el bloque lo lleva)
+function devSelNombre() {
+  const s = devSel, col = DEV_COLORES[devColor];
+  if (s.tipo === "objeto") return DEV_OBJETOS[s.i].nombre;
+  if (s.tipo === "enemigo") return "ENEMIGO " + DEV_ENEMIGOS[devEnem].replace(/_/g, " ");
+  const b = DEV_BLOQUES[s.i];
+  const n = b.pincel ? "PINCEL" : b.item ? (b.ch === "Q" ? "? " + DEV_ITEMS_Q[devItemQ] : "OCULTO " + DEV_ITEMS_Z[devItemZ]) : b.nombre;
+  return col.id ? n + " " + col.nombre : n;
+}
+
+// Contorno de puntos de los bloques ocultos, la casilla bajo el puntero, el progreso de la pulsación larga y la paleta
+function devDibujar() {
+  const lv = game.lvl;
+  if (game.estado === "titulo" || game.estado === "selMundo") { txt("MODO DESARROLLADOR: F2 EN UNA FASE", W / 2, H - 10, PAL.y, "center"); return; }
+  if (game.estado !== "nivel" || !lv) return;
+  const texto = "F2 EDITOR";
+  if (!devEditor) { txt(texto, W - 4 - texto.length * 4, H - 8, PAL.gr); return; }
+  const cam = lv.cam, ahora = performance.now();
+  ctx.save();
+  ctx.translate(0, OY);
+  const c0 = Math.max(0, Math.floor(cam.x / TILE)), c1 = Math.min(lv.cols - 1, Math.floor((cam.x + W) / TILE) + 1);
+  const f0 = Math.max(0, Math.floor((cam.y - OY) / TILE) - 1), f1 = Math.min(lv.rows - 1, Math.floor((cam.y - OY + H) / TILE) + 1);
+  ctx.strokeStyle = "rgba(255,255,255,0.7)"; ctx.lineWidth = 1; ctx.setLineDash([2, 2]);
+  for (let r = f0; r <= f1; r++) for (let c = c0; c <= c1; c++) {
+    if (lv.tiles[r][c] === "Z") ctx.strokeRect(c * TILE - cam.x + 0.5, r * TILE - cam.y + 0.5, TILE - 1, TILE - 1);
+  }
+  ctx.setLineDash([]);
+  if (devMira && devSel.tipo === "bloque" && !DEV_BLOQUES[devSel.i].pincel) {
+    const sp = devSpriteBloque(DEV_BLOQUES[devSel.i], lv);
+    if (sp) { ctx.globalAlpha = 0.5; drawSprite(tintado(sp, DEV_COLORES[devColor].id), devMira.c * TILE - cam.x, devMira.r * TILE - cam.y); ctx.globalAlpha = 1; }
+  }
+  if (devMira) {
+    ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1;
+    ctx.strokeRect(devMira.c * TILE - cam.x + 0.5, devMira.r * TILE - cam.y + 0.5, TILE - 1, TILE - 1);
+  }
+  if (devPulsa && !devPulsa.hecho && !devPulsa.mueve) {
+    const f = Math.min(1, (ahora - devPulsa.t0) / DEV_LARGA_MS);
+    const x = devPulsa.c * TILE - cam.x, y = devPulsa.r * TILE - cam.y;
+    rect(x, y, TILE, TILE, "rgba(255,70,70," + (0.1 + 0.35 * f).toFixed(2) + ")");
+    rect(x, y + TILE - 2, Math.round(TILE * f), 2, "#ff4a4a");
+  }
+  ctx.restore();
+
+  // Paleta: una línea de aviso o de selección encima, y tres filas abajo
+  const y0 = H - DEV_PANEL, aviso = devAvisoHasta > ahora;
+  rect(0, y0 - 10, W, 10, "rgba(0,0,0,0.85)");
+  txt(aviso ? devAvisoTxt : devSelNombre() + "   CORTO PONER  LARGO QUITAR", 3, y0 - 8, aviso ? PAL.y : PAL.w);
+  rect(0, y0, W, DEV_PANEL, "rgba(0,0,0,0.85)");
+  DEV_BLOQUES.forEach((b, i) => {
+    const x = 2 + i * 16, y = y0 + 2;
+    devIconoBloque(b, lv, x, y);
+    if (devSel.tipo === "bloque" && devSel.i === i) devMarco(x, y);
+  });
+  const yB = y0 + 20;
+  DEV_OBJETOS.forEach((o, i) => {
+    devIconoObjeto(o, 2 + i * 16, yB);
+    if (devSel.tipo === "objeto" && devSel.i === i) devMarco(2 + i * 16, yB);
+  });
+  devFlecha(2 + 4 * 16, yB, -1);
+  devIconoEnemigo(DEV_ENEMIGOS[devEnem], 2 + 5 * 16, yB);
+  if (devSel.tipo === "enemigo") devMarco(2 + 5 * 16, yB);
+  devFlecha(2 + 6 * 16, yB, 1);
+  txt(DEV_ENEMIGOS[devEnem].replace(/_/g, " "), 118, yB + 5, PAL.w);
+  DEV_COLORES.forEach((c, i) => {
+    const x = 2 + i * 16, y = y0 + 38;
+    devSwatch(c, x, y);
+    if (devColor === i) devMarco(x, y, 16, 12);
+  });
+  txt(DEV_COLORES[devColor].nombre, 198, y0 + 40, PAL.w);
+}
+
 const game = new Game();
 KEYMAP.Backspace = "reset";  // para borrar el progreso desde el título
 
@@ -11619,9 +12122,11 @@ function bucle(t) {
   try {
     leerMando();                             // el mando se lee en cada frame
     musicaSegunEstado();                     // la música sigue al estado del juego
+    if (devActivo) devActualizar();          // modo desarrollador: la pulsación larga quita al cumplir el tiempo
     if (!hojaAbierta) actualizarJuego(dt);   // con la hoja de ajustes abierta el juego se detiene
     ctx.setTransform(U, 0, 0, U, 0, 0);   // dibujo en coordenadas lógicas
     dibujarJuego(game);
+    if (devActivo) devDibujar();             // paleta y avisos del modo desarrollador, encima de todo
   } catch (err) {
     console.error(err);
   }
