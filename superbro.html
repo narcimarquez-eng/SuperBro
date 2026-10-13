@@ -3783,85 +3783,144 @@ function consume(action) {
     c.globalAlpha = 1;
   }
 
-  // Cuervo (Van Gogh, "Campo de trigo con cuervos"): negro azulado; bate las alas al volar en zigzag
+  // Cuervo (Van Gogh, "Campo de trigo con cuervos"): negro azulado con brillo; bate las alas en zigzag
   function dibujarCuervo(c, e, t) {
     const ala = e.dead ? 0 : Math.sin(t * 16);
+    const punta = -4 + ala * 5;                 // la punta del ala sube y baja con el aleteo
     c.translate(e.x, e.y);
     c.scale(e.dir, 1);
     if (e.dead) c.rotate(1.2);
+    c.fillStyle = '#14172a';
+    // ala del fondo, más oscura, asomando detrás del cuerpo
+    c.beginPath(); c.moveTo(-2, -2); c.quadraticCurveTo(-6, punta - 4, -11, punta - 1); c.quadraticCurveTo(-7, punta + 3, -3, 1); c.fill();
+    // cola en abanico
+    c.beginPath(); c.moveTo(-4, -1); c.lineTo(-13, -3 + ala * 0.5); c.lineTo(-12, 0.5); c.lineTo(-13, 2.5); c.lineTo(-4, 1.5); c.fill();
+    esfera(c, 0, 0, 6.5, 4.4, ['#56669c', '#262c46', '#0b0d18']);
+    contorno(c, 0, 0, 6.5, 4.4, 1);
+    // ala de delante, con dos plumas separadas por una muesca
     c.fillStyle = '#1d2030';
-    c.beginPath(); c.moveTo(-3, -1); c.quadraticCurveTo(-11, -9 + ala * 4, -15, -4 + ala * 2); c.lineTo(-9, 1); c.quadraticCurveTo(-6, 1, -3, 2); c.fill();
-    c.beginPath(); c.moveTo(-4, 0); c.lineTo(-11, -1 + ala); c.lineTo(-10, 2); c.lineTo(-4, 2); c.fill();   // cola
-    esfera(c, 0, 0, 6, 4.2, ['#4a5a8a', '#252a40', '#0c0e18']);
-    contorno(c, 0, 0, 6, 4.2, 1);
-    esfera(c, 5, -2.5, 3, 2.8, ['#56659a', '#2a3050', '#0c0e18']);
+    c.beginPath(); c.moveTo(-1, -1.5); c.quadraticCurveTo(-5, punta - 4, -11, punta); c.lineTo(-7, punta + 2.5); c.lineTo(-10, punta + 4.5); c.quadraticCurveTo(-5, punta + 4, -1, 2); c.fill();
+    c.strokeStyle = 'rgba(130,150,210,0.4)'; c.lineWidth = 0.6;
+    c.beginPath(); c.moveTo(-3, 0); c.quadraticCurveTo(-7, punta + 0.5, -10, punta + 0.5); c.stroke();
+    // cabeza, pico y ojo
+    esfera(c, 5, -2.6, 3.1, 2.9, ['#6a7ab0', '#2a3050', '#0c0e18']);
     c.fillStyle = '#e89a2a';   // pico
-    c.beginPath(); c.moveTo(7.5, -3); c.lineTo(11, -2); c.lineTo(7.5, -1); c.fill();
-    esfera(c, 6, -3.2, 1.2, 1.2, ['#ffffff', '#ffffff', '#dddddd']);   // ojo
-    c.fillStyle = '#111'; c.beginPath(); c.arc(6.4, -3.1, 0.6, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.moveTo(7.6, -3.4); c.lineTo(11.2, -2.4); c.lineTo(7.6, -1.2); c.fill();
+    esfera(c, 6, -3.4, 1.3, 1.3, ['#ffffff', '#ffffff', '#cfd3e0']);
+    c.fillStyle = '#111'; c.beginPath(); c.arc(6.5, -3.3, 0.7, 0, Math.PI * 2); c.fill();
   }
 
-  // Girasol (Van Gogh): planta que sube del trigo; la cabeza es un disco de pétalos con sus semillas
+  // Hoja de girasol: forma de gota con su nervio central; crece con la planta
+  function hojaGirasol(c, x, y, ang, largo) {
+    c.save();
+    c.translate(x, y); c.rotate(ang);
+    c.fillStyle = '#4fa84a';
+    c.beginPath(); c.moveTo(0, 0); c.quadraticCurveTo(largo * 0.5, -largo * 0.45, largo, 0); c.quadraticCurveTo(largo * 0.5, largo * 0.45, 0, 0); c.fill();
+    c.strokeStyle = '#2f6a2c'; c.lineWidth = 0.6;
+    c.beginPath(); c.moveTo(0, 0); c.lineTo(largo * 0.8, 0); c.stroke();
+    c.restore();
+  }
+
+  // Girasol (Van Gogh): planta que sube del trigo; la cabeza es un disco de pétalos con semillas en espiral
   function dibujarGirasol(c, e, t) {
     const hd = headOffset(e);
     c.translate(e.x, e.y);
+    c.lineCap = 'round';
     if (e.up > 0.02) {
-      c.strokeStyle = '#3f8a3a'; c.lineWidth = 3; c.lineCap = 'round';
+      // tallo de dos tonos: un trazo oscuro y otro más claro encima
+      c.strokeStyle = '#2f6a2c'; c.lineWidth = 3.4;
       c.beginPath(); c.moveTo(0, 0); c.quadraticCurveTo(1.5, hd.y * 0.5, hd.x, hd.y); c.stroke();
-      c.fillStyle = '#4fa84a';
-      c.beginPath(); c.ellipse(-3.5, -9 * e.up - 2, 4.2, 1.6, -0.5, 0, Math.PI * 2); c.fill();
-      c.beginPath(); c.ellipse(3.5, -6 * e.up - 4, 4.2, 1.6, 0.5, 0, Math.PI * 2); c.fill();
+      c.strokeStyle = '#5cb552'; c.lineWidth = 1.2;
+      c.beginPath(); c.moveTo(-0.6, 0); c.quadraticCurveTo(0.9, hd.y * 0.5, hd.x - 0.6, hd.y); c.stroke();
+      hojaGirasol(c, hd.x * 0.3, hd.y * 0.4, Math.PI + 0.45, 7 * e.up);   // hoja de la izquierda
+      hojaGirasol(c, hd.x * 0.6, hd.y * 0.65, -0.5, 6 * e.up);            // hoja de la derecha
     }
     c.save();
     c.translate(hd.x, hd.y);
     c.rotate(Math.sin(t * 2) * 0.15);
-    c.fillStyle = '#ffd23f';
-    for (let k = 0; k < 10; k++) {
-      const a = k * Math.PI / 5;
-      c.beginPath(); c.ellipse(Math.cos(a) * 7, Math.sin(a) * 7, 3.6, 1.8, a, 0, Math.PI * 2); c.fill();
+    // dos corolas de pétalos: la de atrás más oscura y desplazada media vuelta
+    for (let capa = 0; capa < 2; capa++) {
+      c.fillStyle = capa ? '#ffd23f' : '#e09a12';
+      for (let k = 0; k < 12; k++) {
+        const a = (k + capa * 0.5) * Math.PI / 6;
+        const r = capa ? 7 : 8.4;
+        c.beginPath(); c.ellipse(Math.cos(a) * r, Math.sin(a) * r, 3.7, 1.9, a, 0, Math.PI * 2); c.fill();
+      }
     }
-    esfera(c, 0, 0, 5, 5, ['#8a5a1e', '#5a3a14', '#2a1a08']);
-    c.fillStyle = '#ffe9a0';
-    [[-1.6, -1.4], [1.6, -1], [0, 1.6], [-2.2, 0.8], [2, 1.5]].forEach(function (p) { c.beginPath(); c.arc(p[0], p[1], 0.6, 0, Math.PI * 2); c.fill(); });
+    esfera(c, 0, 0, 5.2, 5.2, ['#9a6424', '#5a3a14', '#2a1a08']);
+    // semillas en espiral (ángulo áureo), claras y oscuras alternas
+    for (let i = 0; i < 16; i++) {
+      const r = 0.7 + Math.sqrt(i) * 0.9;
+      const a = i * 2.39996;
+      c.fillStyle = i % 3 ? '#ffe9a0' : '#3a2410';
+      c.beginPath(); c.arc(Math.cos(a) * r, Math.sin(a) * r, 0.6, 0, Math.PI * 2); c.fill();
+    }
     c.restore();
   }
 
-  // Ciprés (Van Gogh): una llama oscura que se mece; trazos de remolino y dos ojos amarillos
+  // Ciprés (Van Gogh): llama oscura que se mece y da pasos con sus raíces; trazos de pincel y ceño enfadado
   function dibujarCipres(c, e, t) {
     const mece = Math.sin(t * 3) * 1.2;
+    const paso = Math.sin(t * 8) * 1.6;
     c.translate(e.x, e.y);
     c.scale(e.dir, 1);
-    const cuerpo = c.createLinearGradient(0, -17, 0, 13);
-    cuerpo.addColorStop(0, '#3e8a4e'); cuerpo.addColorStop(0.6, '#1d5a30'); cuerpo.addColorStop(1, '#0c2a18');
+    // raíces que alternan al andar
+    c.fillStyle = '#0c2a18';
+    c.beginPath(); c.ellipse(-3 + paso * 0.6, 16, 2.8, 1.7, 0, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.ellipse(3 - paso * 0.6, 16, 2.8, 1.7, 0, 0, Math.PI * 2); c.fill();
+    // cuerpo: llama que se estrecha hacia arriba; la punta se mece
+    const cuerpo = c.createLinearGradient(0, -18, 0, 15);
+    cuerpo.addColorStop(0, '#4fa35a'); cuerpo.addColorStop(0.55, '#1d5a30'); cuerpo.addColorStop(1, '#0c2a18');
     c.fillStyle = cuerpo;
-    c.beginPath(); c.moveTo(mece * 0.3, -17);
-    c.bezierCurveTo(6, -10, 7, 6, 5, 13); c.lineTo(-5, 13);
-    c.bezierCurveTo(-7, 6, -6, -10, mece * 0.3, -17);
+    c.beginPath(); c.moveTo(mece * 0.5, -18);
+    c.bezierCurveTo(6.5, -10, 7.5, 6, 5.2, 15); c.lineTo(-5.2, 15);
+    c.bezierCurveTo(-7.5, 6, -6.5, -10, mece * 0.5, -18);
     c.fill();
     c.strokeStyle = '#0a2014'; c.lineWidth = 1; c.stroke();
-    c.strokeStyle = 'rgba(170,230,130,0.7)'; c.lineWidth = 1;
-    c.beginPath(); c.arc(-1 + mece * 0.2, -4, 2.2, 0.5, 4.2); c.stroke();
-    c.beginPath(); c.arc(1.5, 4, 1.8, 0, 4.5); c.stroke();
+    // trazos de pincel curvos, como los de sus cipreses
+    c.strokeStyle = 'rgba(190,240,140,0.55)'; c.lineWidth = 1.1;
+    c.beginPath(); c.arc(-1.2 + mece * 0.3, -10, 2.4, 0.6, 3.6); c.stroke();
+    c.beginPath(); c.arc(1.6 + mece * 0.3, -2, 2.1, 2.8, 5.6); c.stroke();
+    c.beginPath(); c.arc(-1 + mece * 0.4, 6, 2.3, 0.4, 3.4); c.stroke();
+    // ojos amarillos con ceño (parece enfadado)
     c.fillStyle = '#ffe066';
-    c.beginPath(); c.arc(-1.8 + mece * 0.3, -2, 0.9, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.arc(1.8 + mece * 0.3, -2, 0.9, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.ellipse(-2 + mece * 0.3, -3, 1.6, 1.9, 0, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.ellipse(2 + mece * 0.3, -3, 1.6, 1.9, 0, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#0a1a0c';
+    c.beginPath(); c.arc(-1.8 + mece * 0.3, -2.8, 0.8, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(2.2 + mece * 0.3, -2.8, 0.8, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#0a1a0c'; c.lineWidth = 0.9;
+    c.beginPath(); c.moveTo(-4.2, -6.4); c.lineTo(-0.8, -5.2); c.moveTo(4.2, -6.4); c.lineTo(0.8, -5.2); c.stroke();
   }
 
-  // Espiral (Van Gogh, "Noche estrellada"): un remolino que rueda por el suelo
+  // Espiral (Van Gogh, "Noche estrellada"): remolino de trazos azules y amarillos que rueda por el suelo
   function dibujarEspiral(c, e, t) {
     c.translate(e.x, e.y);
-    c.rotate(t * 3 * e.dir);
-    const luz = c.createRadialGradient(-2, -2, 1, 0, 0, 9);
-    luz.addColorStop(0, '#fff7a0'); luz.addColorStop(0.5, '#f2c230'); luz.addColorStop(1, '#2f58b8');
+    const luz = c.createRadialGradient(-2.5, -2.5, 1, 0, 0, 9.5);
+    luz.addColorStop(0, '#fff7b0'); luz.addColorStop(0.45, '#f2c230'); luz.addColorStop(0.8, '#3d6fc8'); luz.addColorStop(1, '#14286b');
     c.fillStyle = luz;
     c.beginPath(); c.arc(0, 0, 9, 0, Math.PI * 2); c.fill();
-    c.strokeStyle = '#14286b'; c.lineWidth = 1; c.stroke();
-    c.beginPath();
-    for (let a = 0; a < Math.PI * 5; a += 0.3) {
-      const r = 1 + a * 0.55;
-      if (a === 0) c.moveTo(Math.cos(a) * r, Math.sin(a) * r); else c.lineTo(Math.cos(a) * r, Math.sin(a) * r);
+    // tres brazos del remolino que giran con el enemigo
+    c.save();
+    c.rotate(t * 3 * e.dir);
+    c.lineCap = 'round'; c.lineWidth = 1.3;
+    const brazos = ['#9cc4ff', '#14286b', '#fff06a'];
+    for (let b = 0; b < 3; b++) {
+      c.strokeStyle = brazos[b];
+      c.beginPath();
+      for (let a = 0; a < Math.PI * 2.9; a += 0.25) {
+        const r = 0.8 + a * 0.85;
+        const ang = a + b * Math.PI * 2 / 3;
+        if (a === 0) c.moveTo(Math.cos(ang) * r, Math.sin(ang) * r); else c.lineTo(Math.cos(ang) * r, Math.sin(ang) * r);
+      }
+      c.stroke();
     }
-    c.lineWidth = 1.2; c.stroke();
+    c.restore();
+    // brillo de estrella y contorno azul oscuro
+    c.fillStyle = 'rgba(255,255,255,0.85)';
+    c.beginPath(); c.arc(-3.2, -3.2, 1.1, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#0d1d4d'; c.lineWidth = 0.9;
+    c.beginPath(); c.arc(0, 0, 9, 0, Math.PI * 2); c.stroke();
   }
 
   function dibujarTipo(c, e) {
@@ -3904,79 +3963,178 @@ function consume(action) {
 
   // Reloj blando (Dalí, "La persistencia de la memoria"): esfera de bolsillo que se escurre sobre una rama
   function dibujarRelojBlando(c, e, t) {
-    const mece = Math.sin(t * 6) * 0.8;
+    const gota = Math.sin(t * 3) * 0.8;          // la gota se alarga y se encoge despacio
     c.translate(e.x, e.y);
     c.scale(e.dir, 1);
-    c.strokeStyle = '#6a4a2a'; c.lineWidth = 1.6; c.lineCap = 'round';
-    c.beginPath(); c.moveTo(-8, -6); c.lineTo(8, -6); c.stroke();
-    c.fillStyle = '#f4ecd0';
-    c.beginPath(); c.ellipse(0, -1, 6.5, 5.5, 0, 0, Math.PI * 2); c.fill();
-    c.beginPath(); c.moveTo(4, 2); c.quadraticCurveTo(5, 6 + mece, 6, 8 + mece); c.lineTo(7.4, 8 + mece); c.quadraticCurveTo(6.5, 5, 3, 3.5); c.fill();
-    c.beginPath(); c.ellipse(6.4, 9 + mece, 1.6, 2, 0, 0, Math.PI * 2); c.fill();
-    contorno(c, 0, -1, 6.5, 5.5, 1);
-    c.strokeStyle = '#3a3a4a'; c.lineWidth = 1;
-    c.beginPath(); c.moveTo(0, -1); c.lineTo(0, -4.5); c.moveTo(0, -1); c.lineTo(2.5, -0.5); c.stroke();
+    // rama seca con un nudo
+    c.strokeStyle = '#6a4a2a'; c.lineWidth = 2; c.lineCap = 'round';
+    c.beginPath(); c.moveTo(-9, -6.5); c.lineTo(9, -6.5); c.stroke();
+    c.lineWidth = 1; c.beginPath(); c.arc(4, -6.5, 1.1, 0, Math.PI * 2); c.stroke();
+    // gota que se escurre por el borde de la rama
+    c.strokeStyle = '#b9a46a'; c.lineWidth = 3.2;
+    c.beginPath(); c.moveTo(3.5, 3.4); c.quadraticCurveTo(6.6, 4.8, 6.2, 9 + gota); c.stroke();
+    c.strokeStyle = '#f0e2b0'; c.lineWidth = 2.2;
+    c.beginPath(); c.moveTo(3.5, 3.4); c.quadraticCurveTo(6.6, 4.8, 6.2, 9 + gota); c.stroke();
+    c.fillStyle = '#f0e2b0';
+    c.beginPath(); c.arc(6.2, 9.8 + gota, 1.5, 0, Math.PI * 2); c.fill();
+    // esfera: cara crema con borde dorado
+    esfera(c, 0, -1, 6.6, 5.6, ['#fffbe6', '#f0e2b0', '#b9a46a']);
+    contorno(c, 0, -1, 6.6, 5.6, 0.9);
+    // marcas de las horas
+    c.strokeStyle = '#5a4a2a'; c.lineWidth = 0.7;
+    c.beginPath();
+    for (let k = 0; k < 4; k++) {
+      const a = k * Math.PI / 2;
+      c.moveTo(Math.cos(a) * 4.2, -1 + Math.sin(a) * 3.6);
+      c.lineTo(Math.cos(a) * 3.5, -1 + Math.sin(a) * 3.0);
+    }
+    c.stroke();
+    // manecillas: la de los minutos gira despacio
+    c.strokeStyle = '#2a2a3a'; c.lineWidth = 0.9;
+    c.beginPath(); c.moveTo(0, -1); c.lineTo(Math.cos(t * 0.6) * 2.8, -1 + Math.sin(t * 0.6) * 2.8); c.stroke();
+    c.beginPath(); c.moveTo(0, -1); c.lineTo(Math.cos(t * 0.1 - 1.2) * 2, -1 + Math.sin(t * 0.1 - 1.2) * 2); c.stroke();
   }
 
-  // Elefante de Dalí: patas largas y finas, un obelisco en el lomo y una trompa que se curva
+  // Elefante de Dalí: patas largas y finas que avanzan a pasos, un obelisco en el lomo y una trompa que cuelga
   function dibujarElefante(c, e, t) {
     const paso = Math.sin(t * 6) * 2.2;
     c.translate(e.x, e.y);
     c.scale(e.dir, 1);
-    c.strokeStyle = '#d8cfc4'; c.lineWidth = 2.2; c.lineCap = 'round';
-    c.beginPath(); c.moveTo(-5, 2); c.lineTo(-6 + paso, 14); c.moveTo(4, 2); c.lineTo(5 - paso, 14); c.stroke();
-    c.fillStyle = '#efe8dc';
-    c.beginPath(); c.ellipse(0, -2, 9, 6, 0, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#c9bfb0'; c.fillRect(-4, -15, 2.4, 8);
-    c.beginPath(); c.moveTo(-4, -15); c.lineTo(-2.8, -18.5); c.lineTo(-1.6, -15); c.fill();
-    c.fillStyle = '#efe8dc';
-    c.beginPath(); c.ellipse(8, -6, 4.2, 3.6, 0, 0, Math.PI * 2); c.fill();
-    c.strokeStyle = '#d8cfc4'; c.lineWidth = 1.8;
-    c.beginPath(); c.moveTo(11.5, -5); c.quadraticCurveTo(15, -2, 12, 3); c.stroke();
-    c.fillStyle = '#2a2a3a'; c.beginPath(); c.arc(9.6, -7, 0.7, 0, Math.PI * 2); c.fill();
+    c.lineCap = 'round'; c.lineJoin = 'round';
+    // cola fina con mechón
+    c.strokeStyle = '#b9ae9e'; c.lineWidth = 1.2;
+    c.beginPath(); c.moveTo(-8.5, -4); c.quadraticCurveTo(-12, -2, -11, 3 + paso * 0.3); c.stroke();
+    c.fillStyle = '#b9ae9e'; c.beginPath(); c.arc(-11, 3.8 + paso * 0.3, 1.2, 0, Math.PI * 2); c.fill();
+    // patas largas con rodilla y pie; las del fondo son más oscuras y van en contrafase
+    const pata = function (x, fase, col) {
+      c.strokeStyle = col; c.lineWidth = 1.7;
+      c.beginPath(); c.moveTo(x, 1); c.lineTo(x + fase * 0.5, 8); c.lineTo(x + fase * 1.2, 14.5); c.stroke();
+      c.fillStyle = col; c.beginPath(); c.ellipse(x + fase * 1.2, 15, 2, 1, 0, 0, Math.PI * 2); c.fill();
+    };
+    pata(-2.5, -paso, '#a89c8a'); pata(2.5, paso, '#a89c8a');
+    pata(-5.5, -paso, '#d8cfc4'); pata(5, paso, '#d8cfc4');
+    // cuerpo redondo con sombra
+    esfera(c, 0, -2, 9.5, 6.2, ['#fbf6ec', '#e6dccb', '#a99b84']);
+    contorno(c, 0, -2, 9.5, 6.2, 0.9);
+    // obelisco en el lomo: prisma con su punta, cara iluminada y cara en sombra
+    c.fillStyle = '#efe6d4';
+    c.fillRect(-4.4, -15.5, 1.6, 8.5);
+    c.beginPath(); c.moveTo(-4.4, -15.5); c.lineTo(-2.8, -19); c.lineTo(-2.8, -15.5); c.fill();
+    c.fillStyle = '#a99b84';
+    c.fillRect(-2.8, -15.5, 1.6, 8.5);
+    c.beginPath(); c.moveTo(-2.8, -15.5); c.lineTo(-2.8, -19); c.lineTo(-1.2, -15.5); c.fill();
+    c.fillStyle = '#e0b04a'; c.beginPath(); c.arc(-2.8, -19.4, 0.8, 0, Math.PI * 2); c.fill();
+    // oreja grande y cabeza, más pequeña que el cuerpo
+    c.fillStyle = '#e3bfb0';
+    c.beginPath(); c.ellipse(4.6, -6.4, 3.2, 4.4, -0.25, 0, Math.PI * 2); c.fill();
+    esfera(c, 7.4, -7.2, 3.7, 3.5, ['#fbf6ec', '#e6dccb', '#a99b84']);
+    contorno(c, 7.4, -7.2, 3.7, 3.5, 0.8);
+    // colmillo y ojo con brillo
+    c.strokeStyle = '#fffdf5'; c.lineWidth = 0.9;
+    c.beginPath(); c.moveTo(9, -4); c.quadraticCurveTo(10.8, -3.6, 11.2, -2); c.stroke();
+    c.fillStyle = '#2a2a3a'; c.beginPath(); c.arc(8.6, -8, 0.7, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#ffffff'; c.beginPath(); c.arc(8.85, -8.25, 0.25, 0, Math.PI * 2); c.fill();
+    // trompa que cuelga del morro, con dos tonos y la punta hacia delante
+    c.lineCap = 'round';
+    c.strokeStyle = '#a89c8a'; c.lineWidth = 3;
+    c.beginPath(); c.moveTo(10.6, -5.4); c.quadraticCurveTo(14, -4.6, 13.2, 0.4); c.quadraticCurveTo(12.8, 3.6, 15.4, 4.2); c.stroke();
+    c.strokeStyle = '#e6dccb'; c.lineWidth = 2;
+    c.beginPath(); c.moveTo(10.6, -5.4); c.quadraticCurveTo(14, -4.6, 13.2, 0.4); c.quadraticCurveTo(12.8, 3.6, 15.4, 4.2); c.stroke();
   }
 
-  // Pájaro de Miró: trazo negro, cuerpo rojo y pico amarillo; bate el ala al volar en zigzag
+  // Pájaro de Miró: trazo negro, cuerpo rojo, cresta y pico amarillo; el ala negra bate al volar en zigzag
   function dibujarPajaroMiro(c, e, t) {
     const ala = e.dead ? 0 : Math.sin(t * 14);
     c.translate(e.x, e.y);
     c.scale(e.dir, 1);
-    c.strokeStyle = '#1a1a1a'; c.lineWidth = 1.5; c.lineCap = 'round';
-    c.beginPath(); c.moveTo(-2, -1); c.quadraticCurveTo(-3, -8 + ala * 3, 4, -4); c.stroke();
-    c.beginPath(); c.moveTo(-6, 2); c.lineTo(-10, 4); c.stroke();
+    c.strokeStyle = '#1a1a1a'; c.lineWidth = 1.4; c.lineCap = 'round'; c.lineJoin = 'round';
+    // cola en horquilla
+    c.beginPath(); c.moveTo(-3.5, 1.5); c.lineTo(-9, -0.5); c.moveTo(-3.5, 2.5); c.lineTo(-9, 3.8); c.stroke();
+    // ala negra en media luna que sube y baja desde el hombro
+    c.fillStyle = '#1a1a1a';
+    c.beginPath(); c.moveTo(-1.5, -0.5); c.quadraticCurveTo(-3, -6.5 + ala * 2.5, -8, -6 + ala * 3.5); c.quadraticCurveTo(-5, -2.5, -1.5, 1.5); c.fill();
+    // cuerpo rojo con contorno negro
     c.fillStyle = '#d8322b';
-    c.beginPath(); c.arc(0, 1, 4.4, 0, Math.PI * 2); c.fill(); c.stroke();
-    c.fillStyle = '#ffc21a'; c.beginPath(); c.moveTo(4, 0); c.lineTo(7.5, 1.4); c.lineTo(4, 2.6); c.fill();
-    c.fillStyle = '#1a1a1a'; c.beginPath(); c.arc(2, -0.4, 0.9, 0, Math.PI * 2); c.fill();
+    c.beginPath(); c.arc(0, 1, 4.6, 0, Math.PI * 2); c.fill(); c.stroke();
+    // cresta, pico amarillo y ojo
+    c.beginPath(); c.moveTo(-1.2, -3.4); c.quadraticCurveTo(-0.6, -5.6, 1.8, -4.8); c.stroke();
+    c.fillStyle = '#ffc21a';
+    c.beginPath(); c.moveTo(4, -0.2); c.lineTo(8.2, 1.2); c.lineTo(4, 2.8); c.closePath(); c.fill(); c.stroke();
+    c.fillStyle = '#fff'; c.beginPath(); c.arc(2, -0.5, 1.4, 0, Math.PI * 2); c.fill(); c.stroke();
+    c.fillStyle = '#1a1a1a'; c.beginPath(); c.arc(2.3, -0.4, 0.75, 0, Math.PI * 2); c.fill();
   }
 
-  // Figura de Miró: trazo negro, cabeza amarilla con un punto rojo; camina con los brazos en alto
+  // Figura de Miró: trazo negro, torso azul, cabeza amarilla con un punto rojo; camina con los brazos en alto
   function dibujarPersonajeMiro(c, e, t) {
     const paso = Math.sin(t * 9) * 2.5;
     c.translate(e.x, e.y);
     c.scale(e.dir, 1);
-    c.strokeStyle = '#1a1a1a'; c.lineWidth = 1.5; c.lineCap = 'round';
-    c.beginPath(); c.moveTo(0, -4); c.lineTo(0, 4); c.stroke();
-    c.beginPath(); c.moveTo(0, 4); c.lineTo(-3 + paso, 10); c.moveTo(0, 4); c.lineTo(3 - paso, 10); c.stroke();
-    c.beginPath(); c.moveTo(0, -2); c.lineTo(-5, -6 - paso); c.moveTo(0, -2); c.lineTo(5, -6 + paso); c.stroke();
-    c.fillStyle = '#ffc21a'; c.beginPath(); c.arc(0, -8, 3.4, 0, Math.PI * 2); c.fill(); c.stroke();
-    c.fillStyle = '#d8322b'; c.beginPath(); c.arc(0.4, -8.2, 1.1, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#1a1a1a'; c.lineWidth = 1.4; c.lineCap = 'round'; c.lineJoin = 'round';
+    // piernas: las rodillas se doblan al andar
+    c.beginPath();
+    c.moveTo(-1.5, 3); c.lineTo(-3 + paso, 7.5); c.lineTo(-3.4 + paso * 1.3, 11);
+    c.moveTo(1.5, 3); c.lineTo(3 - paso, 7.5); c.lineTo(3.4 - paso * 1.3, 11);
+    c.stroke();
+    // brazos en alto que se alternan
+    c.beginPath();
+    c.moveTo(-2.5, -2.5); c.lineTo(-5.5, -6 - paso * 0.6);
+    c.moveTo(2.5, -2.5); c.lineTo(5.5, -6 + paso * 0.6);
+    c.stroke();
+    // torso azul de Miró con borde negro
+    c.fillStyle = '#2f6fd8';
+    c.beginPath(); c.moveTo(-3, -4.2); c.lineTo(3, -4.2); c.lineTo(2, 4); c.lineTo(-2, 4); c.closePath(); c.fill(); c.stroke();
+    // cabeza amarilla con antena y punto rojo
+    c.fillStyle = '#ffc21a';
+    c.beginPath(); c.arc(0, -8.2, 3.2, 0, Math.PI * 2); c.fill(); c.stroke();
+    c.beginPath(); c.moveTo(0, -11.4); c.lineTo(0.8, -13.6); c.stroke();
+    c.fillStyle = '#d8322b';
+    c.beginPath(); c.arc(0.9, -8.4, 0.9, 0, Math.PI * 2); c.fill();
   }
 
-  // Lagarto de trencadís (Gaudí, el dragón del Park Güell): cuerpo de teselas de colores y cola que se mueve
+  // Lagarto de trencadís (Gaudí, el dragón del Park Güell): cuerpo de teselas de colores, cresta y cola que ondula
   function dibujarLagarto(c, e, t) {
     const paso = Math.sin(t * 10) * 1.4;
+    const ondula = Math.sin(t * 6);
+    const colores = ['#ffd27a', '#2f9fc8', '#ec6a4a', '#ffffff', '#f2a7c0'];
     c.translate(e.x, e.y);
     c.scale(e.dir, 1);
-    c.strokeStyle = '#2a5a3a'; c.lineWidth = 1.4; c.lineCap = 'round';
-    c.beginPath(); c.moveTo(-6, 2); c.lineTo(-7 - paso, 6); c.moveTo(4, 2); c.lineTo(3 + paso, 6); c.stroke();
-    c.beginPath(); c.moveTo(-8, -2); c.quadraticCurveTo(-14, -4 + paso, -16, 0); c.stroke();
-    c.fillStyle = '#3fa36b';
-    c.beginPath(); c.ellipse(0, -1, 9, 4.5, 0, 0, Math.PI * 2); c.fill();
-    const teselas = ['#ffd27a', '#2f9fc8', '#ec6a4a', '#ffffff'];
-    for (let k = 0; k < 5; k++) { c.fillStyle = teselas[k % 4]; c.fillRect(-6 + k * 3, -4.5, 2, 2); }
-    c.fillStyle = '#3fa36b'; c.beginPath(); c.ellipse(8, -2.6, 3.4, 2.6, 0, 0, Math.PI * 2); c.fill();
-    c.fillStyle = '#ffd27a'; c.beginPath(); c.arc(9.4, -3.2, 0.8, 0, Math.PI * 2); c.fill();
+    c.lineCap = 'round';
+    // cola en S que ondula
+    c.strokeStyle = '#2a5a3a'; c.lineWidth = 3;
+    c.beginPath(); c.moveTo(-7, -1); c.quadraticCurveTo(-12, -4 + ondula * 1.2, -16, -0.5 + ondula * 0.8); c.stroke();
+    c.strokeStyle = '#3fa36b'; c.lineWidth = 1.8;
+    c.beginPath(); c.moveTo(-7, -1); c.quadraticCurveTo(-12, -4 + ondula * 1.2, -16, -0.5 + ondula * 0.8); c.stroke();
+    // patas: las del fondo, más oscuras, van en contrafase
+    c.strokeStyle = '#2a5a3a'; c.lineWidth = 1.5;
+    c.beginPath(); c.moveTo(-1, 1); c.lineTo(-2 - paso, 6); c.moveTo(6, 1); c.lineTo(6 + paso, 6); c.stroke();
+    c.strokeStyle = '#3fa36b'; c.lineWidth = 1.7;
+    c.beginPath(); c.moveTo(-5, 1); c.lineTo(-6 + paso, 6); c.moveTo(3, 1); c.lineTo(3 - paso, 6); c.stroke();
+    // cuerpo: sombreado y teselas recortadas a la forma del cuerpo
+    esfera(c, 0, -1, 9, 4.6, ['#5fc08a', '#2f8f5a', '#1d5a38']);
+    c.save();
+    c.beginPath(); c.ellipse(0, -1, 9, 4.6, 0, 0, Math.PI * 2); c.clip();
+    for (let fila = 0; fila < 3; fila++) {
+      for (let col = 0; col < 7; col++) {
+        c.fillStyle = colores[(col * 3 + fila * 2) % colores.length];
+        c.fillRect(-8.5 + col * 2.6 + (fila % 2) * 1.3, -4.5 + fila * 2.6, 2.2, 2.2);
+      }
+    }
+    c.restore();
+    // cresta de teselas en el lomo, que vibra al andar
+    for (let k = 0; k < 4; k++) {
+      const x = -5 + k * 3.2;
+      const alto = 2.2 + (k % 2) * 0.8 + Math.sin(t * 8 + k) * 0.3;
+      c.fillStyle = colores[(k + 1) % colores.length];
+      c.beginPath(); c.moveTo(x - 1.4, -4.2); c.lineTo(x, -4.2 - alto); c.lineTo(x + 1.4, -4.2); c.closePath(); c.fill();
+    }
+    // cabeza con hocico, ojo dorado y sonrisa
+    esfera(c, 8, -2.4, 3.8, 3, ['#7fd6a2', '#3fa36b', '#1d5a38']);
+    contorno(c, 8, -2.4, 3.8, 3, 0.8);
+    c.fillStyle = '#ffd27a'; c.beginPath(); c.arc(9.2, -3.4, 0.95, 0, Math.PI * 2); c.fill();
+    c.fillStyle = '#1a1a1a'; c.beginPath(); c.arc(9.4, -3.4, 0.45, 0, Math.PI * 2); c.fill();
+    c.strokeStyle = '#1d5a38'; c.lineWidth = 0.6;
+    c.beginPath(); c.moveTo(9.6, -1.4); c.quadraticCurveTo(10.8, -0.9, 11.6, -1.9); c.stroke();
+    c.fillStyle = '#ffd27a'; c.fillRect(6.2, -4.4, 1.6, 1.6);   // una tesela en la cabeza
   }
 
   // Sombra en el suelo: el enemigo "pisa" algo, así se nota la altura
