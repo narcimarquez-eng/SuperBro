@@ -11881,7 +11881,8 @@ for (const [m, f, bajada, semilla] of [[2, 2, true, 5022], [3, 1, false, 6031], 
    anterior o siguiente. F3: exporta las ediciones (JSON). F4: borra las de esta fase y la reinicia.
    - y +: quitan o añaden 16 columnas a la fase (también con los botones de la paleta).
    ARRIBA y ABAJO: quitan o añaden 14 filas (una pantalla), entre 14 y 84. CUADRO: un cuadro de 10 a 30 casillas:
-   el toque corto mete bloques, enemigos o monedas en él, y el largo borra todo lo que hay dentro.
+   el toque corto pone bloques, enemigos o monedas en la forma, y el largo borra todo lo que hay dentro.
+   DIBUJAR: abre el editor de la forma (cuadrícula de su lado, LIMPIAR, LLENAR y LISTO).
    Las ediciones se guardan en este navegador y solo se aplican con ?dev.
    ===================================================================== */
 const DEV_CLAVE = "superbro_dev_v1";
@@ -11905,8 +11906,10 @@ let devItemQ = 0, devItemZ = 0;           // premio de los bloques ? y ocultos (
 let devPulsa = null;                      // pulsación en curso sobre el nivel: { c, r, t0, hecho, mueve, hit (lo que hay bajo el dedo) }
 let devMira = null;                       // casilla bajo el puntero: { c, r }
 let devAvisoTxt = "", devAvisoHasta = 0;
-let devCuadro = false;   // modo cuadro: los toques actúan sobre un cuadro de devLado casillas
-let devLado = 10;
+let devCuadro = false;   // modo cuadro: los toques ponen o quitan la forma (una cuadrícula de devLado casillas)
+let devLado = (devEstado.forma && devEstado.forma.n) || 10;   // lado de la forma (de 10 a 30 de 2 en 2)
+let devFormaEd = false;  // editor de la forma abierto: la cuadrícula ocupa la pantalla y la paleta muestra sus botones
+let devPintando = null;  // "#" o "." mientras se arrastra en el editor de la forma: pinta o borra
 
 // Bloques de la paleta. ch: carácter de tiles. item: lleva premio (? u oculto). multi: ladrillo multimoneda
 const DEV_BLOQUES = [
@@ -12195,17 +12198,23 @@ function devCambiarAlto(pos, sentido) {
 function devCambiarLado(d) {
   const nuevo = devLado + 2 * d;
   if (nuevo < DEV_LADO_MIN || nuevo > DEV_LADO_MAX) return devAviso("EL CUADRO VA DE 10 A 30");
+  devForma();
   devLado = nuevo;
+  devRedimensionarForma(nuevo);
+  devGuardar();
 }
-// Casillas del cuadro de lado devLado centrado en (c, r): c0 y r0 (sin recortar) y las que están dentro de la fase
+// Casillas pintadas de la forma, centrada en (c, r): c0 y r0 (sin recortar) y las que están dentro de la fase
 function devCuadroDe(lv, c, r) {
-  const h = Math.floor(devLado / 2), c0 = c - h, r0 = r - h, lista = [];
-  for (let rr = Math.max(0, r0); rr < Math.min(lv.rows, r0 + devLado); rr++) {
-    for (let cc = Math.max(0, c0); cc < Math.min(lv.cols, c0 + devLado); cc++) lista.push([cc, rr]);
+  const f = devForma(), h = Math.floor(f.n / 2), c0 = c - h, r0 = r - h, lista = [];
+  for (let dr = 0; dr < f.n; dr++) {
+    for (let dc = 0; dc < f.n; dc++) {
+      const cc = c0 + dc, rr = r0 + dr;
+      if (f.filas[dr][dc] === "#" && cc >= 0 && cc < lv.cols && rr >= 0 && rr < lv.rows) lista.push([cc, rr]);
+    }
   }
   return { c0, r0, lista };
 }
-// Toque corto en modo cuadro: mete en el cuadro lo seleccionado. Bloques: todas sus casillas. Pincel: pinta los
+// Toque corto en modo cuadro: pone lo seleccionado en la forma. Bloques: todas sus casillas. Pincel: pinta los
 // bloques del cuadro. Enemigos y monedas: uno cada tres casillas, en el aire
 function devPonerArea(c, r) {
   const lv = game.lvl;
@@ -12243,13 +12252,15 @@ function devPonerArea(c, r) {
   if (!n) return devAviso("NO HAY SITIO LIBRE EN EL CUADRO");
   devAviso(n + (s.tipo === "enemigo" ? " ENEMIGOS" : " MONEDAS"));
 }
-// Toque largo en modo cuadro: borra todos los bloques del cuadro y todo lo que hay dentro (enemigos, monedas, cañones)
+// Toque largo en modo cuadro: borra los bloques de la forma y todo lo que hay dentro (enemigos, monedas, cañones)
 function devBorrarArea(c, r) {
   const lv = game.lvl;
   if (!devCasillaValida(lv, c, r)) return;
-  const { c0, r0, lista } = devCuadroDe(lv, c, r);
-  const x0 = c0 * TILE, y0 = r0 * TILE, x1 = x0 + devLado * TILE, y1 = y0 + devLado * TILE;
-  const dentro = (x, y) => x >= x0 && x < x1 && y >= y0 && y < y1;
+  const { c0, r0, lista } = devCuadroDe(lv, c, r), f = devForma();
+  const dentro = (x, y) => {   // un objeto cuenta si su casilla es una de las pintadas de la forma
+    const dc = Math.floor(x / TILE) - c0, dr = Math.floor(y / TILE) - r0;
+    return dc >= 0 && dc < f.n && dr >= 0 && dr < f.n && f.filas[dr][dc] === "#";
+  };
   const hits = [];
   for (const w of lv.enemigos) if (!w.llevado && dentro(w.e.x, w.e.y)) hits.push({ campo: "enemigos", obj: w, clave: w.clave });
   for (const cn of lv.canones) if (dentro(cn.col * TILE, cn.row * TILE)) hits.push({ campo: "canones", obj: cn, clave: cn.clave });
@@ -12265,6 +12276,101 @@ function devBorrarArea(c, r) {
   lv.tuberias = encontrarTuberias(lv.tiles);
   devGuardar();
   devAviso("BORRADOS " + bloques + " BLOQUES Y " + hits.length + " OBJETOS");
+}
+
+/* Forma del cuadro: una cuadrícula de n×n casillas (n = devLado) que se guarda con las ediciones de todas las fases.
+   Empieza llena, así que sin dibujar nada el cuadro es un cuadrado. Pintada, es la figura que se repite al tocar. */
+function devForma() {
+  if (!devEstado.forma) devEstado.forma = { n: devLado, filas: Array.from({ length: devLado }, () => "#".repeat(devLado)) };
+  return devEstado.forma;
+}
+// Cambia el lado sin perder la forma: se queda en el centro y lo que sobra se recorta. Lo nuevo sale vacío,
+// salvo si la forma estaba llena: un cuadro sigue siendo un cuadro al cambiar de lado
+function devRedimensionarForma(n) {
+  const f = devForma(), viejo = f.n, desfase = (n - viejo) / 2, filas = [];
+  const llena = f.filas.every((fila) => !fila.includes("."));
+  for (let dr = 0; dr < n; dr++) {
+    let fila = "";
+    for (let dc = 0; dc < n; dc++) {
+      const sr = dr - desfase, sc = dc - desfase;
+      fila += sr >= 0 && sr < viejo && sc >= 0 && sc < viejo ? f.filas[sr][sc] : llena ? "#" : ".";
+    }
+    filas.push(fila);
+  }
+  f.n = n;
+  f.filas = filas;
+}
+// Llena o vacía toda la cuadrícula
+function devLlenarForma(lleno) {
+  const f = devForma(), relleno = lleno ? "#" : ".";
+  f.filas = f.filas.map(() => relleno.repeat(f.n));
+  devGuardar();
+}
+function devAbrirForma() {
+  devForma();
+  devFormaEd = true;
+  devMira = null;
+  devAviso("PINTA LA FORMA Y PULSA LISTO");
+}
+function devCerrarForma() {
+  devFormaEd = false;
+  devPintando = null;
+  devGuardar();
+  devAviso("FORMA GUARDADA");
+}
+// Cuadrícula del editor: centrada en la pantalla, por encima de la paleta y de su línea de aviso
+function devGrillaForma() {
+  const n = devLado, area = H - DEV_PANEL - 20, s = Math.max(4, Math.floor(Math.min(W - 16, area) / n));
+  return { n, s, gx: Math.floor((W - s * n) / 2), gy: 8 + Math.floor((area - s * n) / 2) };
+}
+// Casilla de la cuadrícula bajo un punto de la pantalla (o null si está fuera)
+function devCeldaForma(p) {
+  const { n, s, gx, gy } = devGrillaForma();
+  const dc = Math.floor((p.x - gx) / s), dr = Math.floor((p.y - gy) / s);
+  return dc >= 0 && dc < n && dr >= 0 && dr < n ? { dc, dr } : null;
+}
+// La primera casilla decide si se pinta o se borra; al arrastrar, las que se tocan toman ese mismo valor
+function devPintarForma(p, primera) {
+  const c = devCeldaForma(p), f = devForma();
+  if (primera) devPintando = c ? (f.filas[c.dr][c.dc] === "#" ? "." : "#") : null;
+  if (!c || !devPintando || f.filas[c.dr][c.dc] === devPintando) return;
+  f.filas[c.dr] = f.filas[c.dr].slice(0, c.dc) + devPintando + f.filas[c.dr].slice(c.dc + 1);
+  devGuardar();
+}
+// Clic en la paleta mientras se dibuja: LIMPIAR, LLENAR, LISTO y el lado
+function devClicPanelForma(x, y) {
+  const y0 = H - DEV_PANEL;
+  if (y >= y0 + 52 && y < y0 + 68) {
+    if (x >= 2 && x < 58) return devLlenarForma(false);
+    if (x >= 62 && x < 118) return devLlenarForma(true);
+  } else if (y >= y0 + 70 && y < y0 + 86) {
+    if (x >= 2 && x < 54) return devCerrarForma();
+    if (x >= 57 && x < 73) return devCambiarLado(-1);
+    if (x >= 83 && x < 99) return devCambiarLado(1);
+  }
+}
+// Dibujo del editor: un velo sobre la pantalla y la cuadrícula; lo pintado sale en amarillo
+function devDibujarForma() {
+  const { n, s, gx, gy } = devGrillaForma(), f = devForma();
+  rect(0, 0, W, H - DEV_PANEL, "rgba(12,14,30,0.82)");
+  for (let dr = 0; dr < n; dr++) {
+    for (let dc = 0; dc < n; dc++) rect(gx + dc * s, gy + dr * s, s - 1, s - 1, f.filas[dr][dc] === "#" ? PAL.y : "#2a2d40");
+  }
+  // La casilla blanca es la que se toca en el nivel para poner la forma
+  const m = Math.floor(n / 2);
+  ctx.strokeStyle = "#ffffff"; ctx.lineWidth = 1;
+  ctx.strokeRect(gx + m * s + 0.5, gy + m * s + 0.5, s - 2, s - 2);
+}
+// Paleta mientras se dibuja la forma
+function devDibujarPanelForma(y0) {
+  txt("FORMA " + devLado + "X" + devLado + "   ARRASTRA PARA PINTAR", 2, y0 + 5, PAL.w);
+  txt("LA CASILLA BLANCA SE TOCA EN EL NIVEL", 2, y0 + 22, PAL.gr);
+  devBotonTexto(2, y0 + 52, 56, "LIMPIAR", false);
+  devBotonTexto(62, y0 + 52, 56, "LLENAR", false);
+  devBotonTexto(2, y0 + 70, 52, "LISTO", true);
+  devBoton(58, y0 + 70, "-");
+  txt(String(devLado), 76, y0 + 75, PAL.w, "center");
+  devBoton(84, y0 + 70, "+");
 }
 
 // Copia de un sprite de bloque con otro color (cacheada por sprite y color). Sin color, el mismo sprite
@@ -12437,6 +12543,7 @@ addEventListener("pointerdown", (e) => {
   const p = devCoordenadas(e);
   if (devEnPanel(p)) return devClicPanel(p.x, p.y);
   if (e.pointerType === "mouse" && e.button !== 0) return;
+  if (devFormaEd) return devPintarForma(p, true);
   const t = devCasilla(p);
   devMira = t;
   devPulsa = { c: t.c, r: t.r, t0: performance.now(), hecho: false, mueve: false, hit: devEntidadEn(game.lvl, t.c, t.r) };
@@ -12445,6 +12552,7 @@ addEventListener("pointermove", (e) => {
   if (!devEditorActivo()) { devMira = null; return; }
   const p = devCoordenadas(e);
   if (devEnPanel(p)) { devMira = null; return; }
+  if (devFormaEd) { devMira = null; devPintarForma(p, false); return; }
   const t = devCasilla(p);
   devMira = t;
   if (devPulsa && (t.c !== devPulsa.c || t.r !== devPulsa.r)) devPulsa.mueve = true;   // arrastrar no pone ni quita
@@ -12452,10 +12560,11 @@ addEventListener("pointermove", (e) => {
 function devSoltar() {
   const p = devPulsa;
   devPulsa = null;
+  devPintando = null;
   if (p && !p.hecho && !p.mueve && devEditorActivo()) (devCuadro ? devPonerArea : devPoner)(p.c, p.r);
 }
 addEventListener("pointerup", devSoltar);
-addEventListener("pointercancel", () => { devPulsa = null; });
+addEventListener("pointercancel", () => { devPulsa = null; devPintando = null; });
 
 // La pulsación larga quita al cumplir el tiempo (sin esperar a soltar)
 function devActualizar() {
@@ -12474,6 +12583,7 @@ function devCiclarEnemigo(d) {
 }
 // Clic en la paleta: fila de bloques (un segundo clic en ? u oculto cambia su premio), fila de objetos y enemigos, colores
 function devClicPanel(x, y) {
+  if (devFormaEd) return devClicPanelForma(x, y);
   const y0 = H - DEV_PANEL, i = Math.floor((x - 2) / 16);
   if (x < 2) return;
   if (y >= y0 + 2 && y < y0 + 18) {
@@ -12499,6 +12609,7 @@ function devClicPanel(x, y) {
     if (x >= 1 && x < 55) { devCuadro = !devCuadro; devAviso(devCuadro ? "CUADRO ACTIVO" : "CUADRO APAGADO"); }
     else if (x >= 57 && x < 73) devCambiarLado(-1);
     else if (x >= 83 && x < 99) devCambiarLado(1);
+    else if (x >= 104 && x < 160) devAbrirForma();
   } else if (y >= y0 + 38 && y < y0 + 48 && i < DEV_COLORES.length) devColor = i;
 }
 
@@ -12557,7 +12668,7 @@ addEventListener("keydown", (e) => {
   if (!accion || ((accion === "editor" || accion === "menos" || accion === "mas") && e.repeat)) return;
   if ((accion === "menos" || accion === "mas") && (e.ctrlKey || e.metaKey || e.altKey)) return;   // Ctrl + y - es el zoom del navegador
   e.preventDefault();
-  if (accion === "editor") { devEditor = !devEditor; devPulsa = null; devAviso(devEditor ? "EDITOR ACTIVO" : "EDITOR OCULTO"); }
+  if (accion === "editor") { devEditor = !devEditor; devPulsa = null; devFormaEd = false; devPintando = null; devAviso(devEditor ? "EDITOR ACTIVO" : "EDITOR OCULTO"); }
   else if (accion === "exportar") devExportar();
   else if (accion === "borrar") devBorrarNivel();
   else if (accion === "anterior" || accion === "siguiente") devIrNivel(accion === "siguiente" ? 1 : -1);
@@ -12688,19 +12799,27 @@ function devDibujar() {
     rect(x, y, TILE, TILE, "rgba(255,70,70," + (0.1 + 0.35 * f).toFixed(2) + ")");
     rect(x, y + TILE - 2, Math.round(TILE * f), 2, "#ff4a4a");
   }
-  if (devCuadro && devMira) {
-    const h = Math.floor(devLado / 2);
-    ctx.strokeStyle = PAL.y; ctx.lineWidth = 1; ctx.setLineDash([3, 2]);
-    ctx.strokeRect((devMira.c - h) * TILE - cam.x + 0.5, (devMira.r - h) * TILE - cam.y + 0.5, devLado * TILE - 1, devLado * TILE - 1);
-    ctx.setLineDash([]);
+  if (devCuadro && devMira) {   // la forma, en amarillo, centrada en el puntero
+    const f = devForma(), h = Math.floor(f.n / 2);
+    ctx.strokeStyle = PAL.y; ctx.lineWidth = 1;
+    for (let dr = 0; dr < f.n; dr++) {
+      for (let dc = 0; dc < f.n; dc++) {
+        if (f.filas[dr][dc] !== "#") continue;
+        const x = (devMira.c - h + dc) * TILE - cam.x, y = (devMira.r - h + dr) * TILE - cam.y;
+        rect(x, y, TILE, TILE, "rgba(255,210,70,0.16)");
+        ctx.strokeRect(x + 0.5, y + 0.5, TILE - 1, TILE - 1);
+      }
+    }
   }
   ctx.restore();
+  if (devFormaEd) devDibujarForma();
 
   // Paleta: una línea de aviso o de selección encima, y cuatro filas abajo
   const y0 = H - DEV_PANEL, aviso = devAvisoHasta > ahora;
   rect(0, y0 - 10, W, 10, "rgba(0,0,0,0.85)");
-  txt(aviso ? devAvisoTxt : (devCuadro ? "CUADRO " + devLado + "   " : "") + devSelNombre() + "   CORTO PONER  LARGO QUITAR", 3, y0 - 8, aviso ? PAL.y : PAL.w);
+  txt(aviso ? devAvisoTxt : devFormaEd ? "EDITANDO LA FORMA" : (devCuadro ? "CUADRO " + devLado + "   " : "") + devSelNombre() + "   CORTO PONER  LARGO QUITAR", 3, y0 - 8, aviso ? PAL.y : PAL.w);
   rect(0, y0, W, DEV_PANEL, "rgba(0,0,0,0.85)");
+  if (devFormaEd) return devDibujarPanelForma(y0);
   DEV_BLOQUES.forEach((b, i) => {
     const x = 2 + i * 16, y = y0 + 2;
     devIconoBloque(b, lv, x, y);
@@ -12744,6 +12863,7 @@ function devDibujar() {
   devBoton(58, yE, "-");
   txt(String(devLado), 76, yE + 5, PAL.w, "center");
   devBoton(84, yE, "+");
+  devBotonTexto(104, yE, 56, "DIBUJAR", false);
 }
 
 const game = new Game();
