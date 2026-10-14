@@ -7540,6 +7540,207 @@ function sanearNivel(lv) {
   return lv;
 }
 
+// Fases publicadas: el nivel terminado (con sus ediciones ya dentro), que sustituye al generado. Así no depende del
+// generador: si el generador cambia, estas fases siguen igual. "version" dice sobre qué base están las ediciones de ?dev.
+const FASES_PUBLICADAS = {
+  "0:0": {
+    "version": 1,
+    "cols": 228,
+    "rows": 42,
+    "gy": 11,
+    "sueloMeta": 176,
+    "tiles": [
+      "....................................................................................................................................................................................................................................",
+      "....................................................................................................................................................................................................................................",
+      "....................................................................................................................................................................................................................................",
+      ".......................................................................................................................................GGGGGG.......................................................................................",
+      "..............................................................................TT.......................................................GGGGGG.................................................................................F.....",
+      "..............................................................................TT...................................................SSS.GGGGGG.................................................................................F.....",
+      "............................................................................GGGGGG.....................................................GGGGGG.....Q.................................................................SS........F.....",
+      ".....................................TT..........................BQB...Z....GGGGGG.........S..S........................................GGGGGG....QBQ......Q.........Q.................GG....GGG....................SSS........F.....",
+      ".....................DDDDD...........TT.....TT..............................GGGGGG........SS..SS...............................SSS.....GGGGGG........................................GGG....GGG...................SSSS........F.....",
+      ".....................................TT.....TT....TT........................GGGGGG.......SSS..SSS.......TT.............................GGGGGG................TT......................GGG....GGGG.................SSSSS........F.....",
+      "................GG...................TT.....TT....TT........................GGGGGG......SSSS..SSSS......TT.............................GGGZGG................TT.....................GGGG....GGGGG...............SSSSSS........F.....",
+      "GGGGGGGGGGGGG...GGGG...QGGGGG..GGG..GGGGGGGGGGGGGGGGGGGGGGGG..GGGGGGGGG.....GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG..GGGGGGGGGGGG.GGGGBBBBGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG....GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+      "GGGGGGGGGGGGG..GGGGG................GGGGGGGGGGGGGGGGGGGGGGGG..GGGGGGGGG.....GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG..GGGGGGGGGGGG.GGGGBBBBGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+      "GGGGGGGGGGGGGGGGGGGGG...............GGGGGGGGGGGGGGGGGG...GGG.DGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG..GGGGGGGGGGGG.GGGGBBBBBGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG",
+      "GGGGGGGGGGGGGGGGGGGGGGGGGGGG.............................................................................................................BBBBB................................GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......................",
+      "GGGGGGGGGGGGGGGGGGGGGGGGGGGG..G........................Q.....D...........................................................................BBBBB................................GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......................",
+      "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG....M..................................................................................BB......................................................GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......................",
+      "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG..BBBBB.B.B..B.B..B..B.......D.......................................................................M.........................................GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......................",
+      "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG............................................................................................GGGGGGGGGGGGGGGGGG.................................GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......................",
+      "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG...................GGGGGGGGGG...............................................................GGGGGGGGGGGGGGGGGG.................................GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......................",
+      "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG...................GGGGGGGGGG...............................................................GGGGGGGGGGGGGGGGGG.................................GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......................",
+      "GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG...................GGGGGGGGGG..................................................................................................................GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................GGGGGGGGGGGGGGGGGGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................................GGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................................GGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................................GGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................................GGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................................GGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................................GGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................................GGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................................GGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................................GGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................................GGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................................GGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................................GGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................................GGGGGGGGGGGGGGGG......................",
+      "..............................................................................................................................................................................................GGGGGGGGGGGGGGGG......................"
+    ],
+    "ents": [
+      {"t":"coin","x":372,"y":100},
+      {"t":"coin","x":404,"y":100},
+      {"t":"coin","x":644,"y":100},
+      {"t":"coin","x":660,"y":100},
+      {"t":"coin","x":772,"y":100},
+      {"t":"coin","x":788,"y":100},
+      {"t":"shell","x":656,"y":160},
+      {"t":"coin","x":964,"y":132},
+      {"t":"coin","x":980,"y":132},
+      {"t":"qitem","x":1056,"y":112,"item":"moneda"},
+      {"t":"walker","x":1360,"y":160},
+      {"t":"coin","x":1476,"y":84},
+      {"t":"coin","x":1492,"y":84},
+      {"t":"shell","x":1600,"y":160},
+      {"t":"coin","x":1684,"y":116},
+      {"t":"coin","x":1700,"y":116},
+      {"t":"coin","x":1892,"y":132},
+      {"t":"coin","x":1908,"y":132},
+      {"t":"coin","x":2180,"y":36},
+      {"t":"coin","x":2212,"y":36},
+      {"t":"coin","x":2228,"y":36},
+      {"t":"coin","x":2116,"y":68},
+      {"t":"coin","x":2052,"y":116},
+      {"t":"walker","x":2112,"y":160},
+      {"t":"qitem","x":2336,"y":96,"item":"moneda"},
+      {"t":"qitem","x":2320,"y":112,"item":"moneda"},
+      {"t":"qitem","x":2352,"y":112,"item":"moneda"},
+      {"t":"qitem","x":2464,"y":112,"item":"moneda"},
+      {"t":"qitem","x":2624,"y":112,"item":"moneda"},
+      {"t":"grande","x":592,"y":64,"idx":0},
+      {"t":"grande","x":1472,"y":160,"idx":1},
+      {"t":"qitem","x":368,"y":176,"item":"moneda"},
+      {"t":"qitem","x":624,"y":272,"item":"multi"},
+      {"t":"qitem","x":704,"y":272,"item":"multi"},
+      {"t":"qitem","x":784,"y":272,"item":"multi"},
+      {"t":"qitem","x":832,"y":272,"item":"multi"},
+      {"t":"qitem","x":576,"y":272,"item":"multi"},
+      {"t":"qitem","x":592,"y":272,"item":"multi"},
+      {"t":"qitem","x":880,"y":240,"item":"vida"},
+      {"t":"qitem","x":1136,"y":112,"item":"vida"},
+      {"t":"qitem","x":2208,"y":160,"item":"vida"},
+      {"t":"hormiga","x":2320,"y":128},
+      {"t":"plant","x":2513,"y":136},
+      {"t":"flyer","x":2304,"y":64},
+      {"t":"walker","x":2048,"y":160},
+      {"t":"walker","x":2384,"y":160},
+      {"t":"shell","x":2640,"y":160},
+      {"t":"shell","x":2976,"y":176}
+    ],
+    "plats": [],
+    "decor": [
+      {"ch":"h","c":12,"r":10},
+      {"ch":"b","c":24,"r":10},
+      {"ch":"f","c":54,"r":10},
+      {"ch":"h","c":58,"r":10},
+      {"ch":"h","c":62,"r":10},
+      {"ch":"f","c":71,"r":10},
+      {"ch":"b","c":109,"r":10},
+      {"ch":"h","c":113,"r":10},
+      {"ch":"b","c":124,"r":10},
+      {"ch":"f","c":127,"r":10},
+      {"ch":"h","c":141,"r":10},
+      {"ch":"f","c":152,"r":10},
+      {"ch":"f","c":155,"r":10},
+      {"ch":"b","c":215,"r":10},
+      {"ch":"f","c":223,"r":10},
+      {"ch":"d","c":25,"r":10},
+      {"ch":"e","c":26,"r":10},
+      {"ch":"j","c":27,"r":10},
+      {"ch":"f","c":4,"r":10},
+      {"ch":"f","c":7,"r":10},
+      {"ch":"f","c":17,"r":9},
+      {"ch":"r","c":16,"r":9}
+    ],
+    "canones": [],
+    "start": {"x":48,"y":144},
+    "goalX": 3552,
+    "theme": "pradera",
+    "boss": false,
+    "arenaX0": 0,
+    "entradaSecreta": {"sala":2,"col":78,"row":4},
+    "salidaSecreta": {"col":104,"row":9},
+    "control": {"x":1776,"pie":176},
+    "fuentes": [],
+    "agua": false,
+    "nombre": "1-1 Pradera",
+    "tiempo": 300
+  },
+  "sala:2": {
+    "version": 1,
+    "cols": 24,
+    "rows": 14,
+    "gy": 11,
+    "sueloMeta": 176,
+    "tiles": [
+      "SSSSSSSSSSSSSSSSSSSSSSSS",
+      "S......................S",
+      "S......................S",
+      "S......................S",
+      "SQ.....................S",
+      "S.................Q....S",
+      "S......................S",
+      "S.ZZ...................S",
+      "S......................S",
+      "S..................TT..S",
+      "S..................TT..S",
+      "SGGG....GG....GGGGGGGGGS",
+      "SGGGHHHHGGHHHHGGGGGGGGGS",
+      "SGGGGGGGGGGGGGGGGGGGGGGS"
+    ],
+    "ents": [
+      {"t":"coin","x":84,"y":84},
+      {"t":"coin","x":196,"y":84},
+      {"t":"qitem","x":288,"y":80,"item":"estrella"},
+      {"t":"coin","x":68,"y":100},
+      {"t":"coin","x":84,"y":100},
+      {"t":"coin","x":100,"y":100},
+      {"t":"coin","x":180,"y":100},
+      {"t":"coin","x":196,"y":100},
+      {"t":"coin","x":212,"y":100},
+      {"t":"grande","x":192,"y":144,"idx":2},
+      {"t":"qitem","x":32,"y":112,"item":"moneda"},
+      {"t":"qitem","x":48,"y":112,"item":"moneda"},
+      {"t":"qitem","x":16,"y":64,"item":"pluma"}
+    ],
+    "plats": [],
+    "decor": [
+    ],
+    "canones": [],
+    "start": {"x":32,"y":160},
+    "goalX": 1000000000,
+    "theme": null,
+    "boss": false,
+    "arenaX0": 0,
+    "tiempo": 120
+  }
+};
+// Datos de una fase antes de sus ediciones: la publicada (ya con sus ediciones dentro) o la generada
+function datosBase(def, tema, clave) {
+  const p = clave ? FASES_PUBLICADAS[clave] : null;
+  if (!p) return construirNivel(def, tema);
+  const d = JSON.parse(JSON.stringify(p));
+  delete d.version;
+  d.tiles = d.tiles.map((fila) => fila.split(""));
+  return d;
+}
+
 /* Punto de entrada: usa el mapa escrito a mano si existe, si no genera */
 function construirNivel(def, tema) {
   // Los niveles de castillo no llevan decoración de su mundo (usan su propio escenario)
@@ -9881,7 +10082,7 @@ function fondoMarino(cam) {
 class Level {
   // origen: en una sala secreta, el mundo desde el que se ha entrado (da el suelo y el tinte de la sala)
   constructor(def, mundo, origen, clave) {
-    const data = construirNivel(def, mundo.tema);
+    const data = datosBase(def, mundo.tema, clave);
     // clave: "mundo:fase" o "sala:k". Con ?dev, las ediciones de la fase cambian sus datos antes de montarla
     this.clave = clave || null;
     this.ed = devActivo && clave ? devEdicion(clave) : null;
@@ -11997,8 +12198,16 @@ function claveEnt(e) { return e.t + "@" + e.x + "," + e.y; }
 
 // Ediciones de una fase (se crean vacías la primera vez)
 function devEdicion(clave) {
-  const niveles = devEstado.niveles;
-  if (!niveles[clave]) niveles[clave] = { tiles: {}, colores: {}, ents: [], quitados: [], ops: [], decor: {} };
+  const niveles = devEstado.niveles, base = FASES_PUBLICADAS[clave] ? FASES_PUBLICADAS[clave].version : null;
+  // Las ediciones de antes de publicar la fase estaban sobre el nivel generado: se guardan aparte (respaldo) y la fase
+  // empieza de la publicada
+  if (niveles[clave] && (niveles[clave].base || null) !== base) {
+    devEstado.respaldo = devEstado.respaldo || {};
+    devEstado.respaldo[clave] = niveles[clave];
+    delete niveles[clave];
+    devGuardar();
+  }
+  if (!niveles[clave]) niveles[clave] = { tiles: {}, colores: {}, ents: [], quitados: [], ops: [], decor: {}, base };
   return niveles[clave];
 }
 function devGuardar() {
@@ -12106,7 +12315,7 @@ function devCambiarAncho(sentido) {
   if (!lv || !lv.ed || game.estado !== "nivel") return;
   const def = lv.def;
   if (def.sala || def.mapa || def.torre || def.colinas || def.jefe) return devAviso("ESTA FASE TIENE TAMANO FIJO");
-  const d = construirNivel(def, MUNDOS[game.mundoIdx].tema);
+  const d = datosBase(def, MUNDOS[game.mundoIdx].tema, lv.clave);
   aplicarEdiciones(d, lv.ed);
   const n = d.cols, p = d.goalX / TILE - DEV_PASO_COLS;   // la escalinata de la meta empieza 16 columnas antes de la bandera
   let op;
@@ -12218,7 +12427,7 @@ function devCambiarAlto(pos, sentido) {
   if (!lv || !lv.ed || game.estado !== "nivel") return;
   const def = lv.def;
   if (def.sala || def.mapa || def.torre || def.colinas || def.jefe) return devAviso("ESTA FASE TIENE TAMANO FIJO");
-  const d = construirNivel(def, MUNDOS[game.mundoIdx].tema);
+  const d = datosBase(def, MUNDOS[game.mundoIdx].tema, lv.clave);
   aplicarEdiciones(d, lv.ed);
   const n = d.rows, k = DEV_PASO_FILAS;
   let op;
