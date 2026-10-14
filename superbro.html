@@ -248,10 +248,10 @@ const GRAVITY = 900;       // px/s²
 const MAX_FALL = 360;      // velocidad máxima de caída
 const SAVE_KEY = "superbro_save_v2";
 
-// Modo desarrollador (?dev): la paleta va en una franja propia bajo el área de juego (69 px + 10 de avisos)
+// Modo desarrollador (?dev): la paleta va en una franja propia bajo el área de juego (87 px + 10 de avisos)
 const devActivo = new URLSearchParams(location.search).has("dev");
 if (devActivo) document.documentElement.classList.add("dev");
-const DEV_FRANJA = 79;
+const DEV_FRANJA = 97;
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -8248,15 +8248,277 @@ function texPiramide(alto, base, pal) {
   });
 }
 
-// Escenario de desierto: pirámides, dunas y sol fuerte
+/* =====================================================================
+   FONDOS ELEGIBLES. Bosque, hielo, cielo, desierto y agua tienen cielo y paisaje propios; nieve, volcán, espacio y
+   selva son nuevos. Todos se dibujan a pantalla completa, con capas que se desplazan según la cámara.
+   Cada escena recibe (cam, pal, t): la cámara, la paleta del mundo y el tiempo en segundos.
+   ===================================================================== */
+// Fila del suelo en píxeles de diseño: el horizonte de estas escenas (la misma que usa ESC_FONDO)
+const HORIZONTE = GY * TILE;
+// Número pseudoaleatorio fijo para una semilla: las estrellas o los árboles salen siempre en el mismo sitio
+function ruido(k) { const x = Math.sin(k * 127.1 + 311.7) * 43758.5453; return x - Math.floor(x); }
+// Cielo a pantalla completa, con un degradado de arriba abajo
+function cieloDegradado(arriba, abajo) {
+  const g = ctx.createLinearGradient(0, 0, 0, H);
+  g.addColorStop(0, arriba); g.addColorStop(1, abajo);
+  ctx.fillStyle = g; ctx.fillRect(0, 0, W, H);
+}
+// Montañas o colinas: una silueta que sigue una onda (picos: agudos). f: cuánto se desplaza con la cámara
+function siluetaMontanas(camX, f, base, amp, periodo, color, picos) {
+  const off = camX * f;
+  ctx.fillStyle = color;
+  ctx.beginPath();
+  ctx.moveTo(0, HORIZONTE);
+  for (let x = 0; x <= W + 4; x += 4) {
+    const s = Math.sin((x + off) / periodo);
+    ctx.lineTo(x, base - amp * (picos ? Math.abs(s) : 0.6 + 0.4 * s));
+  }
+  ctx.lineTo(W + 4, HORIZONTE);
+  ctx.closePath();
+  ctx.fill();
+}
+// Fila de pinos con la base en y. separa: distancia media entre ellos; semilla: para que cada fila sea distinta
+function filaPinos(camX, f, y, separa, altoMin, altoMax, color, semilla) {
+  const off = camX * f, primero = Math.floor(off / separa) - 1, cuantos = Math.ceil(W / separa) + 3;
+  ctx.fillStyle = color;
+  for (let k = 0; k < cuantos; k++) {
+    const idx = primero + k, x = idx * separa + ruido(idx * 7 + semilla) * separa * 0.5 - off;
+    const h = altoMin + ruido(idx * 13 + semilla * 3) * (altoMax - altoMin);
+    ctx.beginPath();
+    ctx.moveTo(x - h * 0.22, y); ctx.lineTo(x, y - h); ctx.lineTo(x + h * 0.22, y);
+    ctx.closePath(); ctx.fill();
+  }
+}
+// Fila de copas redondas (selva)
+function filaCopas(camX, f, y, separa, color, semilla) {
+  const off = camX * f, primero = Math.floor(off / separa) - 1, cuantos = Math.ceil(W / separa) + 3;
+  ctx.fillStyle = color;
+  for (let k = 0; k < cuantos; k++) {
+    const idx = primero + k, x = idx * separa + ruido(idx * 5 + semilla) * separa - off, r = 14 + ruido(idx * 11 + semilla) * 10;
+    ctx.beginPath(); ctx.arc(x, y - r * 0.6, r, 0, Math.PI * 2); ctx.fill();
+  }
+}
+// Fila de palmeras: tronco curvo y cinco hojas en la copa (selva)
+function filaPalmeras(camX, f, y, separa, altoMin, altoMax, color, semilla) {
+  const off = camX * f, primero = Math.floor(off / separa) - 1, cuantos = Math.ceil(W / separa) + 3;
+  ctx.strokeStyle = color; ctx.fillStyle = color; ctx.lineWidth = 3;
+  for (let k = 0; k < cuantos; k++) {
+    const idx = primero + k, x = idx * separa + ruido(idx * 9 + semilla) * separa * 0.4 - off;
+    const h = altoMin + ruido(idx * 17 + semilla) * (altoMax - altoMin);
+    ctx.beginPath(); ctx.moveTo(x, y); ctx.quadraticCurveTo(x + 8, y - h * 0.6, x + 4, y - h); ctx.stroke();
+    for (let a = 0; a < 5; a++) {
+      ctx.beginPath(); ctx.ellipse(x + 4, y - h, 14, 3.5, -Math.PI / 2 + (a - 2) * 0.55 + 0.4, 0, Math.PI * 2); ctx.fill();
+    }
+  }
+}
+// Nube de tres bultos
+function nubeCielo(x, y, s) {
+  ctx.fillStyle = "rgba(255,255,255,0.92)";
+  ctx.beginPath();
+  ctx.ellipse(x, y, 14 * s, 7 * s, 0, 0, Math.PI * 2);
+  ctx.ellipse(x + 10 * s, y - 3 * s, 10 * s, 7 * s, 0, 0, Math.PI * 2);
+  ctx.ellipse(x - 10 * s, y - 2 * s, 9 * s, 6 * s, 0, 0, Math.PI * 2);
+  ctx.fill();
+}
+// Isla flotante: hierba arriba, tierra abajo y, a veces, un árbol
+function islaFlotante(x, y, arbol) {
+  ctx.fillStyle = "#7a4e32";
+  ctx.beginPath();
+  ctx.moveTo(x - 24, y); ctx.lineTo(x + 24, y); ctx.lineTo(x + 8, y + 22); ctx.lineTo(x - 4, y + 14); ctx.lineTo(x - 14, y + 24);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#6cc85a";
+  ctx.beginPath(); ctx.ellipse(x, y, 26, 6, 0, 0, Math.PI * 2); ctx.fill();
+  if (arbol) {
+    ctx.fillStyle = "#6b4a2b"; rect(x - 7, y - 4, 3, 5, "#6b4a2b");
+    ctx.fillStyle = "#2f7a3c"; ctx.beginPath(); ctx.arc(x - 6, y - 11, 8, 0, Math.PI * 2); ctx.fill();
+  }
+}
+
+// Bosque: montañas verdes, tres filas de pinos que se desplazan a distinta velocidad y niebla baja
+function escenaBosque(cam) {
+  cieloDegradado("#6fb8c8", "#d8f0d4");
+  ctx.save();
+  ctx.translate(0, OY);
+  siluetaMontanas(cam.x, 0.12, HORIZONTE - 30, 34, 90, "#8fb6b0", false);
+  filaPinos(cam.x, 0.3, HORIZONTE - 4, 13, 36, 52, "#5f8f6a", 1);
+  filaPinos(cam.x, 0.6, HORIZONTE + 2, 22, 56, 84, "#2f5e3c", 2);
+  const niebla = ctx.createLinearGradient(0, HORIZONTE - 36, 0, HORIZONTE + 4);
+  niebla.addColorStop(0, "rgba(232,250,236,0)");
+  niebla.addColorStop(1, "rgba(232,250,236,0.5)");
+  ctx.fillStyle = niebla;
+  ctx.fillRect(0, HORIZONTE - 36, W, 40);
+  filaPinos(cam.x, 1, HORIZONTE + 8, 30, 14, 26, "#1f4a2c", 3);
+  ctx.restore();
+}
+
+// Hielo: auroras que ondulan arriba, picos de hielo con cumbres blancas y destellos en la nieve
+function escenaHielo(cam, pal, t) {
+  cieloDegradado("#8fd8f2", "#eefcff");
+  ctx.save();
+  ctx.translate(0, OY);
+  ctx.globalAlpha = 0.28;
+  [["#7dffb0", 16, 0.7], ["#7ad8ff", 30, 0.55], ["#c79bff", 44, 0.85]].forEach(([c, y, v], k) => {
+    ctx.fillStyle = c;
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    for (let x = 0; x <= W + 6; x += 6) ctx.lineTo(x, y + Math.sin(x / 40 + t * v + k) * 6);
+    for (let x = W + 6; x >= 0; x -= 6) ctx.lineTo(x, y + 9 + Math.sin(x / 40 + t * v + k) * 6);
+    ctx.closePath();
+    ctx.fill();
+  });
+  ctx.globalAlpha = 1;
+  siluetaMontanas(cam.x, 0.15, HORIZONTE - 24, 60, 60, "#a8dcef", true);
+  siluetaMontanas(cam.x, 0.4, HORIZONTE - 6, 28, 38, "#7fc4e4", true);
+  ctx.fillStyle = "#f4fdff";
+  ctx.fillRect(0, HORIZONTE - 4, W, 10);
+  for (let k = 0; k < 24; k++) {
+    const x = (((ruido(k) * 2 * W - cam.x * 0.8) % W) + W) % W, tw = 0.5 + 0.5 * Math.sin(t * 2 + k);
+    ctx.globalAlpha = 0.3 + 0.7 * tw;
+    rect(x, HORIZONTE + 2 + ruido(k * 3) * 16, 2, 2, "#ffffff");
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// Cielo: un sol con su halo, nubes en dos capas y islas flotantes que suben y bajan despacio
+function escenaCielo(cam, pal, t) {
+  cieloDegradado("#2c6fd1", "#a6e4ff");
+  ctx.save();
+  ctx.translate(0, OY);
+  const sol = ctx.createRadialGradient(W - 56, 34, 2, W - 56, 34, 46);
+  sol.addColorStop(0, "rgba(255,246,190,1)");
+  sol.addColorStop(0.4, "rgba(255,226,120,0.55)");
+  sol.addColorStop(1, "rgba(255,226,120,0)");
+  ctx.fillStyle = sol;
+  ctx.fillRect(W - 102, -12, 92, 92);
+  const ancho = W + 80;
+  for (let k = 0; k < 3; k++) nubeCielo(((k * 130 - cam.x * 0.15) % ancho + ancho) % ancho - 40, 22 + k * 14, 1 + k * 0.2);
+  [[0.15, 70, 0.35, true], [0.5, 100, 0.55, false], [0.8, 60, 0.3, true]].forEach(([p, y, f, arbol], k) => {
+    const x = (((p * ancho - cam.x * f) % ancho) + ancho) % ancho - 40;
+    islaFlotante(x, y + Math.sin(t * 0.6 + k * 2) * 3, arbol);
+  });
+  ctx.restore();
+}
+
+// Desierto: cielo cálido con sol, pirámides, dos capas de dunas y cactus en primer plano
 function escenaDesierto(cam, pal) {
+  cieloDegradado("#4fb4e8", "#ffe6b0");
+  ctx.save();
+  ctx.translate(0, OY);
+  ctx.fillStyle = "#ffe98a";
+  ctx.beginPath(); ctx.arc(W - 60, 30, 9, 0, Math.PI * 2); ctx.fill();
+  siluetaMontanas(cam.x, 0.18, HORIZONTE - 14, 22, 120, pal.lejos || "#e8c890", false);
   const pir = texPiramide(74, 96, pal);
   const off = mod(cam.x * 0.3, 360);
-  for (let k = -1; k < 4; k++) drawSprite(pir, k * 170 - off, 176 - 74);
-  const dunas = texColinas("dunas-" + pal.cerca, 512, pal.cerca,
-    (x) => 130 + Math.sin((x / 512) * Math.PI * 4) * 16 + Math.sin((x / 512) * Math.PI * 9) * 5, true);
-  capaPeriodica(dunas, cam.x, 0.45, 0);
+  for (let k = -1; k < 4; k++) drawSprite(pir, k * 170 - off, HORIZONTE - 74);
+  siluetaMontanas(cam.x, 0.45, HORIZONTE, 16, 90, pal.cerca || "#d9a95d", false);
+  const cactus = Bloques.sprite("K"), desfase = mod(cam.x * 0.9, 120);
+  for (let k = -1; k < 5; k++) drawSprite(cactus, k * 120 - desfase, HORIZONTE - 14);
+  ctx.restore();
 }
+
+// Nieve: un atardecer frío, cumbres nevadas, pinos con nieve y los copos de la lluvia de nieve
+function escenaNieve(cam, pal, t) {
+  cieloDegradado("#2b3a66", "#b9cde4");
+  ctx.save();
+  ctx.translate(0, OY);
+  siluetaMontanas(cam.x, 0.12, HORIZONTE - 34, 70, 110, "#e4eef9", true);
+  siluetaMontanas(cam.x, 0.3, HORIZONTE - 16, 36, 70, "#8ea3c4", true);
+  filaPinos(cam.x, 0.55, HORIZONTE + 2, 16, 34, 50, "#24443c", 5);
+  ctx.fillStyle = "#f2f8ff";
+  ctx.fillRect(0, HORIZONTE - 3, W, 9);
+  ctx.restore();
+  Bloques.clima(ctx, W, H, t, "nieve");
+}
+
+// Volcán: cielo rojo al pie de un cono con el cráter encendido, humo que sube, un río de lava y brasas
+function escenaVolcan(cam, pal, t) {
+  cieloDegradado("#1c0b1e", "#8a3424");
+  ctx.save();
+  ctx.translate(0, OY);
+  const luz = ctx.createRadialGradient(W * 0.5, HORIZONTE, 6, W * 0.5, HORIZONTE, W * 0.7);
+  luz.addColorStop(0, "rgba(255,150,60,0.85)");
+  luz.addColorStop(1, "rgba(255,90,30,0)");
+  ctx.fillStyle = luz;
+  ctx.fillRect(0, 0, W, HORIZONTE + 4);
+  siluetaMontanas(cam.x, 0.2, HORIZONTE - 12, 26, 60, "#3a1a2c", true);
+  const vx = W * 0.5 - 6;
+  ctx.fillStyle = "#2a1424";
+  ctx.beginPath();
+  ctx.moveTo(vx - 110, HORIZONTE); ctx.lineTo(vx - 14, HORIZONTE - 120); ctx.lineTo(vx + 14, HORIZONTE - 120); ctx.lineTo(vx + 110, HORIZONTE);
+  ctx.closePath(); ctx.fill();
+  ctx.fillStyle = "#ff8a2a";
+  ctx.beginPath(); ctx.ellipse(vx, HORIZONTE - 120, 16, 4, 0, 0, Math.PI * 2); ctx.fill();
+  for (let k = 0; k < 4; k++) {
+    const y = HORIZONTE - 124 - ((t * 14 + k * 30) % 90);
+    ctx.fillStyle = "rgba(60,40,50,0.35)";
+    ctx.beginPath(); ctx.arc(vx + Math.sin(t + k) * 8 + k * 2, y, 6 + k * 2, 0, Math.PI * 2); ctx.fill();
+  }
+  ctx.fillStyle = "#ff6a1f";
+  ctx.beginPath();
+  ctx.moveTo(0, HORIZONTE);
+  for (let x = 0; x <= W + 4; x += 6) ctx.lineTo(x, HORIZONTE - 3 + Math.sin(x / 22 + t * 2) * 1.6);
+  ctx.lineTo(W + 4, HORIZONTE + 4); ctx.lineTo(0, HORIZONTE + 4);
+  ctx.closePath(); ctx.fill();
+  for (let k = 0; k < 18; k++) {
+    const y = HORIZONTE - ((t * 24 + k * 37) % HORIZONTE), x = (((ruido(k) * W + Math.sin(t + k) * 6) % W) + W) % W;
+    ctx.globalAlpha = 0.5 + 0.5 * Math.sin(t * 5 + k);
+    rect(x, y, 2, 2, "#ffd27a");
+  }
+  ctx.globalAlpha = 1;
+  ctx.restore();
+}
+
+// Espacio: estrellas que titilan, dos nebulosas, un planeta con anillo y colinas oscuras de otro mundo
+function escenaEspacio(cam, pal, t) {
+  cieloDegradado("#04050f", "#1d2358");
+  ctx.save();
+  ctx.translate(0, OY);
+  const neb = ctx.createRadialGradient(W * 0.3, 60, 4, W * 0.3, 60, 90);
+  neb.addColorStop(0, "rgba(150,90,220,0.28)"); neb.addColorStop(1, "rgba(150,90,220,0)");
+  ctx.fillStyle = neb; ctx.fillRect(0, 0, W, HORIZONTE);
+  const neb2 = ctx.createRadialGradient(W * 0.8, 90, 4, W * 0.8, 90, 80);
+  neb2.addColorStop(0, "rgba(60,200,200,0.22)"); neb2.addColorStop(1, "rgba(60,200,200,0)");
+  ctx.fillStyle = neb2; ctx.fillRect(0, 0, W, HORIZONTE);
+  for (let k = 0; k < 90; k++) {
+    const tw = 0.4 + 0.6 * Math.abs(Math.sin(t * (0.8 + ruido(k) * 2) + k));
+    ctx.globalAlpha = tw;
+    const d = k % 9 === 0 ? 2 : 1;
+    rect(ruido(k) * W, ruido(k * 3 + 1) * HORIZONTE, d, d, "#ffffff");
+  }
+  ctx.globalAlpha = 1;
+  const px = W * 0.72, py = 58;
+  ctx.fillStyle = "#c08a5a";
+  ctx.beginPath(); ctx.arc(px, py, 16, 0, Math.PI * 2); ctx.fill();
+  ctx.strokeStyle = "rgba(230,200,150,0.7)"; ctx.lineWidth = 2;
+  ctx.beginPath(); ctx.ellipse(px, py, 28, 7, -0.25, 0, Math.PI * 2); ctx.stroke();
+  siluetaMontanas(cam.x, 0.35, HORIZONTE - 2, 14, 80, "#15193d", false);
+  siluetaMontanas(cam.x, 0.7, HORIZONTE + 2, 10, 60, "#0c0f2a", false);
+  ctx.restore();
+}
+
+// Selva: montañas verdes, palmeras y copas en tres capas, lianas que cuelgan y niebla baja
+function escenaSelva(cam) {
+  cieloDegradado("#5fbf9c", "#d7f5c8");
+  ctx.save();
+  ctx.translate(0, OY);
+  siluetaMontanas(cam.x, 0.1, HORIZONTE - 46, 30, 100, "#4f9c82", false);
+  filaCopas(cam.x, 0.3, HORIZONTE - 28, 24, "#2f7d5a", 4);
+  filaPalmeras(cam.x, 0.55, HORIZONTE + 4, 58, 62, 92, "#1f5c3f", 6);
+  filaCopas(cam.x, 0.8, HORIZONTE + 6, 30, "#16472f", 8);
+  for (let k = 0; k < 6; k++) {
+    const x = (((k * 61 - cam.x * 0.5) % W) + W) % W;
+    ctx.strokeStyle = "rgba(20,70,40,0.8)"; ctx.lineWidth = 1;
+    ctx.beginPath(); ctx.moveTo(x, 0); ctx.quadraticCurveTo(x + 6, 20, x, 40 + ruido(k) * 30); ctx.stroke();
+  }
+  ctx.restore();
+}
+
+// Escenas que se eligen por nombre (las de Van Gogh, Dalí, Miró, Gaudí, el barco y el castillo siguen en ESCENAS_ESTILO)
+const ESCENAS_NUEVAS = {
+  bosque: escenaBosque, hielo: escenaHielo, cielo: escenaCielo, desierto: escenaDesierto,
+  nieve: escenaNieve, volcan: escenaVolcan, espacio: escenaEspacio, selva: escenaSelva,
+};
 
 // Suelo de bloques.js bajo el área de diseño (solo si la pantalla es más alta)
 function pintarExtension(pal, tema) {
@@ -8932,21 +9194,48 @@ function escenaGaudi(cam, pal) {
 // Escenarios de los mundos de arte, por el tema de su estilo (ver TERRENO_DE_TEMA)
 const ESCENAS_ESTILO = { vangogh: escenaVanGogh, dali: escenaDali, miro: escenaMiro, gaudi: escenaGaudi, barco: escenaBarco };
 
+// Paleta del escenario de fondo: la de su propio tema y no la de la fase, así un fondo de desierto en una fase
+// de pradera se pinta con arena y no con hierba. Los temas sin paleta propia usan la que llega (el mapa, la fase)
+function paletaDeFondo(tema, paleta) {
+  if (tema === "castillo") return PALETA_CASTILLO;
+  if (PALETA_ESTILO[tema]) return PALETA_ESTILO[tema];
+  const mundo = MUNDOS.find((m) => m.tema === tema);
+  return mundo ? mundo.paleta : paleta;
+}
+
 // Fondo del escenario. El cielo, el sol o la luna, las nubes y las montañas vienen de bloques.js
 // y cambian con la hora (0 amanecer, 0.25 día, 0.5 atardecer, 0.75 noche); la cueva usa roca.
-// lv (opcional): el nivel, de donde salen su clima, su cascada y si hay hojas y luciérnagas
+// lv (opcional): el nivel, de donde salen su clima, su cascada y si hay hojas y luciérnagas.
+// El suelo que se prolonga bajo la pantalla es el de la fase (lv.temaKey), no el del fondo elegido
 function dibujarFondo(cam, pal, tema, hora, lv) {
   const clima = lv ? lv.clima : null, t = performance.now() / 1000;
+  const suelo = lv ? lv.temaKey : tema;
+  pal = paletaDeFondo(tema, pal);
   if (tema === "castillo") {
     escenaCastillo(cam, pal);
     if (clima) Bloques.clima(ctx, W, H, t, clima);   // niebla del foso: entre el castillo y las piezas
+    pintarExtension(pal, suelo);
     return;
   }
   // Mundos de arte (Van Gogh, Dalí, Miró y Gaudí): cada uno pinta su cielo y su paisaje
   if (ESCENAS_ESTILO[tema]) {
     ESCENAS_ESTILO[tema](cam, pal, hora);
     if (clima) Bloques.clima(ctx, W, H, t, clima);   // lluvia o tormenta encima de la escena, bajo el suelo
-    pintarExtension(pal, tema);
+    pintarExtension(pal, suelo);
+    return;
+  }
+  if (tema === "agua") { fondoMarino(cam); pintarExtension(pal, suelo); return; }
+  if (ESCENAS_NUEVAS[tema]) {
+    ESCENAS_NUEVAS[tema](cam, pal, t);
+    if (tema === "bosque" && !clima) {   // hojas que caen y luciérnagas, como en el resto de bosques
+      ctx.save();
+      ctx.translate(0, OY);
+      ctx.scale(ESC_FONDO, ESC_FONDO);
+      Bloques.particulas(ctx, W / ESC_FONDO, (H - OY) / ESC_FONDO, t, cam.x, hora);
+      ctx.restore();
+    }
+    if (clima && tema !== "nieve") Bloques.clima(ctx, W, H, t, clima);
+    if (H > OY + H_MIN) pintarExtension(pal, suelo);
     return;
   }
   // El cielo llega hasta arriba de la pantalla, también en las pantallas altas (OY > 0)
@@ -8959,14 +9248,7 @@ function dibujarFondo(cam, pal, tema, hora, lv) {
   // Hojas que caen y luciérnagas: solo en el bosque y sin clima (como en la demo de bloques.js)
   if (lv && lv.particulas && !clima) Bloques.particulas(ctx, W / ESC_FONDO, (H - OY) / ESC_FONDO, t, cam.x, hora);
   ctx.restore();
-  // En el desierto, las dunas y las pirámides van encima del cielo
-  if (tema === "desierto") {
-    ctx.save();
-    ctx.translate(0, OY);
-    escenaDesierto(cam, pal);
-    ctx.restore();
-  }
-  if (H > OY + H_MIN) pintarExtension(pal, tema);
+  if (H > OY + H_MIN) pintarExtension(pal, suelo);
 }
 
 /* =====================================================================
@@ -9095,7 +9377,6 @@ function escenaCastillo(cam, pal) {
     drawSprite(antorchaSprite(fr), tx, 84);
   }
   ctx.restore();
-  pintarExtension(pal, "castillo");
 }
 
 /* =====================================================================
@@ -9560,6 +9841,20 @@ function fondoMarino(cam) {
     for (let y = 200; y > 150 - (k % 3) * 12; y -= 6) ctx.lineTo(x + Math.sin(t * 1.4 + y * 0.08 + k) * 3, y);
     ctx.stroke();
   }
+  // Rayos de luz que bajan desde la superficie y burbujas que suben
+  ctx.globalCompositeOperation = "lighter";
+  for (let k = 0; k < 4; k++) {
+    const x = mod(k * 110 + t * 6 - cam.x * 0.05, W + 60) - 30;
+    ctx.fillStyle = "rgba(180,235,255,0.07)";
+    ctx.beginPath();
+    ctx.moveTo(x, 0); ctx.lineTo(x + 26, 0); ctx.lineTo(x + 70, H); ctx.lineTo(x + 40, H);
+    ctx.closePath(); ctx.fill();
+  }
+  ctx.globalCompositeOperation = "source-over";
+  for (let k = 0; k < 14; k++) {
+    const x = ruido(k * 5) * W, y = H - mod(t * (18 + ruido(k) * 16) + k * 53, H);
+    rect(x, y, 2, 2, "rgba(220,245,255,0.6)");
+  }
   ctx.restore();
 }
 
@@ -9593,7 +9888,7 @@ class Level {
     this.castillo = !!def.castillo;
     // Un estilo de mundo (los niveles de Dalí, Miró y Gaudí) pone su propio tema; si no, el del mundo
     this.temaKey = this.castillo ? "castillo" : (def.estilo || mundo.tema);   // separa la caché de sprites por tema
-    this.fondo = def.fondo || this.temaKey;   // escenario de fondo: el propio de la fase (el velero) o el del tema
+    this.fondo = (this.ed && this.ed.fondo) || def.fondo || this.temaKey;   // escenario de fondo: el propio de la fase (el velero) o el del tema
     this.pal = this.castillo ? PALETA_CASTILLO : (PALETA_ESTILO[this.temaKey] || mundo.paleta);
     this.hora = def.hora !== undefined ? def.hora : mundo.hora;   // momento del día del fondo
     this.clima = def.clima || null;          // lluvia, nieve, niebla... (bloques.js)
@@ -11591,7 +11886,7 @@ for (const [m, f, bajada, semilla] of [[2, 2, true, 5022], [3, 1, false, 6031], 
    ===================================================================== */
 const DEV_CLAVE = "superbro_dev_v1";
 const DEV_LARGA_MS = 450;      // desde este tiempo pulsado, la pulsación quita en vez de poner
-const DEV_PANEL = 69;          // alto de la paleta (cuatro filas), en la franja de abajo
+const DEV_PANEL = 87;          // alto de la paleta (cinco filas), en la franja de abajo
 // Tamaño de la fase: cada pulsación de - o + añade o quita 16 columnas (256 px, el ancho mínimo de la pantalla)
 const DEV_PASO_COLS = 16;
 const DEV_MAX_COLS = 600;
@@ -12111,6 +12406,17 @@ function devPoner(c, r) {
   }
 }
 
+// Fondos que se pueden elegir en la fase (el primero: el de la fase, sin cambiar)
+const DEV_FONDOS = [null, "pradera", "desierto", "bosque", "cueva", "hielo", "agua", "castillo", "cielo", "vangogh", "dali", "miro", "gaudi", "barco", "nieve", "volcan", "espacio", "selva"];
+// Pasa al fondo siguiente (d = 1) o anterior (d = -1) de la fase; se guarda con la fase
+function devCiclarFondo(d) {
+  const lv = game.lvl;
+  if (!lv || !lv.ed) return;
+  const i = DEV_FONDOS.indexOf(lv.ed.fondo || null), nuevo = DEV_FONDOS[(i + d + DEV_FONDOS.length) % DEV_FONDOS.length];
+  if (nuevo) lv.ed.fondo = nuevo; else delete lv.ed.fondo;
+  lv.fondo = nuevo || lv.def.fondo || lv.temaKey;
+  devGuardar();
+}
 function devAviso(texto) { devAvisoTxt = texto; devAvisoHasta = performance.now() + 1500; }
 function devEditorActivo() { return devActivo && devEditor && game.estado === "nivel" && !!game.lvl && !hojaAbierta; }
 
@@ -12187,9 +12493,12 @@ function devClicPanel(x, y) {
     else if (x >= 41 && x < 56) devCambiarAlto("arriba", 1);
     else if (x >= 78 && x < 93) devCambiarAlto("abajo", -1);
     else if (x >= 93 && x < 108) devCambiarAlto("abajo", 1);
-    else if (x >= 146 && x < 199) { devCuadro = !devCuadro; devAviso(devCuadro ? "CUADRO ACTIVO" : "CUADRO APAGADO"); }
-    else if (x >= 201 && x < 216) devCambiarLado(-1);
-    else if (x >= 229 && x < 244) devCambiarLado(1);
+    else if (x >= 146 && x < 161) devCiclarFondo(-1);
+    else if (x >= 196 && x < 212) devCiclarFondo(1);
+  } else if (y >= y0 + 70 && y < y0 + 86) {
+    if (x >= 1 && x < 55) { devCuadro = !devCuadro; devAviso(devCuadro ? "CUADRO ACTIVO" : "CUADRO APAGADO"); }
+    else if (x >= 57 && x < 73) devCambiarLado(-1);
+    else if (x >= 83 && x < 99) devCambiarLado(1);
   } else if (y >= y0 + 38 && y < y0 + 48 && i < DEV_COLORES.length) devColor = i;
 }
 
@@ -12324,6 +12633,13 @@ function devBoton(x, y, signo) {
   ctx.strokeRect(x + 0.5, y + 0.5, 13, 15);
   txt(signo, x + 7, y + 5, PAL.w, "center");
 }
+// Botón con una flecha: d < 0 a la izquierda, d > 0 a la derecha
+function devBotonFlecha(x, y, d) {
+  rect(x, y, 14, 16, "#2a2d40");
+  ctx.strokeStyle = "#8c93b5"; ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, 13, 15);
+  devFlecha(x, y, d);
+}
 // Botón con texto (el de CUADRO), resaltado cuando está activo
 function devBotonTexto(x, y, w, texto, activo) {
   rect(x, y, w, 16, "#2a2d40");
@@ -12418,10 +12734,16 @@ function devDibujar() {
   devBoton(79, yD, "-");
   devBoton(94, yD, "+");
   txt("ALTO " + lv.rows, 116, yD + 5, PAL.w);
-  devBotonTexto(147, yD, 52, "CUADRO", devCuadro);
-  devBoton(202, yD, "-");
-  txt(String(devLado), 222, yD + 5, PAL.w, "center");
-  devBoton(230, yD, "+");
+  // Fondo de la fase: ◀ nombre ▶ (se guarda con la fase)
+  devBotonFlecha(147, yD, -1);
+  txt((lv.ed && lv.ed.fondo ? lv.ed.fondo : "DEFECTO").toUpperCase(), 180, yD + 5, PAL.y, "center");
+  devBotonFlecha(196, yD, 1);
+  // Fila E: el cuadro y su lado
+  const yE = y0 + 70;
+  devBotonTexto(2, yE, 52, "CUADRO", devCuadro);
+  devBoton(58, yE, "-");
+  txt(String(devLado), 76, yE + 5, PAL.w, "center");
+  devBoton(84, yE, "+");
 }
 
 const game = new Game();
