@@ -11584,11 +11584,15 @@ for (const [m, f, bajada, semilla] of [[2, 2, true, 5022], [3, 1, false, 6031], 
    La paleta de abajo tiene los bloques, los objetos, los enemigos y los colores (con el PINCEL se
    recolorean los bloques que ya hay). [ y ]: enemigo anterior o siguiente. RePág y AvPág: fase
    anterior o siguiente. F3: exporta las ediciones (JSON). F4: borra las de esta fase y la reinicia.
+   - y +: quitan o añaden 16 columnas a la fase (también con los botones de la paleta).
    Las ediciones se guardan en este navegador y solo se aplican con ?dev.
    ===================================================================== */
 const DEV_CLAVE = "superbro_dev_v1";
 const DEV_LARGA_MS = 450;      // desde este tiempo pulsado, la pulsación quita en vez de poner
 const DEV_PANEL = 51;          // alto de la paleta, en la franja de abajo
+// Tamaño de la fase: cada pulsación de - o + añade o quita 16 columnas (256 px, el ancho mínimo de la pantalla)
+const DEV_PASO_COLS = 16;
+const DEV_MAX_COLS = 600;
 let devEstado = { niveles: {} };   // ediciones por fase: { "mundo:fase" o "sala:k": { tiles, colores, ents, quitados } }
 try { devEstado = JSON.parse(localStorage.getItem(DEV_CLAVE)) || devEstado; } catch (e) { /* sin almacenamiento: se empieza vacío */ }
 if (!devEstado.niveles) devEstado.niveles = {};
@@ -11641,7 +11645,7 @@ function claveEnt(e) { return e.t + "@" + e.x + "," + e.y; }
 // Ediciones de una fase (se crean vacías la primera vez)
 function devEdicion(clave) {
   const niveles = devEstado.niveles;
-  if (!niveles[clave]) niveles[clave] = { tiles: {}, colores: {}, ents: [], quitados: [] };
+  if (!niveles[clave]) niveles[clave] = { tiles: {}, colores: {}, ents: [], quitados: [], ops: [] };
   return niveles[clave];
 }
 function devGuardar() {
@@ -11650,6 +11654,7 @@ function devGuardar() {
 
 // Aplica a los datos de una fase, antes de montarla, las ediciones guardadas
 function aplicarEdiciones(data, ed) {
+  for (const op of ed.ops || []) aplicarOperacionColumnas(data, op);   // primero el tamaño: lo demás va en las columnas nuevas
   const cambiadas = new Set();   // casillas con un bloque nuevo: su premio de base ya no vale
   for (const k in ed.tiles) {
     const [c, r] = k.split(",").map(Number);
@@ -11663,6 +11668,120 @@ function aplicarEdiciones(data, ed) {
     if (e.t === "canon") data.canones.push({ col: e.x / TILE, row: e.y / TILE, dir: e.dir });
     else data.ents.push(e);
   }
+}
+
+// Columnas de una operación de tamaño sobre una fase de n columnas. ins: columnas en blanco antes de la columna p.
+// del: quita las columnas indicadas (vacías). Devuelve, para cada columna nueva, la vieja de la que sale (-1: en blanco)
+function columnasDeOperacion(n, op) {
+  const sale = [];
+  for (let c = 0; c < n; c++) {
+    if (op.t === "ins" && c === op.p) for (let k = 0; k < op.k; k++) sale.push(-1);
+    if (!(op.t === "del" && op.cols.includes(c))) sale.push(c);
+  }
+  if (op.t === "ins" && op.p >= n) for (let k = 0; k < op.k; k++) sale.push(-1);
+  return sale;
+}
+// De columna vieja a columna nueva: cmap[c] (también cmap[n], el final) y vive[c]. Una columna quitada pasa a la
+// siguiente que queda, así lo que estaba en su borde no se pierde
+function movimientoColumnas(n, sale) {
+  const cmap = new Array(n + 1), vive = new Array(n).fill(false);
+  sale.forEach((c, j) => { if (c >= 0) { cmap[c] = j; vive[c] = true; } });
+  let sig = sale.length;
+  cmap[n] = sig;
+  for (let c = n - 1; c >= 0; c--) { if (vive[c]) sig = cmap[c]; else cmap[c] = sig; }
+  return { cmap, vive };
+}
+// Posición horizontal (px) en la fase nueva
+function xEnColumnas(cmap, x) {
+  const c = Math.floor(x / TILE);
+  return cmap[c] * TILE + (x - c * TILE);
+}
+// Aplica una operación de tamaño a los datos de la fase: bloques, enemigos, meta, plataformas, surtidores...
+function aplicarOperacionColumnas(data, op) {
+  const n = data.cols, sale = columnasDeOperacion(n, op), { cmap, vive } = movimientoColumnas(n, sale);
+  const mx = (x) => xEnColumnas(cmap, x), viva = (x) => vive[Math.floor(x / TILE)];
+  data.tiles = data.tiles.map((fila, r) => sale.map((c) => (c >= 0 ? fila[c] : r < data.gy ? "." : "G")));
+  data.cols = sale.length;
+  data.goalX = mx(data.goalX);
+  data.ents = data.ents.filter((e) => viva(e.x)).map((e) => Object.assign({}, e, { x: mx(e.x) }));
+  data.decor = data.decor.filter((q) => vive[q.c]).map((q) => Object.assign({}, q, { c: cmap[q.c] }));
+  data.canones = data.canones.filter((k) => vive[k.col]).map((k) => Object.assign({}, k, { col: cmap[k.col] }));
+  data.plats = data.plats.filter((pl) => viva(pl.x))
+    .map((pl) => Object.assign({}, pl, { x: mx(pl.x) }, pl.x0 !== undefined ? { x0: mx(pl.x0), x1: mx(pl.x1) } : {}));
+  data.fuentes = data.fuentes.map((f) => Object.assign({}, f, { x0: mx(f.x0), x1: mx(f.x1) }));
+  if (data.control) data.control = Object.assign({}, data.control, { x: mx(data.control.x) });
+  data.start = Object.assign({}, data.start, { x: mx(data.start.x) });
+  if (data.entradaSecreta) data.entradaSecreta = Object.assign({}, data.entradaSecreta, { col: cmap[data.entradaSecreta.col] });
+  if (data.salidaSecreta) data.salidaSecreta = Object.assign({}, data.salidaSecreta, { col: cmap[data.salidaSecreta.col] });
+}
+// Una columna está vacía si solo tiene suelo (o aire sobre él) y nada encima: ni enemigos, objetos, plataformas,
+// surtidores, decoración, cañones, la meta ni el inicio
+function columnaVacia(d, c) {
+  for (let r = 0; r < d.rows; r++) if (d.tiles[r][c] !== (r < d.gy ? "." : "G")) return false;
+  const x0 = c * TILE, x1 = x0 + TILE;
+  const toca = (x, w) => x < x1 && x + w > x0;
+  if (d.ents.some((e) => toca(e.x, TILE))) return false;
+  if (d.decor.some((q) => q.c === c) || d.canones.some((k) => k.col === c)) return false;
+  if (d.plats.some((pl) => toca(pl.x, pl.w) || (pl.x0 !== undefined && toca(pl.x0, pl.x1 - pl.x0 + pl.w)))) return false;
+  if (d.fuentes.some((f) => toca(f.x0, f.x1 - f.x0))) return false;
+  if (d.control && toca(d.control.x, TILE)) return false;
+  if (toca(d.start.x, TILE)) return false;
+  return !(d.entradaSecreta && d.entradaSecreta.col === c) && !(d.salidaSecreta && d.salidaSecreta.col === c);
+}
+// Las ediciones guardadas pasan a la numeración nueva de columnas (las de las columnas quitadas estaban vacías)
+function reubicarEdiciones(ed, cmap, vive) {
+  for (const mapa of [ed.tiles, ed.colores]) {
+    for (const k of Object.keys(mapa)) {
+      const [c, r] = k.split(",").map(Number), v = mapa[k];
+      delete mapa[k];
+      if (vive[c]) mapa[cmap[c] + "," + r] = v;
+    }
+  }
+  ed.ents = ed.ents.filter((e) => vive[Math.floor(e.x / TILE)]).map((e) => Object.assign({}, e, { x: xEnColumnas(cmap, e.x) }));
+  const quitados = [];
+  for (const k of ed.quitados) {
+    const [t, pos] = k.split("@"), [x, y] = pos.split(",").map(Number);
+    if (vive[Math.floor(x / TILE)]) quitados.push(t + "@" + xEnColumnas(cmap, x) + "," + y);
+  }
+  ed.quitados = quitados;
+}
+// - y +: quita o añade 16 columnas, antes de la escalinata de la meta. Quitar solo quita columnas vacías (las
+// más cercanas a la meta). Se guarda como operación, así se repite al cargar la fase
+function devCambiarAncho(sentido) {
+  const lv = game.lvl;
+  if (!lv || !lv.ed || game.estado !== "nivel") return;
+  const def = lv.def;
+  if (def.sala || def.mapa || def.torre || def.colinas || def.jefe) return devAviso("ESTA FASE TIENE TAMANO FIJO");
+  const d = construirNivel(def, MUNDOS[game.mundoIdx].tema);
+  aplicarEdiciones(d, lv.ed);
+  const n = d.cols, p = d.goalX / TILE - DEV_PASO_COLS;   // la escalinata de la meta empieza 16 columnas antes de la bandera
+  let op;
+  if (sentido > 0) {
+    if (n + DEV_PASO_COLS > DEV_MAX_COLS) return devAviso("YA NO CABE MAS");
+    op = { t: "ins", p, k: DEV_PASO_COLS };
+  } else {
+    const vacias = [];
+    for (let c = p - 1; c >= 1 && vacias.length < DEV_PASO_COLS; c--) if (columnaVacia(d, c)) vacias.push(c);
+    if (!vacias.length) return devAviso("NO HAY COLUMNAS VACIAS PARA QUITAR");
+    op = { t: "del", cols: vacias.sort((a, b) => a - b) };
+  }
+  const ed = lv.ed, sale = columnasDeOperacion(n, op), { cmap, vive } = movimientoColumnas(n, sale);
+  const medio = Math.floor((lv.player.x + lv.player.w / 2) / TILE), px = lv.player.x, py = lv.player.y;
+  ed.ops = ed.ops || [];
+  ed.ops.push(op);
+  reubicarEdiciones(ed, cmap, vive);
+  devGuardar();
+  devPulsa = null;
+  devRecargarNivel();
+  game.irisAbre = 0;   // sin fundido: cambiar el tamaño no tiene que parecer una entrada nueva
+  // El jugador vuelve a su sitio si su columna sigue existiendo
+  const nuevo = game.lvl;
+  if (medio < n && vive[medio]) {
+    nuevo.player.x = Math.min(xEnColumnas(cmap, px), nuevo.cols * TILE - nuevo.player.w);
+    nuevo.player.y = py; nuevo.player.vx = 0; nuevo.player.vy = 0;
+    nuevo.cam.centrar(nuevo.player, nuevo);
+  }
+  devAviso("ANCHO " + sale.length);
 }
 
 // Copia de un sprite de bloque con otro color (cacheada por sprite y color). Sin color, el mismo sprite
@@ -11865,6 +11984,8 @@ function devClicPanel(x, y) {
     devSel = { tipo: "bloque", i };
     if (repetido && b.item) { if (b.ch === "Q") devItemQ = (devItemQ + 1) % DEV_ITEMS_Q.length; else devItemZ = (devItemZ + 1) % DEV_ITEMS_Z.length; }
   } else if (y >= y0 + 20 && y < y0 + 36) {
+    if (x >= 178 && x < 192) return devCambiarAncho(-1);
+    if (x >= 194 && x < 208) return devCambiarAncho(1);
     if (i < 4) devSel = { tipo: "objeto", i };
     else if (i === 4) devCiclarEnemigo(-1);
     else if (i === 6) devCiclarEnemigo(1);
@@ -11905,7 +12026,7 @@ function devExportar() {
   const niveles = {};
   for (const k in devEstado.niveles) {
     const ed = devEstado.niveles[k];
-    if (Object.keys(ed.tiles).length || Object.keys(ed.colores).length || ed.ents.length || ed.quitados.length) niveles[k] = ed;
+    if (Object.keys(ed.tiles).length || Object.keys(ed.colores).length || ed.ents.length || ed.quitados.length || (ed.ops || []).length) niveles[k] = ed;
   }
   const texto = JSON.stringify({ version: 1, niveles }, null, 1);
   console.log(texto);
@@ -11922,13 +12043,16 @@ function devExportar() {
 
 addEventListener("keydown", (e) => {
   if (!devActivo) return;
-  const accion = { F2: "editor", F3: "exportar", F4: "borrar", PageUp: "anterior", PageDown: "siguiente", BracketLeft: "enemAnt", BracketRight: "enemSig" }[e.code];
-  if (!accion || (accion === "editor" && e.repeat)) return;
+  const accion = { F2: "editor", F3: "exportar", F4: "borrar", PageUp: "anterior", PageDown: "siguiente", BracketLeft: "enemAnt", BracketRight: "enemSig",
+    Minus: "menos", NumpadSubtract: "menos", Equal: "mas", NumpadAdd: "mas" }[e.code];
+  if (!accion || ((accion === "editor" || accion === "menos" || accion === "mas") && e.repeat)) return;
+  if ((accion === "menos" || accion === "mas") && (e.ctrlKey || e.metaKey || e.altKey)) return;   // Ctrl + y - es el zoom del navegador
   e.preventDefault();
   if (accion === "editor") { devEditor = !devEditor; devPulsa = null; devAviso(devEditor ? "EDITOR ACTIVO" : "EDITOR OCULTO"); }
   else if (accion === "exportar") devExportar();
   else if (accion === "borrar") devBorrarNivel();
   else if (accion === "anterior" || accion === "siguiente") devIrNivel(accion === "siguiente" ? 1 : -1);
+  else if (accion === "menos" || accion === "mas") devCambiarAncho(accion === "mas" ? 1 : -1);
   else devCiclarEnemigo(accion === "enemSig" ? 1 : -1);
 });
 
@@ -11993,6 +12117,13 @@ function devFlecha(x, y, d) {
   else { ctx.moveTo(x + 5, y + 4); ctx.lineTo(x + 11, y + 8); ctx.lineTo(x + 5, y + 12); }
   ctx.fill();
 }
+// Botón pequeño de la paleta: - o +
+function devBoton(x, y, signo) {
+  rect(x, y, 14, 16, "#2a2d40");
+  ctx.strokeStyle = "#8c93b5"; ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, 13, 15);
+  txt(signo, x + 7, y + 5, PAL.w, "center");
+}
 // Texto de la selección (y del color, si el bloque lo lleva)
 function devSelNombre() {
   const s = devSel, col = DEV_COLORES[devColor];
@@ -12056,6 +12187,9 @@ function devDibujar() {
   if (devSel.tipo === "enemigo") devMarco(2 + 5 * 16, yB);
   devFlecha(2 + 6 * 16, yB, 1);
   txt(DEV_ENEMIGOS[devEnem].replace(/_/g, " "), 118, yB + 5, PAL.w);
+  devBoton(178, yB, "-");
+  devBoton(194, yB, "+");
+  txt("ANCHO " + lv.cols, 212, yB + 5, PAL.w);
   DEV_COLORES.forEach((c, i) => {
     const x = 2 + i * 16, y = y0 + 38;
     devSwatch(c, x, y);
