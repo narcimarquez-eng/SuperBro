@@ -7733,6 +7733,7 @@ class Player {
     this.spinT = 0;          // temporizador del salto giratorio
     this.glideT = 0;         // planeo restante
     this.big = false;
+    this.crecePendiente = false;   // hongo o flor cogidos bajo un techo bajo: crece en cuanto hay sitio
     this.fire = false;
     this.rebotando = false;   // rebote de muelle o de pinchos: sube sin cortarse hasta el punto más alto
     this.cape = false;
@@ -7746,13 +7747,23 @@ class Player {
     this.plat = null;        // plataforma móvil sobre la que está de pie
   }
 
-  // Aplica el estado de tamaño (pequeño = 10x14, grande = 10x20)
-  setBig(b) {
-    if (b === this.big) return;
+  // Aplica el estado de tamaño (pequeño = 16 px de alto, grande = 26). Crece hacia arriba, sin meterse en el suelo.
+  // Con lvl, mira si cabe: si sobre la cabeza hay un techo, baja la caja lo justo para encajar; si no cabe en ningún
+  // sitio, no crece todavía y lo intenta en cada cuadro (quedar metido en el techo lo dejaba fuera de la pantalla)
+  setBig(b, lvl) {
+    if (b === this.big) { this.crecePendiente = false; return; }
     const bottom = this.y + this.h;
+    if (b && lvl) {
+      let y = null;
+      for (let t = bottom - 26; t <= bottom - 16 && y === null; t++) if (!tocaSolido(lvl, this.x, t, this.w, 26)) y = t;
+      if (y === null) { this.crecePendiente = true; return; }
+      this.big = true; this.h = 26; this.y = y; this.crecePendiente = false;
+      return;
+    }
     this.big = b;
     this.h = b ? 26 : 16;
     this.y = bottom - this.h; // crece hacia arriba, nunca se mete en el suelo
+    this.crecePendiente = false;
   }
 
   get invencible() { return this.star > 0 || this.hurtT > 0; }
@@ -7760,6 +7771,7 @@ class Player {
   // Hace daño: reduce el poder o muere si era pequeño
   golpear() {
     if (this.invencible) return "ignorado";
+    this.crecePendiente = false;
     if (this.fire || this.cape) { this.fire = false; this.cape = false; this.hurtT = 1.5; return "pierde-poder"; }
     if (this.big) { this.setBig(false); this.hurtT = 1.5; return "encoge"; }
     this.dead = true;
@@ -7768,6 +7780,7 @@ class Player {
 
   // Lógica del jugador por frame (entrada + física + colisiones)
   update(dt, lvl, game) {
+    if (this.crecePendiente) this.setBig(true, lvl);   // crece cuando ya cabe
     this.prevBottom = this.y + this.h;   // base del jugador antes de moverse (para pisotones)
     this.animT += dt;
     if (this.star > 0) this.star -= dt;
@@ -10765,8 +10778,8 @@ class Game {
     for (const it of lvl.items) {
       if (!aabb(hitbox, it)) continue;
       it.alive = false;
-      if (it.tipo === "hongo") { p.setBig(true); this.puntos(1000); }
-      else if (it.tipo === "flor") { p.setBig(true); p.fire = true; this.puntos(1000); }
+      if (it.tipo === "hongo") { p.setBig(true, lvl); this.puntos(1000); }
+      else if (it.tipo === "flor") { p.setBig(true, lvl); p.fire = true; this.puntos(1000); }
       else if (it.tipo === "pluma") { p.cape = true; p.glideT = PHYS.glideTime; this.puntos(1000); }
       else if (it.tipo === "estrella") { p.star = 10; this.puntos(1000); }
       if (it.tipo === "vida") { this.ganarVida(it.x, it.y); continue; }
@@ -10882,8 +10895,8 @@ class Game {
     const r = this.reserva;
     let usado = null;
     if (r.estrella > 0 && p.star <= 0) { r.estrella--; p.star = 10; usado = "estrella"; }
-    else if (r.flor > 0 && !p.fire) { r.flor--; p.setBig(true); p.fire = true; usado = "flor"; }
-    else if (r.seta > 0 && !p.big) { r.seta--; p.setBig(true); usado = "seta"; }
+    else if (r.flor > 0 && !p.fire) { r.flor--; p.setBig(true, this.lvl); p.fire = true; usado = "flor"; }
+    else if (r.seta > 0 && !p.big) { r.seta--; p.setBig(true, this.lvl); usado = "seta"; }
     else if (r.pluma > 0 && !p.cape) { r.pluma--; p.cape = true; p.glideT = PHYS.glideTime; usado = "pluma"; }
     if (!usado) { this.sfx("golpe"); return; }
     this.sfx(usado === "estrella" ? "estrella" : "hongo");
@@ -11055,7 +11068,7 @@ class Game {
 
   // Lo que el jugador lleva encima (seta, pluma, flor y estrella) pasa de un nivel a otro
   pasarPoder(de, a) {
-    a.setBig(de.big);
+    a.setBig(de.big, this.lvl);
     a.fire = de.fire;
     a.cape = de.cape;
     a.star = de.star;
