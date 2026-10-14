@@ -248,10 +248,10 @@ const GRAVITY = 900;       // px/s²
 const MAX_FALL = 360;      // velocidad máxima de caída
 const SAVE_KEY = "superbro_save_v2";
 
-// Modo desarrollador (?dev): la paleta va en una franja propia bajo el área de juego (51 px + 10 de avisos)
+// Modo desarrollador (?dev): la paleta va en una franja propia bajo el área de juego (69 px + 10 de avisos)
 const devActivo = new URLSearchParams(location.search).has("dev");
 if (devActivo) document.documentElement.classList.add("dev");
-const DEV_FRANJA = 61;
+const DEV_FRANJA = 79;
 
 const canvas = document.getElementById("c");
 const ctx = canvas.getContext("2d");
@@ -11585,14 +11585,20 @@ for (const [m, f, bajada, semilla] of [[2, 2, true, 5022], [3, 1, false, 6031], 
    recolorean los bloques que ya hay). [ y ]: enemigo anterior o siguiente. RePág y AvPág: fase
    anterior o siguiente. F3: exporta las ediciones (JSON). F4: borra las de esta fase y la reinicia.
    - y +: quitan o añaden 16 columnas a la fase (también con los botones de la paleta).
+   ARRIBA y ABAJO: quitan o añaden 14 filas (una pantalla), entre 14 y 84. CUADRO: un cuadro de 10 a 30 casillas:
+   el toque corto mete bloques, enemigos o monedas en él, y el largo borra todo lo que hay dentro.
    Las ediciones se guardan en este navegador y solo se aplican con ?dev.
    ===================================================================== */
 const DEV_CLAVE = "superbro_dev_v1";
 const DEV_LARGA_MS = 450;      // desde este tiempo pulsado, la pulsación quita en vez de poner
-const DEV_PANEL = 51;          // alto de la paleta, en la franja de abajo
+const DEV_PANEL = 69;          // alto de la paleta (cuatro filas), en la franja de abajo
 // Tamaño de la fase: cada pulsación de - o + añade o quita 16 columnas (256 px, el ancho mínimo de la pantalla)
 const DEV_PASO_COLS = 16;
 const DEV_MAX_COLS = 600;
+// Alto de la fase: 14 filas (una pantalla) cada vez, hasta 84 (seis pantallas: el triple de la original, y más)
+const DEV_PASO_FILAS = 14, DEV_MAX_FILAS = 84;
+// Cuadro de los toques de la paleta: lado en casillas, de 10 a 30 de 2 en 2
+const DEV_LADO_MIN = 10, DEV_LADO_MAX = 30;
 let devEstado = { niveles: {} };   // ediciones por fase: { "mundo:fase" o "sala:k": { tiles, colores, ents, quitados } }
 try { devEstado = JSON.parse(localStorage.getItem(DEV_CLAVE)) || devEstado; } catch (e) { /* sin almacenamiento: se empieza vacío */ }
 if (!devEstado.niveles) devEstado.niveles = {};
@@ -11604,6 +11610,8 @@ let devItemQ = 0, devItemZ = 0;           // premio de los bloques ? y ocultos (
 let devPulsa = null;                      // pulsación en curso sobre el nivel: { c, r, t0, hecho, mueve, hit (lo que hay bajo el dedo) }
 let devMira = null;                       // casilla bajo el puntero: { c, r }
 let devAvisoTxt = "", devAvisoHasta = 0;
+let devCuadro = false;   // modo cuadro: los toques actúan sobre un cuadro de devLado casillas
+let devLado = 10;
 
 // Bloques de la paleta. ch: carácter de tiles. item: lleva premio (? u oculto). multi: ladrillo multimoneda
 const DEV_BLOQUES = [
@@ -11654,7 +11662,7 @@ function devGuardar() {
 
 // Aplica a los datos de una fase, antes de montarla, las ediciones guardadas
 function aplicarEdiciones(data, ed) {
-  for (const op of ed.ops || []) aplicarOperacionColumnas(data, op);   // primero el tamaño: lo demás va en las columnas nuevas
+  for (const op of ed.ops || []) (op.t === "filas" ? aplicarOperacionFilas : aplicarOperacionColumnas)(data, op);   // primero el tamaño: lo demás va en las columnas y filas nuevas
   const cambiadas = new Set();   // casillas con un bloque nuevo: su premio de base ya no vale
   for (const k in ed.tiles) {
     const [c, r] = k.split(",").map(Number);
@@ -11730,13 +11738,7 @@ function columnaVacia(d, c) {
 }
 // Las ediciones guardadas pasan a la numeración nueva de columnas (las de las columnas quitadas estaban vacías)
 function reubicarEdiciones(ed, cmap, vive) {
-  for (const mapa of [ed.tiles, ed.colores]) {
-    for (const k of Object.keys(mapa)) {
-      const [c, r] = k.split(",").map(Number), v = mapa[k];
-      delete mapa[k];
-      if (vive[c]) mapa[cmap[c] + "," + r] = v;
-    }
-  }
+  for (const mapa of [ed.tiles, ed.colores]) reubicarClaves(mapa, (c, r) => (vive[c] ? cmap[c] + "," + r : null));
   ed.ents = ed.ents.filter((e) => vive[Math.floor(e.x / TILE)]).map((e) => Object.assign({}, e, { x: xEnColumnas(cmap, e.x) }));
   const quitados = [];
   for (const k of ed.quitados) {
@@ -11784,6 +11786,192 @@ function devCambiarAncho(sentido) {
   devAviso("ANCHO " + sale.length);
 }
 
+// Filas de una operación de alto sobre una fase de n filas: añade filas en blanco arriba o abajo, o quita las del
+// extremo (op.quita). Devuelve, por cada fila nueva, la vieja de la que sale (-1: fila en blanco)
+function filasDeOperacion(n, op) {
+  const k = op.k, viejas = [...Array(n).keys()], blancas = Array(k).fill(-1);
+  if (op.quita) return op.pos === "arriba" ? viejas.slice(k) : viejas.slice(0, n - k);
+  return op.pos === "arriba" ? [...blancas, ...viejas] : [...viejas, ...blancas];
+}
+// De fila vieja a fila nueva, como movimientoColumnas
+function movimientoFilas(n, sale) {
+  const rmap = new Array(n + 1), vive = new Array(n).fill(false);
+  sale.forEach((r, j) => { if (r >= 0) { rmap[r] = j; vive[r] = true; } });
+  let sig = sale.length;
+  rmap[n] = sig;
+  for (let r = n - 1; r >= 0; r--) { if (vive[r]) sig = rmap[r]; else rmap[r] = sig; }
+  return { rmap, vive };
+}
+// Posición vertical (px) en la fase nueva
+function yEnFilas(rmap, y) {
+  const r = Math.floor(y / TILE);
+  return rmap[r] * TILE + (y - r * TILE);
+}
+// Aplica una operación de alto a los datos de la fase, igual que las de ancho
+function aplicarOperacionFilas(data, op) {
+  const n = data.rows, sale = filasDeOperacion(n, op), { rmap, vive } = movimientoFilas(n, sale);
+  const my = (y) => yEnFilas(rmap, y), viva = (y) => vive[Math.floor(y / TILE)];
+  data.tiles = sale.map((r) => (r >= 0 ? data.tiles[r].slice() : new Array(data.cols).fill(".")));
+  data.rows = sale.length;
+  data.gy = rmap[data.gy];
+  data.sueloMeta = my(data.sueloMeta);
+  data.ents = data.ents.filter((e) => viva(e.y)).map((e) => Object.assign({}, e, { y: my(e.y) }));
+  data.plats = data.plats.filter((pl) => viva(pl.y))
+    .map((pl) => Object.assign({}, pl, { y: my(pl.y) }, pl.y0 !== undefined ? { y0: my(pl.y0), y1: my(pl.y1) } : {}));
+  data.decor = data.decor.filter((q) => vive[q.r]).map((q) => Object.assign({}, q, { r: rmap[q.r] }));
+  data.canones = data.canones.filter((cn) => vive[cn.row]).map((cn) => Object.assign({}, cn, { row: rmap[cn.row] }));
+  if (data.control) data.control = Object.assign({}, data.control, { pie: my(data.control.pie) });
+  data.start = Object.assign({}, data.start, { y: my(data.start.y) });
+  if (data.entradaSecreta) data.entradaSecreta = Object.assign({}, data.entradaSecreta, { row: rmap[data.entradaSecreta.row] });
+  if (data.salidaSecreta) data.salidaSecreta = Object.assign({}, data.salidaSecreta, { row: rmap[data.salidaSecreta.row] });
+}
+// Una fila está vacía si solo tiene aire (sin bloques) y nada dentro: ni enemigos, objetos, plataformas, decoración,
+// cañones, el inicio, el punto de control ni las bocas de las zonas secretas
+function filaVacia(d, r) {
+  if (d.tiles[r].some((t) => t !== ".")) return false;
+  const y0 = r * TILE, y1 = y0 + TILE, toca = (y, h) => y < y1 && y + h > y0;
+  if (d.ents.some((e) => toca(e.y, TILE))) return false;
+  if (d.decor.some((q) => q.r === r) || d.canones.some((cn) => cn.row === r)) return false;
+  if (d.plats.some((pl) => toca(pl.y, pl.h) || (pl.y0 !== undefined && toca(pl.y0, pl.y1 - pl.y0 + pl.h)))) return false;
+  if (d.control && toca(d.control.pie - 32, 32)) return false;
+  if (toca(d.start.y - TILE, 3 * TILE)) return false;
+  return !(d.entradaSecreta && d.entradaSecreta.row === r) && !(d.salidaSecreta && d.salidaSecreta.row === r);
+}
+// Reescribe las claves "c,r" de un mapa de casillas: nueva(c, r) da la clave nueva, o null si se pierde.
+// Se trabaja sobre una copia para que una clave nueva no pise una vieja que todavía no se ha movido
+function reubicarClaves(mapa, nueva) {
+  const viejo = Object.assign({}, mapa);
+  for (const k of Object.keys(mapa)) delete mapa[k];
+  for (const k of Object.keys(viejo)) {
+    const [c, r] = k.split(",").map(Number), kn = nueva(c, r);
+    if (kn !== null) mapa[kn] = viejo[k];
+  }
+}
+// Las ediciones guardadas pasan a la numeración nueva de filas (las de las filas quitadas estaban vacías)
+function reubicarFilas(ed, rmap, vive) {
+  for (const mapa of [ed.tiles, ed.colores]) reubicarClaves(mapa, (c, r) => (vive[r] ? c + "," + rmap[r] : null));
+  ed.ents = ed.ents.filter((e) => vive[Math.floor(e.y / TILE)]).map((e) => Object.assign({}, e, { y: yEnFilas(rmap, e.y) }));
+  const quitados = [];
+  for (const k of ed.quitados) {
+    const [t, pos] = k.split("@"), [x, y] = pos.split(",").map(Number);
+    if (vive[Math.floor(y / TILE)]) quitados.push(t + "@" + x + "," + yEnFilas(rmap, y));
+  }
+  ed.quitados = quitados;
+}
+// ARRIBA y ABAJO: quita o añade 14 filas en ese extremo. Entre 14 (la original) y 84 filas. Quitar solo quita filas
+// vacías. Se guarda como operación, así se repite al cargar la fase
+function devCambiarAlto(pos, sentido) {
+  const lv = game.lvl;
+  if (!lv || !lv.ed || game.estado !== "nivel") return;
+  const def = lv.def;
+  if (def.sala || def.mapa || def.torre || def.colinas || def.jefe) return devAviso("ESTA FASE TIENE TAMANO FIJO");
+  const d = construirNivel(def, MUNDOS[game.mundoIdx].tema);
+  aplicarEdiciones(d, lv.ed);
+  const n = d.rows, k = DEV_PASO_FILAS;
+  let op;
+  if (sentido > 0) {
+    if (n + k > DEV_MAX_FILAS) return devAviso("YA NO CABE MAS");
+    op = { t: "filas", pos, k };
+  } else {
+    if (n - k < ROWS) return devAviso("NO PUEDE SER MAS BAJA");
+    const quitadas = [...Array(k).keys()].map((i) => (pos === "arriba" ? i : n - k + i));
+    if (!quitadas.every((r) => filaVacia(d, r))) return devAviso("HAY ALGO EN ESE EXTREMO");
+    op = { t: "filas", pos, k, quita: true };
+  }
+  const ed = lv.ed, sale = filasDeOperacion(n, op), { rmap, vive } = movimientoFilas(n, sale);
+  const pj = lv.player, fila = Math.floor((pj.y + pj.h / 2) / TILE), px = pj.x, py = pj.y;
+  ed.ops = ed.ops || [];
+  ed.ops.push(op);
+  reubicarFilas(ed, rmap, vive);
+  devGuardar();
+  devPulsa = null;
+  devRecargarNivel();
+  game.irisAbre = 0;
+  const nuevo = game.lvl;
+  if (fila < n && vive[fila]) {
+    nuevo.player.x = px;
+    nuevo.player.y = Math.min(yEnFilas(rmap, py), nuevo.rows * TILE - nuevo.player.h);
+    nuevo.player.vx = 0; nuevo.player.vy = 0;
+    nuevo.cam.centrar(nuevo.player, nuevo);
+  }
+  devAviso("ALTO " + sale.length);
+}
+// Lado del cuadro: de 2 en 2, entre 10 y 30
+function devCambiarLado(d) {
+  const nuevo = devLado + 2 * d;
+  if (nuevo < DEV_LADO_MIN || nuevo > DEV_LADO_MAX) return devAviso("EL CUADRO VA DE 10 A 30");
+  devLado = nuevo;
+}
+// Casillas del cuadro de lado devLado centrado en (c, r): c0 y r0 (sin recortar) y las que están dentro de la fase
+function devCuadroDe(lv, c, r) {
+  const h = Math.floor(devLado / 2), c0 = c - h, r0 = r - h, lista = [];
+  for (let rr = Math.max(0, r0); rr < Math.min(lv.rows, r0 + devLado); rr++) {
+    for (let cc = Math.max(0, c0); cc < Math.min(lv.cols, c0 + devLado); cc++) lista.push([cc, rr]);
+  }
+  return { c0, r0, lista };
+}
+// Toque corto en modo cuadro: mete en el cuadro lo seleccionado. Bloques: todas sus casillas. Pincel: pinta los
+// bloques del cuadro. Enemigos y monedas: uno cada tres casillas, en el aire
+function devPonerArea(c, r) {
+  const lv = game.lvl;
+  if (!devCasillaValida(lv, c, r)) return;
+  const { c0, r0, lista } = devCuadroDe(lv, c, r), s = devSel, b = DEV_BLOQUES[s.i], color = DEV_COLORES[devColor].id;
+  if (s.tipo === "bloque" && b.pincel) {
+    const con = lista.filter(([cc, rr]) => lv.tiles[rr][cc] !== ".");
+    for (const [cc, rr] of con) devColorear(lv, cc, rr, color);
+    devGuardar();
+    return devAviso(con.length + " BLOQUES PINTADOS");
+  }
+  if (s.tipo === "bloque") {
+    const item = !b.item ? (b.multi ? "multi" : null) : b.ch === "Q" ? DEV_ITEMS_Q[devItemQ] : DEV_ITEMS_Z[devItemZ];
+    for (const [cc, rr] of lista) devAplicarBloque(lv, cc, rr, b.ch, item, color);
+    lv.tuberias = encontrarTuberias(lv.tiles);
+    devGuardar();
+    return devAviso(lista.length + " BLOQUES");
+  }
+  let ent;
+  if (s.tipo === "enemigo") {
+    const tipo = DEV_ENEMIGOS[devEnem];
+    if (DEV_PLANTAS.includes(tipo)) return devAviso("LAS PLANTAS SOLO EN UNA TUBERIA");
+    ent = ([cc, rr]) => ({ t: tipo, x: cc * TILE, y: rr * TILE });
+  } else if (s.tipo === "objeto" && DEV_OBJETOS[s.i].obj === "moneda") {
+    ent = ([cc, rr]) => ({ t: "coin", x: cc * TILE + 4, y: rr * TILE + 4 });
+  } else return devAviso("EN CUADRO: BLOQUES, PINCEL, ENEMIGOS Y MONEDAS");
+  const sitios = lista.filter(([cc, rr]) => (cc - c0) % 3 === 1 && (rr - r0) % 3 === 1);
+  let n = 0;
+  for (const sitio of sitios) {
+    const e = ent(sitio);
+    if (!devLibre(lv, sitio[0], sitio[1]) || devHayClave(lv, claveEnt(e))) continue;
+    devPonerEntidad(lv, e);
+    n++;
+  }
+  if (!n) return devAviso("NO HAY SITIO LIBRE EN EL CUADRO");
+  devAviso(n + (s.tipo === "enemigo" ? " ENEMIGOS" : " MONEDAS"));
+}
+// Toque largo en modo cuadro: borra todos los bloques del cuadro y todo lo que hay dentro (enemigos, monedas, cañones)
+function devBorrarArea(c, r) {
+  const lv = game.lvl;
+  if (!devCasillaValida(lv, c, r)) return;
+  const { c0, r0, lista } = devCuadroDe(lv, c, r);
+  const x0 = c0 * TILE, y0 = r0 * TILE, x1 = x0 + devLado * TILE, y1 = y0 + devLado * TILE;
+  const dentro = (x, y) => x >= x0 && x < x1 && y >= y0 && y < y1;
+  const hits = [];
+  for (const w of lv.enemigos) if (!w.llevado && dentro(w.e.x, w.e.y)) hits.push({ campo: "enemigos", obj: w, clave: w.clave });
+  for (const cn of lv.canones) if (dentro(cn.col * TILE, cn.row * TILE)) hits.push({ campo: "canones", obj: cn, clave: cn.clave });
+  for (const m of lv.coins) if (dentro(m.x, m.y)) hits.push({ campo: "coins", obj: m, clave: m.clave });
+  for (const g of lv.grandes) if (dentro(g.x, g.y)) hits.push({ campo: "grandes", obj: g, clave: g.clave });
+  for (const h of hits) {
+    const campo = lv[h.campo], i = campo.indexOf(h.obj);
+    if (i >= 0) campo.splice(i, 1);
+    if (h.clave) devOlvidarEntidad(lv, h.clave);
+  }
+  let bloques = 0;
+  for (const [cc, rr] of lista) if (lv.tiles[rr][cc] !== ".") { devAplicarBloque(lv, cc, rr, ".", null, null); bloques++; }
+  lv.tuberias = encontrarTuberias(lv.tiles);
+  devGuardar();
+  devAviso("BORRADOS " + bloques + " BLOQUES Y " + hits.length + " OBJETOS");
+}
+
 // Copia de un sprite de bloque con otro color (cacheada por sprite y color). Sin color, el mismo sprite
 const tintesCache = new WeakMap();
 function tintado(sp, id) {
@@ -11807,7 +11995,7 @@ function tintado(sp, id) {
 }
 
 // Un bloque nuevo (o un cambio de bloque) en una casilla: se pone en la fase y en lo guardado
-function devPonerBloque(lv, c, r, ch, item, color) {
+function devAplicarBloque(lv, c, r, ch, item, color) {
   const k = c + "," + r, x = c * TILE, y = r * TILE, ed = lv.ed;
   lv.tiles[r][c] = ch;
   ed.tiles[k] = ch;
@@ -11816,6 +12004,9 @@ function devPonerBloque(lv, c, r, ch, item, color) {
   ed.ents = ed.ents.filter((e) => !(e.t === "qitem" && e.x === x && e.y === y));
   if (item) { const q = { t: "qitem", x, y, item }; lv.spawn(q); ed.ents.push(q); }
   devColorear(lv, c, r, color);
+}
+function devPonerBloque(lv, c, r, ch, item, color) {
+  devAplicarBloque(lv, c, r, ch, item, color);
   lv.tuberias = encontrarTuberias(lv.tiles);
   devGuardar();
 }
@@ -11955,7 +12146,7 @@ addEventListener("pointermove", (e) => {
 function devSoltar() {
   const p = devPulsa;
   devPulsa = null;
-  if (p && !p.hecho && !p.mueve && devEditorActivo()) devPoner(p.c, p.r);
+  if (p && !p.hecho && !p.mueve && devEditorActivo()) (devCuadro ? devPonerArea : devPoner)(p.c, p.r);
 }
 addEventListener("pointerup", devSoltar);
 addEventListener("pointercancel", () => { devPulsa = null; });
@@ -11965,6 +12156,7 @@ function devActualizar() {
   if (!devEditorActivo() || !devPulsa || devPulsa.hecho || devPulsa.mueve) return;
   if (performance.now() - devPulsa.t0 < DEV_LARGA_MS) return;
   devPulsa.hecho = true;
+  if (devCuadro) return devBorrarArea(devPulsa.c, devPulsa.r);
   devQuitar(game.lvl, devPulsa.c, devPulsa.r, devPulsa.hit);
 }
 
@@ -11984,12 +12176,20 @@ function devClicPanel(x, y) {
     devSel = { tipo: "bloque", i };
     if (repetido && b.item) { if (b.ch === "Q") devItemQ = (devItemQ + 1) % DEV_ITEMS_Q.length; else devItemZ = (devItemZ + 1) % DEV_ITEMS_Z.length; }
   } else if (y >= y0 + 20 && y < y0 + 36) {
-    if (x >= 178 && x < 192) return devCambiarAncho(-1);
-    if (x >= 194 && x < 208) return devCambiarAncho(1);
+    if (x >= 177 && x < 193) return devCambiarAncho(-1);
+    if (x >= 193 && x < 209) return devCambiarAncho(1);
     if (i < 4) devSel = { tipo: "objeto", i };
     else if (i === 4) devCiclarEnemigo(-1);
     else if (i === 6) devCiclarEnemigo(1);
     else devSel = { tipo: "enemigo", i: 0 };
+  } else if (y >= y0 + 52 && y < y0 + 68) {
+    if (x >= 26 && x < 41) devCambiarAlto("arriba", -1);
+    else if (x >= 41 && x < 56) devCambiarAlto("arriba", 1);
+    else if (x >= 78 && x < 93) devCambiarAlto("abajo", -1);
+    else if (x >= 93 && x < 108) devCambiarAlto("abajo", 1);
+    else if (x >= 146 && x < 199) { devCuadro = !devCuadro; devAviso(devCuadro ? "CUADRO ACTIVO" : "CUADRO APAGADO"); }
+    else if (x >= 201 && x < 216) devCambiarLado(-1);
+    else if (x >= 229 && x < 244) devCambiarLado(1);
   } else if (y >= y0 + 38 && y < y0 + 48 && i < DEV_COLORES.length) devColor = i;
 }
 
@@ -12124,6 +12324,13 @@ function devBoton(x, y, signo) {
   ctx.strokeRect(x + 0.5, y + 0.5, 13, 15);
   txt(signo, x + 7, y + 5, PAL.w, "center");
 }
+// Botón con texto (el de CUADRO), resaltado cuando está activo
+function devBotonTexto(x, y, w, texto, activo) {
+  rect(x, y, w, 16, "#2a2d40");
+  ctx.strokeStyle = activo ? PAL.y : "#8c93b5"; ctx.lineWidth = 1;
+  ctx.strokeRect(x + 0.5, y + 0.5, w - 1, 15);
+  txt(texto, x + w / 2, y + 5, PAL.w, "center");
+}
 // Texto de la selección (y del color, si el bloque lo lleva)
 function devSelNombre() {
   const s = devSel, col = DEV_COLORES[devColor];
@@ -12165,12 +12372,18 @@ function devDibujar() {
     rect(x, y, TILE, TILE, "rgba(255,70,70," + (0.1 + 0.35 * f).toFixed(2) + ")");
     rect(x, y + TILE - 2, Math.round(TILE * f), 2, "#ff4a4a");
   }
+  if (devCuadro && devMira) {
+    const h = Math.floor(devLado / 2);
+    ctx.strokeStyle = PAL.y; ctx.lineWidth = 1; ctx.setLineDash([3, 2]);
+    ctx.strokeRect((devMira.c - h) * TILE - cam.x + 0.5, (devMira.r - h) * TILE - cam.y + 0.5, devLado * TILE - 1, devLado * TILE - 1);
+    ctx.setLineDash([]);
+  }
   ctx.restore();
 
-  // Paleta: una línea de aviso o de selección encima, y tres filas abajo
+  // Paleta: una línea de aviso o de selección encima, y cuatro filas abajo
   const y0 = H - DEV_PANEL, aviso = devAvisoHasta > ahora;
   rect(0, y0 - 10, W, 10, "rgba(0,0,0,0.85)");
-  txt(aviso ? devAvisoTxt : devSelNombre() + "   CORTO PONER  LARGO QUITAR", 3, y0 - 8, aviso ? PAL.y : PAL.w);
+  txt(aviso ? devAvisoTxt : (devCuadro ? "CUADRO " + devLado + "   " : "") + devSelNombre() + "   CORTO PONER  LARGO QUITAR", 3, y0 - 8, aviso ? PAL.y : PAL.w);
   rect(0, y0, W, DEV_PANEL, "rgba(0,0,0,0.85)");
   DEV_BLOQUES.forEach((b, i) => {
     const x = 2 + i * 16, y = y0 + 2;
@@ -12196,6 +12409,19 @@ function devDibujar() {
     if (devColor === i) devMarco(x, y, 16, 12);
   });
   txt(DEV_COLORES[devColor].nombre, 198, y0 + 40, PAL.w);
+  // Fila D: alto de la fase (arriba y abajo, de 14 en 14 filas), el cuadro y su lado
+  const yD = y0 + 52;
+  txt("ARRIBA", 2, yD + 5, PAL.w);
+  devBoton(27, yD, "-");
+  devBoton(42, yD, "+");
+  txt("ABAJO", 58, yD + 5, PAL.w);
+  devBoton(79, yD, "-");
+  devBoton(94, yD, "+");
+  txt("ALTO " + lv.rows, 116, yD + 5, PAL.w);
+  devBotonTexto(147, yD, 52, "CUADRO", devCuadro);
+  devBoton(202, yD, "-");
+  txt(String(devLado), 222, yD + 5, PAL.w, "center");
+  devBoton(230, yD, "+");
 }
 
 const game = new Game();
