@@ -78,6 +78,12 @@
   #pad .top { position: absolute; top: 8px; right: 8px; display: flex; gap: 8px; pointer-events: auto; }
   #pad .top button.activo { background: rgba(255,255,255,0.45); }
   #btn-pantalla, #btn-ajustes { font-size: 16px; }
+  /* Modo desarrollador en el móvil: el botón EDITOR solo existe con ?dev. Con el editor abierto, la paleta ocupa la
+     pantalla: se ocultan la barra de botones de juego y las zonas de toque */
+  #btn-editor { display: none; font-size: 10px; }
+  #pad #btn-editor { width: auto; padding: 0 8px; border-radius: 20px; }
+  .dev #btn-editor { display: block; }
+  .dev-editor #pad, .dev-editor #zonas, .dev-editor #stick { display: none !important; }
   /* Zona de toque sobre el juego: toda la pantalla (gestos) o la mitad izquierda (joystick) */
   #zonas { display: none; position: fixed; left: 0; top: 0; bottom: 0; right: 0; z-index: 1; touch-action: none; }
   #zonas.joystick { right: 50%; }
@@ -173,6 +179,7 @@
     <button data-act="jump">SALTO</button>
   </div>
   <div class="top">
+    <button class="peq" id="btn-editor" aria-label="Editor de fases (solo con ?dev)" title="Editor de fases">EDITOR</button>
     <button class="peq" id="btn-pantalla" aria-label="Pantalla completa" title="Pantalla completa">&#x26F6;</button>
     <button class="peq" id="btn-ajustes" aria-label="Ajustes de controles" title="Ajustes de controles">&#x2699;</button>
     <button class="peq" data-act="enter">OK</button>
@@ -11902,6 +11909,8 @@ for (const [m, f, bajada, semilla] of [[2, 2, true, 5022], [3, 1, false, 6031], 
    Un toque largo quita la pieza entera.
    INMORTAL (F6 o su botón): el personaje no muere ni pierde su poder y reaparece en el punto de control o al inicio.
    JUGADOR (F7 o su botón): un toque corto lleva al personaje a esa casilla.
+   En el móvil: el botón EDITOR de la barra táctil (solo con ?dev) abre y cierra el editor; con él abierto se ocultan
+   los botones de juego y CERRAR (fila F de la paleta) lo cierra.
    Las ediciones se guardan en este navegador y solo se aplican con ?dev.
    ===================================================================== */
 const DEV_CLAVE = "superbro_dev_v1";
@@ -12634,6 +12643,14 @@ function devAlternarColocar() {
   devColocar = !devColocar;
   devAviso(devColocar ? "COLOCAR: TOCA UNA CASILLA" : "COLOCAR APAGADO");
 }
+// Abre o cierra el editor: con F2, con el botón EDITOR de la barra táctil o con CERRAR en la paleta. Con el editor
+// abierto, la paleta ocupa la pantalla y se ocultan los botones de juego y la zona de toque (clase dev-editor)
+function devSetEditor(abrir) {
+  devEditor = abrir;
+  devPulsa = null; devFormaEd = false; devPintando = null;
+  document.documentElement.classList.toggle("dev-editor", abrir);
+  devAviso(abrir ? "EDITOR ACTIVO" : "EDITOR OCULTO");
+}
 function devAviso(texto) { devAvisoTxt = texto; devAvisoHasta = performance.now() + 1500; }
 function devEditorActivo() { return devActivo && devEditor && game.estado === "nivel" && !!game.lvl && !hojaAbierta; }
 
@@ -12677,7 +12694,10 @@ function devSoltar() {
     else (devCuadro ? devPonerArea : devPoner)(p.c, p.r);
   }
 }
-addEventListener("pointerup", devSoltar);
+addEventListener("pointerup", (e) => {
+  if (e.pointerType !== "mouse") devMira = null;   // en el móvil no hay puntero que siga al dedo: no queda la vista previa
+  devSoltar();
+});
 addEventListener("pointercancel", () => { devPulsa = null; devPintando = null; });
 
 // La pulsación larga quita al cumplir el tiempo (sin esperar a soltar)
@@ -12729,6 +12749,7 @@ function devClicPanel(x, y) {
   } else if (y >= y0 + 88 && y < y0 + 104) {
     if (x >= 2 && x < 66) devAlternarInmortal();
     else if (x >= 70 && x < 130) devAlternarColocar();
+    else if (x >= 134 && x < 198) devSetEditor(false);
   } else if (y >= y0 + 38 && y < y0 + 48 && i < DEV_COLORES.length) devColor = i;
 }
 
@@ -12787,7 +12808,7 @@ addEventListener("keydown", (e) => {
   if (!accion || ((accion === "editor" || accion === "menos" || accion === "mas" || accion === "inmortal" || accion === "colocar") && e.repeat)) return;
   if ((accion === "menos" || accion === "mas") && (e.ctrlKey || e.metaKey || e.altKey)) return;   // Ctrl + y - es el zoom del navegador
   e.preventDefault();
-  if (accion === "editor") { devEditor = !devEditor; devPulsa = null; devFormaEd = false; devPintando = null; devAviso(devEditor ? "EDITOR ACTIVO" : "EDITOR OCULTO"); }
+  if (accion === "editor") devSetEditor(!devEditor);
   else if (accion === "exportar") devExportar();
   else if (accion === "inmortal") devAlternarInmortal();
   else if (accion === "colocar") devAlternarColocar();
@@ -12796,6 +12817,12 @@ addEventListener("keydown", (e) => {
   else if (accion === "menos" || accion === "mas") devCambiarAncho(accion === "mas" ? 1 : -1);
   else devCiclarEnemigo(accion === "enemSig" ? 1 : -1);
 });
+
+// Móvil: el botón EDITOR de la barra táctil; y mantener pulsado no abre el menú del navegador (quitar es una pulsación larga)
+if (devActivo) {
+  document.getElementById("btn-editor").addEventListener("click", () => devSetEditor(!devEditor));
+  addEventListener("contextmenu", (e) => e.preventDefault());
+}
 
 // ---- Dibujo de la paleta y de las ayudas ----
 // Sprite de un bloque de la paleta, con el estilo del nivel (null: la arena, que se dibuja aparte)
@@ -13018,6 +13045,7 @@ function devDibujar() {
   const yF = y0 + 88;
   devBotonTexto(2, yF, 64, "INMORTAL", devInmortal);
   devBotonTexto(70, yF, 60, "JUGADOR", devColocar);
+  devBotonTexto(134, yF, 64, "CERRAR", false);
 }
 
 const game = new Game();
