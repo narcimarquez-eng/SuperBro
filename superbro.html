@@ -7034,68 +7034,91 @@ function planCapas(n, ie, rnd) {
 function seccionCapas(N, x, s) {
   for (let c = x; c < x + s.ancho; c++) N.protegidas.add(c);   // ponerMasas no rellena lo que hay bajo la sección
   if (s.abajo) zonaAbajo(N, x, s.ancho, s.boca === "abajo");
-  if (s.arriba) zonaArriba(N, x + (s.abajo ? 10 : 0), s.boca === "arriba");
+  if (s.arriba) zonaArriba(N, x + (s.abajo ? 10 : 0), x + s.ancho - 3, s.boca === "arriba");
   // Enemigos por el camino principal de la sección, donde hay suelo
   for (const c of [x + s.ancho - 3, x + Math.floor(s.ancho / 2)]) {
     if (N.tiles[N.gy][c] === "G" && N.tiles[N.gy - 1][c] === ".") ponerEnemigo(N, c, N.gy - 1, false);
   }
 }
 
-/* Zona de abajo (filas gy+3 a gy+7, bajo el suelo principal): suelo propio de tres bloques, paredes a los lados y un
-   hueco al vacío en las zonas largas. Se baja por un hueco del suelo principal; una fila de ladrillos y bloques con
-   premio se golpea desde el suelo de abajo; y al final dos muelles devuelven arriba por otro hueco */
+/* Zona de abajo, bajo el suelo principal (filas gy+3 a gy+10), irregular como la de la 1-1: tramos de suelo a
+   distintas alturas, a veces con huecos al vacío entre ellos, y filas de ladrillos y bloques con premio a tres filas
+   de cada suelo (se golpean desde abajo). Se baja por un hueco del camino principal y se vuelve por otro, con dos
+   muelles o con una escalera de plataformas de una dirección. Los suelos cambian como mucho dos filas y los huecos
+   tienen como mucho dos bloques */
 function zonaAbajo(N, x, w, conBoca) {
-  const rnd = N.rnd, gy = N.gy, T = N.tiles, s = x + w - 7;   // s: hueco de salida, con los muelles debajo
+  const rnd = N.rnd, gy = N.gy, T = N.tiles, ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
+  const x1 = x + w - 3, s = x1 - 2;   // x1: última columna de dentro; s: hueco de salida (s y s+1)
   for (let r = gy + 3; r <= gy + 10; r++) for (const c of [x, x + 1, x + w - 2, x + w - 1]) T[r][c] = "G";   // paredes
-  for (let c = x + 2; c <= x + w - 3; c++) {
-    for (let r = gy + 3; r <= gy + 7; r++) T[r][c] = ".";
-    for (let r = gy + 8; r <= gy + 10; r++) T[r][c] = "G";   // suelo de la zona de abajo
+  for (let c = x + 2; c <= x1; c++) for (let r = gy + 3; r <= gy + 10; r++) T[r][c] = ".";
+  const tramos = [];
+  let c = x + 2, alto = gy + 8;
+  while (c <= x1) {
+    const ancho = Math.min(ri(4, 9), x1 - c + 1);
+    tramos.push({ c0: c, c1: c + ancho - 1, alto });
+    c += ancho;
+    const hueco = c <= x1 - 5 && c > x + 7 && rnd() < 0.45 ? ri(1, 2) : 0;
+    c += hueco;
+    alto = clamp(alto + (rnd() < 0.5 ? -1 : 1) * ri(hueco ? 0 : 1, hueco ? 1 : 2), gy + 7, gy + 9);
   }
-  for (const c of [x + 4, x + 5, s, s + 1]) for (let r = gy; r <= gy + 2; r++) T[r][c] = ".";   // huecos de bajada y de salida
-  T[gy + 7][s] = T[gy + 7][s + 1] = "M";   // muelles: lanzan unas ocho filas, por encima del suelo principal
-  // Boca de la zona secreta: una tubería en el suelo de abajo, antes de los muelles
-  const pb = conBoca ? s - 5 : -1;
+  const suelo = (k) => { const t = tramos.find((t) => k >= t.c0 && k <= t.c1); return t ? t.alto : null; };
+  for (const t of tramos) if (t.c1 >= s - 1) t.alto = gy + 8;   // bajo la salida, el suelo a la altura justa
+  for (const t of tramos) for (let k = t.c0; k <= t.c1; k++) for (let r = t.alto; r <= gy + 10; r++) T[r][k] = "G";
+  for (const k of [x + 3, x + 4, s, s + 1]) for (let r = gy; r <= gy + 2; r++) T[r][k] = ".";   // huecos de bajada y de salida
+  // Salida: dos muelles, o una escalera de plataformas de una dirección que sube hasta dentro del hueco
+  if (rnd() < 0.5) T[gy + 7][s] = T[gy + 7][s + 1] = "M";
+  else T[gy + 5][s] = T[gy + 5][s + 1] = T[gy + 2][s] = T[gy + 2][s + 1] = "D";   // se suben atravesándolas desde abajo
+  // Boca de la zona secreta: tubería sobre un tramo de en medio
+  let tramoBoca = null;
   if (conBoca) {
-    ponerCelda(N, "X", pb, gy + 6);
-    T[gy + 6][pb + 1] = T[gy + 7][pb] = T[gy + 7][pb + 1] = "T";
+    tramoBoca = tramos.find((t, i) => i > 0 && t.c1 - t.c0 >= 4 && t.c1 < s - 4) || tramos.find((t, i) => i > 0 && t.c1 < s - 3);
+    const pb = tramoBoca.c0 + 1, r = tramoBoca.alto;
+    ponerCelda(N, "X", pb, r - 2);
+    T[r - 2][pb + 1] = T[r - 1][pb] = T[r - 1][pb + 1] = "T";
   }
-  // Fila de ladrillos y bloques a tres filas del suelo de abajo, con monedas encima (como la de la 1-1)
-  const fin = conBoca ? pb - 3 : s - 3;
-  let potenciador = false;
-  for (let c = x + 8; c <= fin; c += rnd() < 0.35 ? 2 : 1) {
-    const u = rnd();
-    const ch = !potenciador && u < 0.12 ? "P" : u < 0.35 ? "Q" : u < 0.5 ? "K" : "B";
-    if (ch === "P") potenciador = true;
-    ponerCelda(N, ch, c, gy + 5);
-    if (rnd() < 0.2) ponerCelda(N, "c", c, gy + 4);
-  }
-  // En las zonas largas, un hueco de dos bloques al vacío en el suelo de abajo
-  if (w >= 32 && fin - x - 14 > 0 && rnd() < 0.6) {
-    const g = x + 10 + Math.floor(rnd() * (fin - x - 14));
-    for (const c of [g, g + 1]) for (let r = gy + 8; r <= gy + 10; r++) T[r][c] = ".";
-  }
-  // Monedas por el suelo de abajo y un enemigo
-  for (let c = x + 7; c <= s - 2; c += 6) if (T[gy + 8][c] === "G" && T[gy + 7][c] === ".") ponerCelda(N, "c", c, gy + 7);
-  for (let k = 0, puestos = 0; k < 12 && puestos < 2; k++) {
-    const c = x + 10 + Math.floor(rnd() * Math.max(1, fin - x - 10));
-    if (T[gy + 8][c] === "G" && T[gy + 7][c] === ".") { ponerEnemigo(N, c, gy + 7, false); puestos++; }
+  // Ladrillos y bloques a tres filas de cada suelo, lejos de los huecos de bajada y de salida
+  let potenciador = false, enemigos = 0;
+  for (const t of tramos) {
+    if (t === tramoBoca || t.c1 - t.c0 < 3) continue;
+    if (rnd() < 0.75) {
+      for (let k = Math.max(t.c0 + 1, x + 6); k <= Math.min(t.c1 - 1, s - 5); k += rnd() < 0.3 ? 2 : 1) {
+        const u = rnd();
+        const ch = !potenciador && u < 0.12 ? "P" : u < 0.35 ? "Q" : u < 0.5 ? "K" : "B";
+        if (ch === "P") potenciador = true;
+        ponerCelda(N, ch, k, t.alto - 3);
+        if (rnd() < 0.2) ponerCelda(N, "c", k, t.alto - 4);
+      }
+    }
+    if (enemigos < 2 && t.c1 - t.c0 >= 4 && t.c0 > x + 6 && t.c1 < s - 2) { ponerEnemigo(N, t.c0 + 2, t.alto - 1, false); enemigos++; }
+    for (let k = t.c0 + 1; k <= t.c1; k += 5) if (T[t.alto - 1][k] === ".") ponerCelda(N, "c", k, t.alto - 1);
   }
 }
 
-/* Zona de arriba: una escalinata de piedra en el suelo principal (se pasa por encima) lleva a cuatro plataformas de
-   piedra a 5-8 filas del suelo, con monedas encima. La primera tiene un bloque con potenciador; en la más alta hay
-   un bloque oculto con una vida, o la boca de la zona secreta. Cada salto sube como mucho dos filas */
-function zonaArriba(N, x, conBoca) {
-  const gy = N.gy, T = N.tiles;
+/* Zona de arriba: una escalinata de piedra en el camino principal (se pasa por encima) lleva a una cadena de
+   plataformas de piedra a distintas alturas, entre 5 y 9 filas sobre el suelo, con monedas. Cada salto sube como
+   mucho dos filas y salva dos o tres bloques. La primera plataforma lleva un bloque con potenciador; sobre la más alta
+   hay un bloque oculto con una vida, o en ella va la boca de la zona secreta */
+function zonaArriba(N, x, xFin, conBoca) {
+  const rnd = N.rnd, gy = N.gy, T = N.tiles, ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
   [1, 2, 3, 4, 3, 2, 1].forEach((h, k) => { for (let j = 1; j <= h; j++) T[gy - j][x + 2 + k] = "S"; });
-  for (const [dx, r, ancho] of [[8, gy - 6, 4], [14, gy - 8, 4], [20, gy - 7, 5], [27, gy - 6, 4]]) {
-    for (let k = 0; k < ancho; k++) { T[r][x + dx + k] = "S"; if (k % 2 === 1) ponerCelda(N, "c", x + dx + k, r - 1); }
+  const plats = [];
+  let c = x + 8, fila = gy - 5 - ri(0, 1);
+  while (c + 3 <= xFin) {
+    const ancho = Math.min(ri(3, 5), xFin - c + 1);
+    plats.push({ c0: c, c1: c + ancho - 1, fila });
+    c += ancho + ri(2, 3);
+    fila = clamp(fila + ri(-2, 2), gy - 9, gy - 5);
   }
-  ponerCelda(N, "P", x + 9, gy - 6);
+  let alta = plats[0];
+  for (const pl of plats) if (pl.fila < alta.fila || (pl.fila === alta.fila && pl.c1 - pl.c0 > alta.c1 - alta.c0)) alta = pl;
+  if (conBoca && alta.c1 - alta.c0 < 3) alta.c1 = alta.c0 + 3;   // la boca necesita sitio
+  for (const pl of plats) for (let k = pl.c0; k <= pl.c1; k++) { T[pl.fila][k] = "S"; if (k % 2 === 1) ponerCelda(N, "c", k, pl.fila - 1); }
+  ponerCelda(N, "P", plats[0].c0 + 1, plats[0].fila);
   if (conBoca) {
-    ponerCelda(N, "X", x + 21, gy - 9);
-    T[gy - 9][x + 22] = T[gy - 8][x + 21] = T[gy - 8][x + 22] = "T";
-  } else ponerCelda(N, "1", x + 15, gy - 11);
+    const pb = alta.c0 + 1, r = alta.fila;
+    ponerCelda(N, "X", pb, r - 2);
+    T[r - 2][pb + 1] = T[r - 1][pb] = T[r - 1][pb + 1] = "T";
+  } else if (alta.fila - 3 >= 0) ponerCelda(N, "1", alta.c0 + 1, alta.fila - 3);
 }
 
 /* Tramo llano de la pauta "uno" (como la 1-1 hecha a mano): más enemigos y grupos de bloques, huecos de uno a tres
@@ -12403,7 +12426,7 @@ function baseEdicion(clave) {
   if (FASES_PUBLICADAS[clave]) return FASES_PUBLICADAS[clave].version;
   const [w, f] = clave.split(":");
   const def = w !== "sala" && MUNDOS[+w] ? MUNDOS[+w].niveles[+f] : null;
-  return def && def.pauta === "uno" ? "uno-2" : null;
+  return def && def.pauta === "uno" ? "uno-3" : null;
 }
 function devEdicion(clave) {
   const niveles = devEstado.niveles, base = baseEdicion(clave);
