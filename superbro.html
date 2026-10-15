@@ -1550,20 +1550,94 @@ function consume(action) {
     g.restore();
   }
 
-  // Colinas: una franja ondulada con dos tonos (arriba claro, abajo oscuro)
-  function colina(g, camX, f, baseY, amp, frec, fase, cols, vistaAncho) {
-    const ancho = vistaAncho || 242;
-    g.beginPath();
-    g.moveTo(-2, 144);
-    for (let x = -2; x <= ancho; x += 3) {
+  // Texturas del paisaje: una baldosa pequeña que se repite (CanvasPattern) y se pinta encima del color de la capa
+  // con transparencia, así sirve de día y de noche. Se fabrican una vez y se guardan
+  const patrones = {};
+  function patron(g, clave, lado, pintar) {
+    if (!patrones[clave]) {
+      const cv = document.createElement('canvas');
+      cv.width = cv.height = lado;
+      const c = cv.getContext('2d');
+      // punto que da la vuelta por los bordes, para que la baldosa no tenga costuras
+      pintar(function (x, y, color) { c.fillStyle = color; c.fillRect(mod(Math.round(x), lado), mod(Math.round(y), lado), 1, 1); }, lado);
+      patrones[clave] = g.createPattern(cv, 'repeat');
+    }
+    return patrones[clave];
+  }
+  // Rellena el camino actual con el patrón, desplazado con la capa (dx: lo que ha avanzado el paisaje)
+  function texturizar(g, pat, dx, alfa) {
+    if (!pat) return;
+    pat.setTransform(new DOMMatrix([1, 0, 0, 1, -Math.round(dx), 0]));
+    g.save();
+    g.globalAlpha = alfa;
+    g.fillStyle = pat;
+    g.fill();
+    g.restore();
+  }
+  // Hierba de las colinas cercanas: matas en uve de distinto tamaño, con la punta iluminada, y motas sueltas.
+  // La baldosa es grande (96) y las matas van en racimos, para que no se note que se repite
+  function patronHierba(g) {
+    return patron(g, 'hierba', 96, function (p, lado) {
+      for (let i = 0; i < 14; i++) {
+        const rx = azar(i * 3 + 700) * lado, ry = azar(i * 3 + 701) * lado, n = 2 + Math.floor(azar(i * 3 + 702) * 4);
+        for (let j = 0; j < n; j++) {
+          const x = rx + (azar(i * 31 + j * 7 + 710) - 0.5) * 10, y = ry + (azar(i * 31 + j * 7 + 711) - 0.5) * 6;
+          const alto = azar(i * 31 + j * 7 + 712) < 0.4 ? 2 : 1;
+          p(x, y, 'rgba(18,64,30,0.9)');
+          for (let k = 1; k <= alto; k++) { p(x - k, y - k, 'rgba(18,64,30,0.85)'); p(x + k, y - k, 'rgba(18,64,30,0.85)'); }
+          p(x - alto, y - alto - 1, 'rgba(240,255,200,0.75)'); p(x + alto, y - alto - 1, 'rgba(240,255,200,0.75)');
+        }
+      }
+      for (let i = 0; i < 70; i++) p(azar(i * 2 + 760) * lado, azar(i * 2 + 761) * lado, i % 3 ? 'rgba(18,64,30,0.55)' : 'rgba(255,255,220,0.6)');
+    });
+  }
+  // Hierba de las colinas lejanas: solo motas, como hierba vista de lejos
+  function patronHierbaLejos(g) {
+    return patron(g, 'hierba-lejos', 64, function (p, lado) {
+      for (let i = 0; i < 60; i++) {
+        const x = azar(i * 2 + 960) * lado, y = azar(i * 2 + 961) * lado;
+        if (i % 3) { p(x, y, 'rgba(18,64,30,0.7)'); p(x + 1, y, 'rgba(18,64,30,0.5)'); } else p(x, y, 'rgba(255,255,220,0.6)');
+      }
+    });
+  }
+  // Roca: vetas inclinadas, grietas cortas y motas de luz y de sombra
+  function patronRoca(g) {
+    return patron(g, 'roca', 48, function (p) {
+      for (let i = 0; i < 9; i++) {
+        const x = azar(i * 5 + 800) * 48, y = azar(i * 5 + 801) * 48, L = 4 + azar(i * 5 + 802) * 7;
+        for (let k = 0; k < L; k++) { p(x + k, y + k * 0.45, 'rgba(40,46,80,0.75)'); p(x + k, y + k * 0.45 - 1, 'rgba(255,255,255,0.55)'); }
+      }
+      for (let i = 0; i < 70; i++) p(azar(i * 2 + 860) * 48, azar(i * 2 + 861) * 48, i % 2 ? 'rgba(40,46,80,0.5)' : 'rgba(255,255,255,0.45)');
+    });
+  }
+
+  // Colinas: una franja ondulada con dos tonos (arriba claro, abajo oscuro), hierba y una cresta iluminada.
+  // textura: 0 sin hierba (dunas), o la fuerza de la hierba (más en las cercanas)
+  function colina(g, camX, f, baseY, amp, frec, fase, cols, vistaAncho, textura, pie) {
+    const ancho = vistaAncho || 242, abajo = Math.max(144, pie || 0);
+    const cresta = [];
+    for (let x = -2; x <= ancho + 3; x += 3) {
       const wx = x + camX * f;
       const h = amp * (0.5 + 0.5 * Math.sin(wx * frec + fase)) + amp * 0.35 * (0.5 + 0.5 * Math.sin(wx * frec * 2.3 + fase * 1.7));
-      g.lineTo(x, baseY - h);
+      cresta.push([x, baseY - h]);
     }
-    g.lineTo(ancho, 144);
+    g.beginPath();
+    g.moveTo(-2, abajo);
+    cresta.forEach(function (q) { g.lineTo(q[0], q[1]); });
+    g.lineTo(ancho + 3, abajo);
     g.closePath();
     g.fillStyle = grad(g, 0, baseY - amp * 1.4, 0, 144, cols.map(function (c) { return rgba(c, 1); }));
     g.fill();
+    if (!textura) return;
+    texturizar(g, f < 0.5 ? patronHierbaLejos(g) : patronHierba(g), camX * f, textura);
+    // Cresta: una línea de luz justo bajo el borde de la colina
+    g.save();
+    g.strokeStyle = rgba(mezclaRgb(cols[0], [255, 255, 230], 0.45), 0.8);
+    g.lineWidth = 1;
+    g.beginPath();
+    cresta.forEach(function (q, i) { if (i) g.lineTo(q[0], q[1] + 0.8); else g.moveTo(q[0], q[1] + 0.8); });
+    g.stroke();
+    g.restore();
   }
 
   // Silueta de roca periódica. colgada: la masa baja desde el techo; si no, sube desde el suelo
@@ -1579,6 +1653,7 @@ function consume(action) {
     g.closePath();
     g.fillStyle = grad(g, 0, -arriba, 0, vistaH, cols);
     g.fill();
+    texturizar(g, patronRoca(g), camX * f, 0.22);
   }
 
   // Ambiente de cueva: paredes de roca con paralaje, estalactitas y estalagmitas, y cristales que brillan
@@ -1641,6 +1716,8 @@ function consume(action) {
     g.fill();
     g.save();
     g.clip();
+    // Textura de roca: más marcada en la cordillera cercana que en las montañas lejanas
+    texturizar(g, patronRoca(g), camX * f, nieve !== false ? 0.3 : 0.45);
     if (nieve !== false) {
       // Nieve: el borde de arriba se corta en dientes irregulares
       const linea = baseY - amp * 0.6;
@@ -1930,6 +2007,11 @@ function consume(action) {
       });
     });
 
+    // El paisaje (montañas y colinas) puede subir con la cámara para seguir apoyado en el suelo del nivel
+    // (opt.bajaY, en unidades del fondo); el cielo, el sol y las nubes se quedan quietos en la pantalla
+    const bajaY = opt.bajaY || 0, pie = vistaH + bajaY;
+    g.save();
+    g.translate(0, -bajaY);
     // Montañas pálidas al fondo (las de bosque tienen nieve; las de desierto son mesetas de arena)
     montanas(g, camX, 0.1, 104, 60, 150,
       pais.montana.map(function (c) { return tinta(c, noche, 0.6); }),
@@ -1943,10 +2025,11 @@ function consume(action) {
       tinta(pais.sombraCord, noche, 0.5), false, vistaW);
 
     // Colinas (o dunas) lejanas
-    if (tipo === 'desierto') colina(g, camX, 0.3, 112, 16, 0.012, 2.4, pais.lejos.map(function (c) { return tinta(c, noche, 0.5); }), vistaW);
-    else colina(g, camX, 0.3, 112, 20, 0.02, 2.4, pais.lejos.map(function (c) { return tinta(c, noche, 0.5); }), vistaW);
-    if (tipo === 'desierto') colina(g, camX, 0.7, 128, 12, 0.02, 0.7, pais.cerca.map(function (c) { return tinta(c, noche, 0.5); }), vistaW);
-    else colina(g, camX, 0.7, 128, 14, 0.035, 0.7, pais.cerca.map(function (c) { return tinta(c, noche, 0.5); }), vistaW);
+    if (tipo === 'desierto') colina(g, camX, 0.3, 112, 16, 0.012, 2.4, pais.lejos.map(function (c) { return tinta(c, noche, 0.5); }), vistaW, 0, pie);
+    else colina(g, camX, 0.3, 112, 20, 0.02, 2.4, pais.lejos.map(function (c) { return tinta(c, noche, 0.5); }), vistaW, 0.3, pie);
+    if (tipo === 'desierto') colina(g, camX, 0.7, 128, 12, 0.02, 0.7, pais.cerca.map(function (c) { return tinta(c, noche, 0.5); }), vistaW, 0, pie);
+    else colina(g, camX, 0.7, 128, 14, 0.035, 0.7, pais.cerca.map(function (c) { return tinta(c, noche, 0.5); }), vistaW, 0.32, pie);
+    g.restore();
 
     // Atmósfera y partículas del clima, por encima del paisaje
     if (clima) {
@@ -8969,6 +9052,106 @@ function pintarExtension(pal, tema) {
   }
 }
 
+/* Fondo bajo tierra: en las fases más altas que la pantalla (las del mundo 1), los huecos que quedan debajo
+   de la losa del suelo (las zonas de abajo) muestran tierra con piedras y vetas en vez del cielo del paisaje */
+const COLORES_SUBSUELO = {
+  pradera: { base: "#4a3122", veta: "#3a2619", luz: "#5e4130", piedra: "#56402f", sombra: "#2c1c12", mota: "#36241a" },
+  otro: { base: "#3c3640", veta: "#2e2932", luz: "#4e4754", piedra: "#46404c", sombra: "#221e26", mota: "#2a252e" },
+};
+// Baldosa de 64×64 que se repite: vetas onduladas, piedras con luz arriba a la izquierda y motas
+function texSubsuelo(tema) {
+  return textura("subsuelo-" + tema, () => {
+    const col = COLORES_SUBSUELO[tema] || COLORES_SUBSUELO.otro, lado = 64;
+    const cv = document.createElement("canvas");
+    cv.width = cv.height = lado;
+    const g = cv.getContext("2d");
+    const p = (x, y, c) => { g.fillStyle = c; g.fillRect(mod(Math.round(x), lado), mod(Math.round(y), lado), 1, 1); };
+    g.fillStyle = col.base;
+    g.fillRect(0, 0, lado, lado);
+    // Vetas: líneas onduladas que dan la vuelta a la baldosa (un número entero de ondas)
+    [[10, 1], [31, 2], [50, 1]].forEach(([y0, ondas], k) => {
+      for (let x = 0; x < lado; x++) {
+        const y = y0 + 2.2 * Math.sin((x / lado) * Math.PI * 2 * ondas + k * 1.7);
+        p(x, y, col.veta); if (ruido(x + k * 64) < 0.5) p(x, y + 1, col.veta); p(x, y - 1, col.luz);
+      }
+    });
+    // Piedras: elipses con borde de luz arriba a la izquierda y de sombra abajo a la derecha
+    for (let i = 0; i < 11; i++) {
+      const cx = ruido(i * 3 + 500) * lado, cy = ruido(i * 3 + 501) * lado;
+      const rx = 2 + ruido(i * 3 + 502) * 3.5, ry = 1.5 + ruido(i * 7 + 503) * 2;
+      for (let dy = -Math.ceil(ry); dy <= Math.ceil(ry); dy++) {
+        for (let dx = -Math.ceil(rx); dx <= Math.ceil(rx); dx++) {
+          const d = (dx * dx) / (rx * rx) + (dy * dy) / (ry * ry);
+          if (d > 1) continue;
+          const borde = d > 0.45;
+          p(cx + dx, cy + dy, !borde ? col.piedra : dx + dy < 0 ? col.luz : col.sombra);
+        }
+      }
+    }
+    for (let i = 0; i < 90; i++) p(ruido(i * 2 + 900) * lado, ruido(i * 2 + 901) * lado, i % 4 ? col.mota : col.luz);
+    return ctx.createPattern(cv, "repeat");
+  });
+}
+// Fila donde empieza el hueco bajo la losa del suelo en la columna c (Infinity si no hay suelo encima o no hay hueco)
+function huecoBajoSuelo(lvl, c) {
+  if (c < 0 || c >= lvl.cols) return Infinity;
+  const T = lvl.tiles, gy = lvl.gy;
+  let r = gy;
+  while (r <= gy + 2 && !SOLIDOS[T[r][c]]) r++;
+  if (r > gy + 2) return Infinity;
+  while (r < lvl.rows && SOLIDOS[T[r][c]]) r++;
+  return r < lvl.rows ? r : Infinity;
+}
+// Fila desde la que la columna c muestra tierra. Un agujero que atraviesa la losa (la bajada a una zona de abajo,
+// o su salida) muestra tierra desde la superficie si a los dos lados hay suelo con hueco y abajo hay un piso;
+// un foso del camino (sin piso debajo) sigue mostrando el cielo
+function filaSubsuelo(lvl, c) {
+  const propia = huecoBajoSuelo(lvl, c);
+  if (propia !== Infinity) return propia;
+  let izq = Infinity, der = Infinity;
+  for (let k = 1; k <= 3; k++) { izq = Math.min(izq, huecoBajoSuelo(lvl, c - k)); der = Math.min(der, huecoBajoSuelo(lvl, c + k)); }
+  if (izq === Infinity || der === Infinity) return Infinity;
+  let r = lvl.gy + 3;
+  while (r < lvl.rows && !SOLIDOS[lvl.tiles[r][c]] && lvl.tiles[r][c] !== "D") r++;
+  return r < lvl.rows ? lvl.gy : Infinity;
+}
+// Pinta la tierra detrás de los tiles visibles (dentro del área de diseño, ya desplazada por OY)
+function dibujarSubsuelo(lvl, cam) {
+  const c0 = Math.max(0, Math.floor(cam.x / TILE) - 1), c1 = Math.min(lvl.cols - 1, Math.floor((cam.x + W) / TILE) + 1);
+  const fondo = lvl.rows * TILE - cam.y;
+  const tiras = [];
+  for (let c = c0; c <= c1; c++) {
+    const f = filaSubsuelo(lvl, c);
+    if (f === Infinity) continue;
+    const y = f * TILE - cam.y;
+    if (y < fondo && y < H) tiras.push([c * TILE - cam.x, y]);
+  }
+  if (!tiras.length) return;
+  ctx.save();
+  ctx.beginPath();
+  for (const [x, y] of tiras) ctx.rect(x, y, TILE, fondo - y);
+  // La tierra se desplaza a media velocidad: queda un poco más lejos que los bloques
+  const pat = texSubsuelo(lvl.temaKey);
+  pat.setTransform(new DOMMatrix([1, 0, 0, 1, -Math.round(cam.x * 0.5), -Math.round(cam.y * 0.5)]));
+  ctx.fillStyle = pat;
+  ctx.fill();
+  // Cuanto más hondo, más oscuro: el fondo de los abismos se pierde en la negrura
+  const hondo = ctx.createLinearGradient(0, (lvl.gy + 6) * TILE - cam.y, 0, (lvl.gy + 15) * TILE - cam.y);
+  hondo.addColorStop(0, "rgba(14,8,4,0)");
+  hondo.addColorStop(1, "rgba(14,8,4,0.92)");
+  ctx.fillStyle = hondo;
+  ctx.fill();
+  // Sombra bajo el techo de cada tira, como si la luz entrara solo por los agujeros
+  for (const [x, y] of tiras) {
+    const s = ctx.createLinearGradient(0, y, 0, y + 14);
+    s.addColorStop(0, "rgba(14,8,4,0.55)");
+    s.addColorStop(1, "rgba(14,8,4,0)");
+    ctx.fillStyle = s;
+    ctx.fillRect(x, y, TILE, 14);
+  }
+  ctx.restore();
+}
+
 // Escala del fondo de bloques.js: su horizonte (144 unidades) cae sobre el suelo del nivel
 const ESC_FONDO = (GY * TILE) / 144;
 
@@ -9684,7 +9867,9 @@ function dibujarFondo(cam, pal, tema, hora, lv) {
   ctx.scale(ESC_FONDO, ESC_FONDO);
   Bloques.fondo(ctx, cam.x, 0, W / ESC_FONDO, (H - OY) / ESC_FONDO, t,
     { hora: hora, ambiente: tema === "cueva" ? "cueva" : "cielo", clima: clima, cascada: !!(lv && lv.cascada),
-      colinas: tema !== "desierto", arriba: OY / ESC_FONDO });
+      colinas: tema !== "desierto", arriba: OY / ESC_FONDO,
+      // En las fases más altas que la pantalla (las del mundo 1), el paisaje sube y baja con el suelo
+      bajaY: lv && lv.rows > ROWS && lv.gy === GY ? cam.y / ESC_FONDO : 0 });
   // Hojas que caen y luciérnagas: solo en el bosque y sin clima (como en la demo de bloques.js)
   if (lv && lv.particulas && !clima) Bloques.particulas(ctx, W / ESC_FONDO, (H - OY) / ESC_FONDO, t, cam.x, hora);
   ctx.restore();
@@ -10621,6 +10806,7 @@ class Level {
     ctx.translate(0, OY);
     // Las torres se recortan al área de juego: lo que queda por encima o por debajo de ella no se dibuja
     if (this.vertical) { ctx.beginPath(); ctx.rect(0, 0, W, H_MIN); ctx.clip(); }
+    if (this.rows > ROWS && !this.agua) dibujarSubsuelo(this, cam);
     if (this.hm) this.dibujarColinas(cam);
     // Decoración de bloques.js (arbustos, flores, árboles, rocas): detrás de los bloques y de los personajes
     for (const d of this.decor) {
