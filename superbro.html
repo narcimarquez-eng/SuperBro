@@ -6870,7 +6870,7 @@ function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance, agua, uno = fa
   const enEspejo = (p) => ({ ...p, id: p.id + "~", mapa: p.mapa.map((f) => [...f].reverse().map((ch) => (ch === "(" ? ")" : ch === ")" ? "(" : ch)).join("")) });
   for (const p of pool.filter((q) => q.tipo === "reto" && q.mapa.every((f) => f.length === q.mapa[0].length))) pool.push(enEspejo(p));
   const puertas = pool.filter((p) => p.tipo === "puerta");
-  const n = 6 + Math.ceil(dif / 2) - (uno ? 2 : 0);   // la pauta "uno" deja sitio a sus secciones de capas
+  const n = 6 + Math.ceil(dif / 2) - (uno ? 3 : 0);   // la pauta "uno" deja sitio a sus secciones de capas
   const nPuertas = Math.min(3, 1 + (dif >= 4) + (dif >= 7));
   const usos = {};
   const elegidas = [];
@@ -7035,7 +7035,10 @@ function seccionCapas(N, x, s) {
   for (let c = x; c < x + s.ancho; c++) N.protegidas.add(c);   // ponerMasas no rellena lo que hay bajo la sección
   if (s.abajo) zonaAbajo(N, x, s.ancho, s.boca === "abajo");
   if (s.arriba) zonaArriba(N, x + (s.abajo ? 10 : 0), s.boca === "arriba");
-  if (!s.abajo) ponerEnemigo(N, x + s.ancho - 3, N.gy - 1, false);
+  // Enemigos por el camino principal de la sección, donde hay suelo
+  for (const c of [x + s.ancho - 3, x + Math.floor(s.ancho / 2)]) {
+    if (N.tiles[N.gy][c] === "G" && N.tiles[N.gy - 1][c] === ".") ponerEnemigo(N, c, N.gy - 1, false);
+  }
 }
 
 /* Zona de abajo (filas gy+3 a gy+7, bajo el suelo principal): suelo propio de tres bloques, paredes a los lados y un
@@ -7064,7 +7067,7 @@ function zonaAbajo(N, x, w, conBoca) {
     const ch = !potenciador && u < 0.12 ? "P" : u < 0.35 ? "Q" : u < 0.5 ? "K" : "B";
     if (ch === "P") potenciador = true;
     ponerCelda(N, ch, c, gy + 5);
-    if (rnd() < 0.5) ponerCelda(N, "c", c, gy + 4);
+    if (rnd() < 0.2) ponerCelda(N, "c", c, gy + 4);
   }
   // En las zonas largas, un hueco de dos bloques al vacío en el suelo de abajo
   if (w >= 32 && fin - x - 14 > 0 && rnd() < 0.6) {
@@ -7072,10 +7075,10 @@ function zonaAbajo(N, x, w, conBoca) {
     for (const c of [g, g + 1]) for (let r = gy + 8; r <= gy + 10; r++) T[r][c] = ".";
   }
   // Monedas por el suelo de abajo y un enemigo
-  for (let c = x + 7; c <= s - 2; c += 3) if (T[gy + 8][c] === "G" && T[gy + 7][c] === ".") ponerCelda(N, "c", c, gy + 7);
-  for (let k = 0; k < 6; k++) {
-    const c = x + 12 + Math.floor(rnd() * Math.max(1, fin - x - 12));
-    if (T[gy + 8][c] === "G" && T[gy + 7][c] === ".") { ponerEnemigo(N, c, gy + 7, false); break; }
+  for (let c = x + 7; c <= s - 2; c += 6) if (T[gy + 8][c] === "G" && T[gy + 7][c] === ".") ponerCelda(N, "c", c, gy + 7);
+  for (let k = 0, puestos = 0; k < 12 && puestos < 2; k++) {
+    const c = x + 10 + Math.floor(rnd() * Math.max(1, fin - x - 10));
+    if (T[gy + 8][c] === "G" && T[gy + 7][c] === ".") { ponerEnemigo(N, c, gy + 7, false); puestos++; }
   }
 }
 
@@ -7086,7 +7089,7 @@ function zonaArriba(N, x, conBoca) {
   const gy = N.gy, T = N.tiles;
   [1, 2, 3, 4, 3, 2, 1].forEach((h, k) => { for (let j = 1; j <= h; j++) T[gy - j][x + 2 + k] = "S"; });
   for (const [dx, r, ancho] of [[8, gy - 6, 4], [14, gy - 8, 4], [20, gy - 7, 5], [27, gy - 6, 4]]) {
-    for (let k = 0; k < ancho; k++) { T[r][x + dx + k] = "S"; ponerCelda(N, "c", x + dx + k, r - 1); }
+    for (let k = 0; k < ancho; k++) { T[r][x + dx + k] = "S"; if (k % 2 === 1) ponerCelda(N, "c", x + dx + k, r - 1); }
   }
   ponerCelda(N, "P", x + 9, gy - 6);
   if (conBoca) {
