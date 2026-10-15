@@ -5685,7 +5685,8 @@ function objetoSprite(tipo) {
     g.beginPath(); g.arc(8.1, 13.1, 0.6, 0, Math.PI * 2); g.fill(); trazar(g, 0.4);
   }
 
-  function cabeza(g, estado) {
+  function cabeza(g, estado, mira = 0) {
+    g.save(); g.translate(8, 10); g.rotate(0.14 * mira); g.translate(-8, -10);   // al mirar arriba o abajo, la cabeza gira sobre el cuello
     // oreja y pelo de detrás
     g.fillStyle = PIEL[1];
     g.beginPath(); g.ellipse(4.2, 7.6, 0.9, 1.3, 0, 0, Math.PI * 2); g.fill(); trazar(g, 0.5);
@@ -5716,7 +5717,7 @@ function objetoSprite(tipo) {
         g.fillStyle = '#ffffff';
         g.beginPath(); g.ellipse(p[0], p[1], 0.95, 1.2, 0, 0, Math.PI * 2); g.fill(); trazar(g, 0.5);
         g.fillStyle = OUT;
-        g.beginPath(); g.arc(p[0] + 0.35, p[1] + 0.3, 0.55, 0, Math.PI * 2); g.fill();
+        g.beginPath(); g.arc(p[0] + 0.35, p[1] + 0.3 + 0.5 * mira, 0.55, 0, Math.PI * 2); g.fill();
       });
     }
 
@@ -5725,6 +5726,7 @@ function objetoSprite(tipo) {
     g.beginPath(); g.ellipse(12.3, 8, 1, 1.1, 0, 0, Math.PI * 2); g.fill(); trazar(g, 0.5);
     g.fillStyle = '#3a2212';
     rr(g, 8.4, 8.7, 3.9, 1.1, 0.55); g.fill();
+    g.restore();
   }
 
   // Posición de brazos (ángulos) y piernas (desplazamiento y levantamiento) según el estado
@@ -5775,7 +5777,7 @@ function objetoSprite(tipo) {
     // Con el dibujo estirado (grande), la cabeza conserva sus proporciones y sube con el cuello
     const k = opt.k || 1;
     if (k !== 1) { g.translate(0, 10.2 - 3 / k); g.scale(1, 1 / k); g.translate(0, -7.2); }
-    cabeza(g, estado);
+    cabeza(g, estado, opt.mira || 0);
 
     g.restore();
   }
@@ -5805,7 +5807,7 @@ function dibujarProtagonista(px, py, alto, opt) {
   ctx.translate(Math.round(px), Math.round(py));
   ctx.rotate(inclina);
   ctx.scale((16 / 14) * sx, (alto / 14) * sy);
-  Protagonista.dibujar(ctx, -6, -14, { dir: opt.dir, estado: opt.estado, tiempo: opt.tiempo, camisa: opt.camisa, k: alto / 16 });
+  Protagonista.dibujar(ctx, -6, -14, { dir: opt.dir, estado: opt.estado, tiempo: opt.tiempo, camisa: opt.camisa, k: alto / 16, mira: opt.mira });
   ctx.restore();
 }
 
@@ -6858,7 +6860,7 @@ function barajar(lista, rnd) {
 /* Elige las piezas de una fase: la mecánica nueva de la fase sale al menos dos veces, hay una o más
    puertas (muros que obligan a subir) según la dificultad, y el resto se reparte entre las demás
    mecánicas y los retos básicos. Ninguna pieza sale más de dos veces. */
-function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance, agua, extra = 0) {
+function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance, agua, uno = false) {
   if (agua) return elegirPiezasAgua(rnd, dif, secreta);
   // Con avance automático no hay ascensor: esperarlo con la pantalla empujando sería una trampa
   const vale = (p) => (!p.req || mecanicas.includes(p.req)) && dif >= (p.min || 1) && dif <= (p.max || 8) && !(avance && p.id === "ascensor");
@@ -6868,7 +6870,7 @@ function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance, agua, extra = 
   const enEspejo = (p) => ({ ...p, id: p.id + "~", mapa: p.mapa.map((f) => [...f].reverse().map((ch) => (ch === "(" ? ")" : ch === ")" ? "(" : ch)).join("")) });
   for (const p of pool.filter((q) => q.tipo === "reto" && q.mapa.every((f) => f.length === q.mapa[0].length))) pool.push(enEspejo(p));
   const puertas = pool.filter((p) => p.tipo === "puerta");
-  const n = 6 + Math.ceil(dif / 2) + extra;
+  const n = 6 + Math.ceil(dif / 2) + (uno ? 1 : 0);
   const nPuertas = Math.min(3, 1 + (dif >= 4) + (dif >= 7));
   const usos = {};
   const elegidas = [];
@@ -6908,7 +6910,9 @@ function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance, agua, extra = 
   // y antes del final, y la salida va dos, tres o cuatro piezas después
   if (secreta !== undefined && !jefe) {
     const i = 1 + Math.floor(rnd() * Math.max(1, elegidas.length - 2));
-    elegidas.splice(i, 0, azar(PIEZAS.filter((p) => p.tipo === "entrada")));
+    // En la pauta "uno", la boca va abajo (en un pozo) o arriba (en una meseta o una isla), a partes iguales
+    elegidas.splice(i, 0, uno && rnd() < 0.5 ? PIEZAS.find((p) => p.id === "entrada_pozo")
+      : azar(PIEZAS.filter((p) => p.tipo === "entrada" && !(uno && p.id === "entrada_pozo"))));
     elegidas.splice(Math.min(elegidas.length, i + 2 + Math.floor(rnd() * 3)), 0, PIEZAS.find((p) => p.tipo === "salida"));
   }
   return elegidas;
@@ -7006,6 +7010,22 @@ function ponerTramo(N, x, w, tranquilo) {
   }
 }
 
+/* Cámara bajo un hueco de la pauta "uno", como las cuevas de la 1-1: el hueco sigue hacia abajo y se abre en
+   una sala con suelo y paredes. En su techo hay un ladrillo de monedas múltiples y un bloque oculto; las monedas van
+   en el suelo. Se entra cayendo por el hueco y se sale saltando por él */
+function camaraBajo(N, hc, hw) {
+  const a = hc - 1, b = hc + hw;   // columnas de la sala: el hueco va por dentro, con una columna más a cada lado
+  for (let r = N.gy; r <= N.gy + 4; r++) { N.tiles[r][a - 1] = "G"; N.tiles[r][b + 1] = "G"; }   // paredes
+  for (let c = a; c <= b; c++) {
+    N.tiles[N.gy][c] = c === a || c === b ? "G" : ".";   // techo: el hueco queda abierto por dentro
+    for (let r = N.gy + 1; r <= N.gy + 3; r++) N.tiles[r][c] = ".";   // sala de tres filas: cabe también el personaje grande
+    N.tiles[N.gy + 4][c] = "G";   // suelo de la sala
+  }
+  ponerBloque(N, "B", a, N.gy + 1, "multi");   // ladrillo de monedas múltiples, en el techo de la sala
+  ponerCelda(N, "1", b, N.gy + 1);            // bloque oculto: otro premio, que solo se ve al golpearlo
+  for (let c = a; c <= b; c++) ponerCelda(N, "c", c, N.gy + 3);   // monedas en el suelo de la sala
+}
+
 /* Tramo llano de la pauta "uno" (como la 1-1 hecha a mano): más enemigos y grupos de bloques, huecos de uno a tres
    bloques con monedas encima y tuberías de dos bloques. Cada hueco tiene dos bloques de suelo a cada lado, para
    saltarlo corriendo, y las tuberías son tan bajas que se saltan sin mantener el salto. Sin enemigos en el punto
@@ -7018,6 +7038,7 @@ function ponerTramoUno(N, x, w, tranquilo) {
   if (w >= 6 && rnd() < 0.5) {
     const hw = Math.min(1 + Math.floor(rnd() * 3), w - 4), hc = x + 2 + Math.floor(rnd() * (w - hw - 3));
     for (let c = hc; c < hc + hw; c++) { ponerSuelo(N, ".", c); huecos.add(c); ponerCelda(N, "c", c, N.gy - 2); }
+    if (rnd() < 0.5) camaraBajo(N, hc, hw);
   }
   // Enemigos en el suelo (uno, a veces dos), nunca al borde de un hueco
   const enemigo = () => {
@@ -7039,6 +7060,11 @@ function ponerTramoUno(N, x, w, tranquilo) {
     sec.filas.forEach((fila, k) => [...fila].forEach((ch, j) => {
       if (ch !== ".") ponerCelda(N, ch, c0 + j, base - (sec.filas.length - 1 - k));
     }));
+    // Bloque oculto encima de un grupo sencillo a tres filas del suelo: se llega de un salto desde su cima
+    if (!sec.escalera && sec.filas.length === 1 && base === N.gy - 3 && rnd() < 0.3) {
+      const cz = c0 + Math.floor(ancho / 2);
+      if (N.tiles[base - 2][cz] === ".") ponerCelda(N, "1", cz, base - 2);
+    }
     if (sec.escalera) for (let c = c0; c < c0 + ancho; c++) ocupadas.add(c);
   };
   if (w >= 5 && rnd() < 0.8) grupo();
@@ -7062,7 +7088,7 @@ function ponerMasas(N, rnd, cols) {
     const ancho = 8 + Math.floor(rnd() * 15), hondo = 5 + Math.floor(rnd() * 16);
     const c0 = 12 + Math.floor(rnd() * Math.max(1, cols - ancho - 52));
     for (let c = c0; c < c0 + ancho; c++) {
-      if (N.tiles[N.gy][c] !== "G") continue;
+      if (N.tiles[N.gy][c] !== "G" || N.tiles[N.gy + 1][c] !== "G") continue;   // las salas bajo el suelo quedan huecas
       for (let r = N.gy + N.fondo; r <= Math.min(N.rows - 1, N.gy + hondo); r++) N.tiles[r][c] = "G";
     }
   }
@@ -7088,7 +7114,7 @@ function generarNivel(gen, mecanicas = []) {
   const uno = gen.pauta === "uno";   // pauta de la 1-1 hecha a mano (ver ponerTramoUno): más alta, más larga y más poblada
   // Bajo el agua: cangrejos por el fondo, y peces y medusas nadando
   const tipos = gen.agua ? ["cangrejo", "pez_nadador", "medusa"] : gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"];
-  const piezas = elegirPiezas(rnd, dif, mecanicas, gen.secreta, gen.jefe, gen.avance, gen.agua, uno ? 1 : 0);
+  const piezas = elegirPiezas(rnd, dif, mecanicas, gen.secreta, gen.jefe, gen.avance, gen.agua, uno);
   const separaciones = piezas.map(() => (uno ? ri(5, 8) : ri(3, 6)));
   const INICIO = 9 + Math.floor(rnd() * 10), ARENA = gen.jefe ? 34 : 0, FINAL = 22;   // tramo llano inicial
   const anchoPiezas = piezas.reduce((s, p, i) => s + separaciones[i] + Math.max(...p.mapa.map((f) => f.length)), 0);
@@ -7966,7 +7992,7 @@ function aterrizaEnDireccional(lvl, p, basePrev) {
    ===================================================================== */
 const PHYS = {
   walkAccel: 700, runAccel: 900, airAccel: 520,
-  maxWalk: 95, maxRun: 165,
+  maxWalk: 95, maxRun: 165, duckMax: 56,   // duckMax: andar agachado (grande), en px/s
   friction: 620,
   jumpV: 300, jumpHoldG: 520,  // gravedad reducida mientras se mantiene salto
   spinV: 250, spinTime: 0.42,
@@ -8021,6 +8047,8 @@ class Player {
     this.carrying = null;    // caparazón que lleva en la mano
     this.dead = false;
     this.duck = false;
+    this.mirada = 0;         // -1 mirando arriba, 1 abajo, 0 al frente (solo quieto en el suelo)
+    this.miradaT = 0;        // segundos que lleva mirando así
     this.trepando = false;   // agarrado a una escalera
     this.plat = null;        // plataforma móvil sobre la que está de pie
   }
@@ -8043,6 +8071,17 @@ class Player {
     this.y = bottom - this.h; // crece hacia arriba, nunca se mete en el suelo
     this.crecePendiente = false;
   }
+
+  // Caja grande (26 px) o agachada (16 px), con los pies en el mismo sitio. Al levantarse, solo lo hace si cabe
+  ajustarAltura(lvl, agachado) {
+    if (!this.big) return;
+    const pies = this.y + this.h;
+    if (agachado && this.h !== 16) { this.h = 16; this.y = pies - 16; }
+    else if (!agachado && this.h === 16 && !tocaSolido(lvl, this.x, pies - 26, this.w, 26)) { this.h = 26; this.y = pies - 26; }
+  }
+
+  // Cuánto se asoma la cámara al mirar arriba (negativo) o abajo (positivo), tras un momento quieto mirando
+  get desplazamientoCamara() { return this.miradaT > 0.35 ? this.mirada * 80 : 0; }
 
   get invencible() { return this.star > 0 || this.hurtT > 0 || (devActivo && devInmortal); }
 
@@ -8073,7 +8112,16 @@ class Player {
       emitir(this.x + this.w / 2, this.y + this.h, 4, ["#e8e8f0", "#c8c8d8"], { up: 30, spread: 60, life: 0.3, size: 2 });
     }
     if (this.frenadoT > 0) this.frenadoT -= dt;
-    this.duck = held.down && this.onGround && this.big;
+    // Agacharse (solo grande): con abajo en el suelo baja a 16 px, cabe en huecos de una fila, y anda despacio.
+    // Trepando hacia arriba, si el techo es bajo (la boca de la escalera), también se encoge para entrar
+    this.duck = held.down && this.onGround && this.big && !this.trepando;
+    const apretado = this.big && this.trepando && held.up && tocaSolido(lvl, this.x, this.y + this.h - 28, this.w, 26);
+    this.ajustarAltura(lvl, this.duck || apretado);
+    // Mirar arriba o abajo, quieto en el suelo: la cabeza se gira al momento y la cámara se asoma tras un momento
+    const quieto = this.onGround && Math.abs(this.vx) < 8 && !this.trepando;
+    const mirada = quieto ? (held.up ? -1 : held.down ? 1 : 0) : 0;
+    if (mirada !== this.mirada) { this.mirada = mirada; this.miradaT = 0; }
+    else if (mirada !== 0) this.miradaT += dt;
 
     // Suelo helado (mundo del hielo): se arranca y se frena con poca fuerza. Arenas movedizas: se anda despacio
     const hielo = this.onGround && lvl.resbala;
@@ -8082,11 +8130,11 @@ class Player {
     // --- Movimiento horizontal ---
     const dir = (der ? 1 : 0) - (izq ? 1 : 0);
     const agua = !!lvl.agua;
-    const maxV = agua ? (this.onGround ? PHYS.aguaFondo : corre ? PHYS.aguaMaxCorre : PHYS.aguaMax)
+    const maxV = this.duck ? PHYS.duckMax : agua ? (this.onGround ? PHYS.aguaFondo : corre ? PHYS.aguaMaxCorre : PHYS.aguaMax)
       : this.enArena ? PHYS.arenaMax : corre ? PHYS.maxRun : PHYS.maxWalk;
     const acc = agua ? PHYS.aguaAccel
       : this.onGround ? (corre ? PHYS.runAccel : PHYS.walkAccel) * (hielo ? PHYS.hieloAccel : 1) : PHYS.airAccel;
-    if (dir !== 0 && !this.duck) {
+    if (dir !== 0) {
       this.facing = dir;
       if (Math.abs(this.vx) < maxV || Math.sign(this.vx) !== dir) this.vx += dir * acc * dt;
       if (Math.abs(this.vx) > maxV) this.vx = Math.sign(this.vx) * Math.max(maxV, Math.abs(this.vx) - 400 * dt);
@@ -8102,8 +8150,6 @@ class Player {
     if (hielo && dir !== Math.sign(this.vx) && Math.abs(this.vx) > 50 && Math.random() < 0.3) {
       emitir(this.x + this.w / 2, this.y + this.h, 1, ["#e0f4ff", "#ffffff"], { up: 30, spread: 40, life: 0.3, size: 1 });
     }
-    if (this.duck) this.vx = 0;
-
     // --- Escaleras: con arriba o abajo se trepa; saltar suelta la escalera ---
     if (!enEscalera(lvl, this)) this.trepando = false;
     else if (!this.trepando && (held.up || held.down)) { this.trepando = true; this.vx = 0; }   // al agarrarla se para: no se sale de la columna
@@ -9997,12 +10043,15 @@ class Camera {
   }
   // Vertical: la cámara solo se mueve cuando el jugador sale de la franja central del área de juego
   seguirY(objetivo, lvl, dt) {
-    const fuera = objetivo.y + objetivo.h / 2 - this.y - H_MIN / 2;
+    // Al mirar arriba o abajo, la cámara se asoma despacio hacia ese lado
+    this.desplaza = (this.desplaza || 0) + ((objetivo.desplazamientoCamara || 0) - (this.desplaza || 0)) * Math.min(1, dt * 3);
+    const fuera = objetivo.y + objetivo.h / 2 + this.desplaza - this.y - H_MIN / 2;
     if (Math.abs(fuera) > CAM_ZONA_Y) this.y += (fuera - Math.sign(fuera) * CAM_ZONA_Y) * Math.min(1, dt * CAM_VEL_Y);
     this.y = clamp(this.y, 0, Math.max(0, lvl.rows * TILE - H_MIN));
   }
   // Fijar cámara de golpe (al empezar el nivel)
   centrar(objetivo, lvl) {
+    this.desplaza = 0;
     const [min, max] = this.rangoX(lvl);
     this.x = clamp(objetivo.x + objetivo.w / 2 - W / 2, min, max);
     this.y = clamp(objetivo.y + objetivo.h / 2 - H_MIN / 2, 0, Math.max(0, lvl.rows * TILE - H_MIN));
@@ -10850,6 +10899,7 @@ class Level {
       tiempo: p.zancada / (p.pose === "correr" ? 50 : 60),
       sx: p.pose === "giro" ? Math.cos((PHYS.spinTime - p.spinT) * 15) : aplasta ? 1.15 : 1,
       sy: p.pose === "agachado" ? 0.72 : aplasta ? 0.85 : 1,
+      mira: p.mirada,
       inclina: p.pose === "frenado" ? p.facing * 0.12 : 0,
       camisa: p.fire ? "fuego" : undefined,
     });
