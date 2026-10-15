@@ -5898,7 +5898,8 @@ const MECANICAS_MUNDO = {
    Las dos primeras fases usan solo dos tipos de enemigo (salvo opc.tiposIniciales); la 8 es el castillo.
    opc.horas: momento del día de cada fase; opc.castillo: el castillo usa el escenario de piedra;
    opc.estilos: estilo de arte de cada fase (def.estilo); opc.fondos: escenario de fondo propio (def.fondo);
-   opc.tiposIniciales: tipos de enemigo de las dos primeras fases (2 por defecto). */
+   opc.tiposIniciales: tipos de enemigo de las dos primeras fases (2 por defecto).
+   opc.pauta: "uno" da a las fases 2 a 7 la pauta de la 1-1 hecha a mano (ver generarNivel). */
 function fases(w, nombres, enemigos, opc = {}) {
   return nombres.map((nombre, i) => {
     const k = i + 1, castillo = k === 8;
@@ -5915,6 +5916,7 @@ function fases(w, nombres, enemigos, opc = {}) {
     if (opc.horas && opc.horas[i] !== undefined) lv.hora = opc.horas[i];
     if (opc.estilos && opc.estilos[i]) lv.estilo = opc.estilos[i];
     if (opc.fondos && opc.fondos[i]) lv.fondo = opc.fondos[i];
+    if (opc.pauta && k >= 2 && !castillo) lv.pauta = opc.pauta;   // la 1-1 es la de datos publicados; el castillo, su escenario
     if (castillo) { lv.jefe = true; if (opc.castillo) lv.castillo = true; }
     return lv;
   });
@@ -5937,7 +5939,7 @@ const MUNDOS = [
     ruta: [[24, 150], [64, 126], [58, 88], [104, 64], [150, 92], [186, 62], [226, 44]],
     bonus: [2, 5],
     niveles: fases(1, ["Pradera", "Colinas", "Huecos", "Tubos", "Nubes", "Escalera", "Puentes", "Castillo"],
-      ["walker", "shell", "flyer", "plant"], { horas: [undefined, 0, 0.5, 0.75, 0.25, 0.75, 0.5], castillo: true }),
+      ["walker", "shell", "flyer", "plant"], { horas: [undefined, 0, 0.5, 0.75, 0.25, 0.75, 0.5], castillo: true, pauta: "uno" }),
   },
   {
     id: 2,
@@ -6176,6 +6178,8 @@ const DECOR_DE_TEMA = {
 const ROWS = 14;           // 14 tiles * 16px = 224px de alto: la altura de una pantalla (las fases horizontales)
 const GY = 11;             // fila del suelo (la superior) de las fases horizontales; cada nivel lleva su gy
 // Potenciadores de los bloques P: casi siempre algo que hace crecer
+// Alto de las fases de la pauta "uno" (como la 1-1 hecha a mano): más alto que la pantalla, la cámara sigue al jugador
+const FILAS_UNO = 42;
 const POTENCIADORES = ["hongo", "hongo", "flor", "pluma"];
 // Monedas que da un ladrillo multimoneda (K) antes de quedarse vacío
 const MONEDAS_MULTI = 8;
@@ -6781,6 +6785,7 @@ function ponerSuelo(N, ch, c) {
     else if (ch === "v") t = r === N.gy ? "." : "V";                         // lava un bloque por debajo del suelo
     else if (ch === "y") t = "Y";                                           // arenas movedizas
     else if (ch === "h") t = r === N.gy ? "." : r === N.gy + 1 ? "H" : "G";   // hoyo de un bloque con pinchos al fondo
+    if (N.fondo && r >= N.gy + N.fondo && (t === "G" || t === "S")) t = ".";   // suelo macizo: solo sus filas
     N.tiles[r][c] = t;
   }
 }
@@ -6853,7 +6858,7 @@ function barajar(lista, rnd) {
 /* Elige las piezas de una fase: la mecánica nueva de la fase sale al menos dos veces, hay una o más
    puertas (muros que obligan a subir) según la dificultad, y el resto se reparte entre las demás
    mecánicas y los retos básicos. Ninguna pieza sale más de dos veces. */
-function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance, agua) {
+function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance, agua, extra = 0) {
   if (agua) return elegirPiezasAgua(rnd, dif, secreta);
   // Con avance automático no hay ascensor: esperarlo con la pantalla empujando sería una trampa
   const vale = (p) => (!p.req || mecanicas.includes(p.req)) && dif >= (p.min || 1) && dif <= (p.max || 8) && !(avance && p.id === "ascensor");
@@ -6863,7 +6868,7 @@ function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance, agua) {
   const enEspejo = (p) => ({ ...p, id: p.id + "~", mapa: p.mapa.map((f) => [...f].reverse().map((ch) => (ch === "(" ? ")" : ch === ")" ? "(" : ch)).join("")) });
   for (const p of pool.filter((q) => q.tipo === "reto" && q.mapa.every((f) => f.length === q.mapa[0].length))) pool.push(enEspejo(p));
   const puertas = pool.filter((p) => p.tipo === "puerta");
-  const n = 6 + Math.ceil(dif / 2);
+  const n = 6 + Math.ceil(dif / 2) + extra;
   const nPuertas = Math.min(3, 1 + (dif >= 4) + (dif >= 7));
   const usos = {};
   const elegidas = [];
@@ -7001,11 +7006,73 @@ function ponerTramo(N, x, w, tranquilo) {
   }
 }
 
+/* Tramo llano de la pauta "uno" (como la 1-1 hecha a mano): más enemigos y grupos de bloques, huecos de uno a tres
+   bloques con monedas encima y tuberías de dos bloques. Cada hueco tiene dos bloques de suelo a cada lado, para
+   saltarlo corriendo, y las tuberías son tan bajas que se saltan sin mantener el salto. Sin enemigos en el punto
+   de control, como en ponerTramo */
+function ponerTramoUno(N, x, w, tranquilo) {
+  if (tranquilo) return;
+  const rnd = N.rnd, huecos = new Set(), ocupadas = new Set();
+  const enRango = (conjunto, a, b) => { for (let c = a; c <= b; c++) if (conjunto.has(c)) return true; return false; };
+  // Hueco de 1 a 3 bloques, hasta el fondo, con sus monedas encima
+  if (w >= 6 && rnd() < 0.5) {
+    const hw = Math.min(1 + Math.floor(rnd() * 3), w - 4), hc = x + 2 + Math.floor(rnd() * (w - hw - 3));
+    for (let c = hc; c < hc + hw; c++) { ponerSuelo(N, ".", c); huecos.add(c); ponerCelda(N, "c", c, N.gy - 2); }
+  }
+  // Enemigos en el suelo (uno, a veces dos), nunca al borde de un hueco
+  const enemigo = () => {
+    const c = x + 1 + Math.floor(rnd() * (w - 2));
+    if (enRango(huecos, c - 1, c + 1) || ocupadas.has(c)) return;
+    ponerEnemigo(N, c, N.gy - 1, false);
+    ocupadas.add(c);
+  };
+  if (rnd() < Math.min(0.95, 0.6 + 0.07 * N.dif)) enemigo();
+  if (w >= 6 && rnd() < 0.4) enemigo();
+  // Grupos de bloques a tres o cuatro filas del suelo, o una escalera de bloques sobre el suelo: uno, y en los tramos
+  // largos a veces otro
+  const grupo = () => {
+    const sec = SECUENCIAS_TRAMO[Math.floor(rnd() * SECUENCIAS_TRAMO.length)];
+    const ancho = Math.max(...sec.filas.map((f) => f.length));
+    const c0 = x + Math.floor(rnd() * (w - ancho + 1));
+    if (ancho > w || (sec.escalera && (enRango(huecos, c0, c0 + ancho - 1) || enRango(ocupadas, c0, c0 + ancho - 1)))) return;
+    const base = sec.escalera ? N.gy - 1 : N.gy - 3 - (rnd() < 0.5 ? 1 : 0);
+    sec.filas.forEach((fila, k) => [...fila].forEach((ch, j) => {
+      if (ch !== ".") ponerCelda(N, ch, c0 + j, base - (sec.filas.length - 1 - k));
+    }));
+    if (sec.escalera) for (let c = c0; c < c0 + ancho; c++) ocupadas.add(c);
+  };
+  if (w >= 5 && rnd() < 0.8) grupo();
+  if (w >= 8 && rnd() < 0.35) grupo();
+  // Tubería de dos bloques, a veces con planta, en un sitio sin huecos ni enemigos
+  if (w >= 6 && rnd() < 0.2) {
+    const c0 = x + 1 + Math.floor(rnd() * (w - 3));
+    if (!enRango(huecos, c0 - 1, c0 + 2) && !enRango(ocupadas, c0, c0 + 1)) {
+      pegarMapa(N, rnd() < 0.5 ? ["pT", "TT"] : ["TT", "TT"], c0, N.gy - 2, false);
+      ocupadas.add(c0); ocupadas.add(c0 + 1);
+    }
+  }
+  if (N.dif >= 3 && N.voladores.length && !N.agua && rnd() < 0.25) ponerEnemigo(N, x + Math.floor(w / 2), 5 + Math.floor(rnd() * 3), true);
+}
+
+/* Masas de la pauta "uno": de 7 a 10 zonas de suelo macizo que siguen de 5 a 20 filas bajo la superficie, como los
+   acantilados de la 1-1. Solo se rellenan las columnas con suelo macizo, así no tapan ningún hueco ni ninguna pieza */
+function ponerMasas(N, rnd, cols) {
+  const n = 7 + Math.floor(rnd() * 4);
+  for (let k = 0; k < n; k++) {
+    const ancho = 8 + Math.floor(rnd() * 15), hondo = 5 + Math.floor(rnd() * 16);
+    const c0 = 12 + Math.floor(rnd() * Math.max(1, cols - ancho - 52));
+    for (let c = c0; c < c0 + ancho; c++) {
+      if (N.tiles[N.gy][c] !== "G") continue;
+      for (let r = N.gy + N.fondo; r <= Math.min(N.rows - 1, N.gy + hondo); r++) N.tiles[r][c] = "G";
+    }
+  }
+}
+
 // Decoración del suelo abierto (arbustos, árboles, rocas...): no es sólida y se dibuja detrás de todo
-function decorarSuelo(N, tema, desde, hasta) {
+function decorarSuelo(N, tema, desde, hasta, prob = 0.14) {
   const piezas = DECOR_DE_TEMA[tema] || [];
   for (let x = desde; x < hasta && piezas.length; x++) {
-    if (N.tiles[N.gy][x] !== "G" || N.rnd() > 0.14) continue;
+    if (N.tiles[N.gy][x] !== "G" || N.rnd() > prob) continue;
     const pieza = piezas[Math.floor(N.rnd() * piezas.length)];
     if (pieza.some((_, k) => N.tiles[N.gy - 1 - k][x] !== ".")) continue;
     pieza.forEach((ch, k) => N.decor.push({ ch, c: x, r: N.gy - 1 - k }));
@@ -7018,16 +7085,18 @@ function generarNivel(gen, mecanicas = []) {
   const rnd = prng(gen.seed);
   const ri = (a, b) => a + Math.floor(rnd() * (b - a + 1));
   const dif = clamp(gen.dif || 1, 1, 8);
+  const uno = gen.pauta === "uno";   // pauta de la 1-1 hecha a mano (ver ponerTramoUno): más alta, más larga y más poblada
   // Bajo el agua: cangrejos por el fondo, y peces y medusas nadando
   const tipos = gen.agua ? ["cangrejo", "pez_nadador", "medusa"] : gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"];
-  const piezas = elegirPiezas(rnd, dif, mecanicas, gen.secreta, gen.jefe, gen.avance, gen.agua);
-  const separaciones = piezas.map(() => ri(3, 6));
+  const piezas = elegirPiezas(rnd, dif, mecanicas, gen.secreta, gen.jefe, gen.avance, gen.agua, uno ? 1 : 0);
+  const separaciones = piezas.map(() => (uno ? ri(5, 8) : ri(3, 6)));
   const INICIO = 9 + Math.floor(rnd() * 10), ARENA = gen.jefe ? 34 : 0, FINAL = 22;   // tramo llano inicial
   const anchoPiezas = piezas.reduce((s, p, i) => s + separaciones[i] + Math.max(...p.mapa.map((f) => f.length)), 0);
   const cols = INICIO + anchoPiezas + 4 + ARENA + FINAL;
-  const N = nuevoNivel(cols, rnd, dif, tipos);
+  const N = nuevoNivel(cols, rnd, dif, tipos, uno ? FILAS_UNO : ROWS);
   N.candidatas = []; N.reserva = [];
   N.agua = !!gen.agua;
+  N.fondo = uno ? 3 : 0;   // filas de suelo macizo bajo la superficie (0: hasta el fondo, como antes)
   for (let c = 0; c < cols; c++) ponerSuelo(N, "G", c);
   // Punto de control: en el tramo antes de la pieza de la mitad, y siempre después del atajo de la zona secreta
   const iSalida = piezas.findIndex((p) => p.tipo === "salida");
@@ -7038,7 +7107,7 @@ function generarNivel(gen, mecanicas = []) {
   let x = INICIO;
   piezas.forEach((p, i) => {
     if (i === iControl) control = { x: (x + 1) * TILE, pie: N.gy * TILE };
-    ponerTramo(N, x, separaciones[i], i === iControl);
+    (uno ? ponerTramoUno : ponerTramo)(N, x, separaciones[i], i === iControl);
     x += separaciones[i];
     x += pegarMapa(N, p.mapa, x, N.gy - p.mapa.length + 1, true);
   });
@@ -7058,7 +7127,8 @@ function generarNivel(gen, mecanicas = []) {
   for (let k = 0; k < 6; k++) for (let h = 0; h < Math.min(k + 1, 5); h++) N.tiles[N.gy - 1 - h][x + 2 + k] = "S";
   const goalX = x + 16;
   for (let r = 4; r < N.gy; r++) N.tiles[r][goalX] = "F";
-  decorarSuelo(N, gen.theme, 4, cols - 4);
+  if (uno) ponerMasas(N, rnd, cols);
+  decorarSuelo(N, gen.theme, 4, cols - 4, uno ? 0.2 : 0.14);
   ponerGrandes(N, rnd);
   if (gen.nubarron) N.ents.push({ t: "nubarron", x: 30 * TILE, y: 2 * TILE });   // te sigue toda la fase
 
@@ -7746,10 +7816,10 @@ function construirNivel(def, tema) {
   // Los niveles de castillo no llevan decoración de su mundo (usan su propio escenario)
   const gen = Object.assign({ theme: def.castillo ? "castillo" : (def.estilo || tema) }, def.gen, {
     jefe: def.jefe, secreta: def.secreta, avance: !!def.avance, nubarron: !!def.nubarron, peces: tema === "agua" || !!def.peces,
-    agua: !!def.agua, alto: def.alto, bajada: !!def.bajada,
+    agua: !!def.agua, alto: def.alto, bajada: !!def.bajada, pauta: def.pauta,
   });
   const lv = def.mapa ? parsearMapa(def.mapa, gen) : def.torre ? generarTorre(gen, def.mecanicas || [])
-    : def.colinas ? generarColinas(gen) : generarNivel(gen, def.mecanicas || []);
+    : def.colinas && !def.pauta ? generarColinas(gen) : generarNivel(gen, def.mecanicas || []);   // la pauta "uno" manda sobre el relieve de colinas
   lv.nombre = def.nombre;
   lv.tiempo = def.tiempo || 300;
   if (def.sala) lv.goalX = 1e9;                       // las salas secretas no tienen meta: se sale por su tubería
@@ -12197,8 +12267,16 @@ for (const c of DEV_COLORES) if (c.id) DEV_TINTES[c.id] = c;
 function claveEnt(e) { return e.t + "@" + e.x + "," + e.y; }
 
 // Ediciones de una fase (se crean vacías la primera vez)
+// Base de las ediciones de una fase: la versión de sus datos publicados, o el generador de su pauta si es generada.
+// Si cambia el generador de la pauta "uno", cambia también el número: las ediciones anteriores se apartan
+function baseEdicion(clave) {
+  if (FASES_PUBLICADAS[clave]) return FASES_PUBLICADAS[clave].version;
+  const [w, f] = clave.split(":");
+  const def = w !== "sala" && MUNDOS[+w] ? MUNDOS[+w].niveles[+f] : null;
+  return def && def.pauta === "uno" ? "uno-1" : null;
+}
 function devEdicion(clave) {
-  const niveles = devEstado.niveles, base = FASES_PUBLICADAS[clave] ? FASES_PUBLICADAS[clave].version : null;
+  const niveles = devEstado.niveles, base = baseEdicion(clave);
   // Las ediciones de antes de publicar la fase estaban sobre el nivel generado: se guardan aparte (respaldo) y la fase
   // empieza de la publicada
   if (niveles[clave] && (niveles[clave].base || null) !== base) {
