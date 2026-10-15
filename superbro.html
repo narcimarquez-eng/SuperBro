@@ -6870,7 +6870,7 @@ function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance, agua, uno = fa
   const enEspejo = (p) => ({ ...p, id: p.id + "~", mapa: p.mapa.map((f) => [...f].reverse().map((ch) => (ch === "(" ? ")" : ch === ")" ? "(" : ch)).join("")) });
   for (const p of pool.filter((q) => q.tipo === "reto" && q.mapa.every((f) => f.length === q.mapa[0].length))) pool.push(enEspejo(p));
   const puertas = pool.filter((p) => p.tipo === "puerta");
-  const n = 6 + Math.ceil(dif / 2) + (uno ? 1 : 0);
+  const n = 6 + Math.ceil(dif / 2) - (uno ? 2 : 0);   // la pauta "uno" deja sitio a sus secciones de capas
   const nPuertas = Math.min(3, 1 + (dif >= 4) + (dif >= 7));
   const usos = {};
   const elegidas = [];
@@ -6910,9 +6910,7 @@ function elegirPiezas(rnd, dif, mecanicas, secreta, jefe, avance, agua, uno = fa
   // y antes del final, y la salida va dos, tres o cuatro piezas después
   if (secreta !== undefined && !jefe) {
     const i = 1 + Math.floor(rnd() * Math.max(1, elegidas.length - 2));
-    // En la pauta "uno", la boca va abajo (en un pozo) o arriba (en una meseta o una isla), a partes iguales
-    elegidas.splice(i, 0, uno && rnd() < 0.5 ? PIEZAS.find((p) => p.id === "entrada_pozo")
-      : azar(PIEZAS.filter((p) => p.tipo === "entrada" && !(uno && p.id === "entrada_pozo"))));
+    elegidas.splice(i, 0, azar(PIEZAS.filter((p) => p.tipo === "entrada")));
     elegidas.splice(Math.min(elegidas.length, i + 2 + Math.floor(rnd() * 3)), 0, PIEZAS.find((p) => p.tipo === "salida"));
   }
   return elegidas;
@@ -7010,20 +7008,91 @@ function ponerTramo(N, x, w, tranquilo) {
   }
 }
 
-/* Cámara bajo un hueco de la pauta "uno", como las cuevas de la 1-1: el hueco sigue hacia abajo y se abre en
-   una sala con suelo y paredes. En su techo hay un ladrillo de monedas múltiples y un bloque oculto; las monedas van
-   en el suelo. Se entra cayendo por el hueco y se sale saltando por él */
-function camaraBajo(N, hc, hw) {
-  const a = hc - 1, b = hc + hw;   // columnas de la sala: el hueco va por dentro, con una columna más a cada lado
-  for (let r = N.gy; r <= N.gy + 4; r++) { N.tiles[r][a - 1] = "G"; N.tiles[r][b + 1] = "G"; }   // paredes
-  for (let c = a; c <= b; c++) {
-    N.tiles[N.gy][c] = c === a || c === b ? "G" : ".";   // techo: el hueco queda abierto por dentro
-    for (let r = N.gy + 1; r <= N.gy + 3; r++) N.tiles[r][c] = ".";   // sala de tres filas: cabe también el personaje grande
-    N.tiles[N.gy + 4][c] = "G";   // suelo de la sala
+/* Pauta "uno": como en la 1-1, además del camino principal (el suelo, de tres bloques de grueso) hay una zona de
+   abajo, bajo el suelo, y una zona de arriba, por encima del camino. Cada fase lleva tres secciones de capas entre
+   sus piezas: una con zona de abajo, otra con zona de arriba y otra con las dos, en orden al azar. La boca de la
+   zona secreta va dentro de la sección que ocupa el sitio de la pieza de entrada: en su zona de abajo o en la de
+   arriba. Devuelve [{ antes: pieza ante la que va, abajo, arriba, ancho, boca: "abajo" | "arriba" | null }] */
+function planCapas(n, ie, rnd) {
+  const tipos = barajar([{ abajo: true, arriba: false }, { abajo: false, arriba: true }, { abajo: true, arriba: true }], rnd);
+  const sitios = [1, Math.floor(n / 2), n - 1].map((k) => clamp(k, 1, Math.max(1, n - 1)));
+  let conBoca = -1;
+  if (ie >= 1) {
+    conBoca = 0;
+    for (let j = 1; j < 3; j++) if (Math.abs(sitios[j] - ie) < Math.abs(sitios[conBoca] - ie)) conBoca = j;
+    sitios[conBoca] = Math.min(ie, Math.max(1, n - 1));
   }
-  ponerBloque(N, "B", a, N.gy + 1, "multi");   // ladrillo de monedas múltiples, en el techo de la sala
-  ponerCelda(N, "1", b, N.gy + 1);            // bloque oculto: otro premio, que solo se ve al golpearlo
-  for (let c = a; c <= b; c++) ponerCelda(N, "c", c, N.gy + 3);   // monedas en el suelo de la sala
+  return sitios.map((antes, j) => {
+    const t = tipos[j];
+    const boca = j !== conBoca ? null : t.abajo && t.arriba ? (rnd() < 0.5 ? "abajo" : "arriba") : t.abajo ? "abajo" : "arriba";
+    const ancho = t.abajo && t.arriba ? 44 : t.arriba ? 34 : 30 + Math.floor(rnd() * 5);
+    return { antes, abajo: t.abajo, arriba: t.arriba, ancho, boca };
+  });
+}
+
+// Sección de capas: el suelo de arriba sigue siendo el camino principal (con los huecos de la zona de abajo)
+function seccionCapas(N, x, s) {
+  for (let c = x; c < x + s.ancho; c++) N.protegidas.add(c);   // ponerMasas no rellena lo que hay bajo la sección
+  if (s.abajo) zonaAbajo(N, x, s.ancho, s.boca === "abajo");
+  if (s.arriba) zonaArriba(N, x + (s.abajo ? 10 : 0), s.boca === "arriba");
+  if (!s.abajo) ponerEnemigo(N, x + s.ancho - 3, N.gy - 1, false);
+}
+
+/* Zona de abajo (filas gy+3 a gy+7, bajo el suelo principal): suelo propio de tres bloques, paredes a los lados y un
+   hueco al vacío en las zonas largas. Se baja por un hueco del suelo principal; una fila de ladrillos y bloques con
+   premio se golpea desde el suelo de abajo; y al final dos muelles devuelven arriba por otro hueco */
+function zonaAbajo(N, x, w, conBoca) {
+  const rnd = N.rnd, gy = N.gy, T = N.tiles, s = x + w - 7;   // s: hueco de salida, con los muelles debajo
+  for (let r = gy + 3; r <= gy + 10; r++) for (const c of [x, x + 1, x + w - 2, x + w - 1]) T[r][c] = "G";   // paredes
+  for (let c = x + 2; c <= x + w - 3; c++) {
+    for (let r = gy + 3; r <= gy + 7; r++) T[r][c] = ".";
+    for (let r = gy + 8; r <= gy + 10; r++) T[r][c] = "G";   // suelo de la zona de abajo
+  }
+  for (const c of [x + 4, x + 5, s, s + 1]) for (let r = gy; r <= gy + 2; r++) T[r][c] = ".";   // huecos de bajada y de salida
+  T[gy + 7][s] = T[gy + 7][s + 1] = "M";   // muelles: lanzan unas ocho filas, por encima del suelo principal
+  // Boca de la zona secreta: una tubería en el suelo de abajo, antes de los muelles
+  const pb = conBoca ? s - 5 : -1;
+  if (conBoca) {
+    ponerCelda(N, "X", pb, gy + 6);
+    T[gy + 6][pb + 1] = T[gy + 7][pb] = T[gy + 7][pb + 1] = "T";
+  }
+  // Fila de ladrillos y bloques a tres filas del suelo de abajo, con monedas encima (como la de la 1-1)
+  const fin = conBoca ? pb - 3 : s - 3;
+  let potenciador = false;
+  for (let c = x + 8; c <= fin; c += rnd() < 0.35 ? 2 : 1) {
+    const u = rnd();
+    const ch = !potenciador && u < 0.12 ? "P" : u < 0.35 ? "Q" : u < 0.5 ? "K" : "B";
+    if (ch === "P") potenciador = true;
+    ponerCelda(N, ch, c, gy + 5);
+    if (rnd() < 0.5) ponerCelda(N, "c", c, gy + 4);
+  }
+  // En las zonas largas, un hueco de dos bloques al vacío en el suelo de abajo
+  if (w >= 32 && fin - x - 14 > 0 && rnd() < 0.6) {
+    const g = x + 10 + Math.floor(rnd() * (fin - x - 14));
+    for (const c of [g, g + 1]) for (let r = gy + 8; r <= gy + 10; r++) T[r][c] = ".";
+  }
+  // Monedas por el suelo de abajo y un enemigo
+  for (let c = x + 7; c <= s - 2; c += 3) if (T[gy + 8][c] === "G" && T[gy + 7][c] === ".") ponerCelda(N, "c", c, gy + 7);
+  for (let k = 0; k < 6; k++) {
+    const c = x + 12 + Math.floor(rnd() * Math.max(1, fin - x - 12));
+    if (T[gy + 8][c] === "G" && T[gy + 7][c] === ".") { ponerEnemigo(N, c, gy + 7, false); break; }
+  }
+}
+
+/* Zona de arriba: una escalinata de piedra en el suelo principal (se pasa por encima) lleva a cuatro plataformas de
+   piedra a 5-8 filas del suelo, con monedas encima. La primera tiene un bloque con potenciador; en la más alta hay
+   un bloque oculto con una vida, o la boca de la zona secreta. Cada salto sube como mucho dos filas */
+function zonaArriba(N, x, conBoca) {
+  const gy = N.gy, T = N.tiles;
+  [1, 2, 3, 4, 3, 2, 1].forEach((h, k) => { for (let j = 1; j <= h; j++) T[gy - j][x + 2 + k] = "S"; });
+  for (const [dx, r, ancho] of [[8, gy - 6, 4], [14, gy - 8, 4], [20, gy - 7, 5], [27, gy - 6, 4]]) {
+    for (let k = 0; k < ancho; k++) { T[r][x + dx + k] = "S"; ponerCelda(N, "c", x + dx + k, r - 1); }
+  }
+  ponerCelda(N, "P", x + 9, gy - 6);
+  if (conBoca) {
+    ponerCelda(N, "X", x + 21, gy - 9);
+    T[gy - 9][x + 22] = T[gy - 8][x + 21] = T[gy - 8][x + 22] = "T";
+  } else ponerCelda(N, "1", x + 15, gy - 11);
 }
 
 /* Tramo llano de la pauta "uno" (como la 1-1 hecha a mano): más enemigos y grupos de bloques, huecos de uno a tres
@@ -7037,9 +7106,7 @@ function ponerTramoUno(N, x, w, tranquilo) {
   // Hueco de 1 a 3 bloques, hasta el fondo, con sus monedas encima
   if (w >= 6 && rnd() < 0.5) {
     const hw = Math.min(1 + Math.floor(rnd() * 3), w - 4), hc = x + 2 + Math.floor(rnd() * (w - hw - 3));
-    for (let c = hc; c < hc + hw; c++) { ponerSuelo(N, ".", c); huecos.add(c); ponerCelda(N, "c", c, N.gy - 2); }
-    if (rnd() < 0.5) camaraBajo(N, hc, hw);
-  }
+    for (let c = hc; c < hc + hw; c++) { ponerSuelo(N, ".", c); huecos.add(c); ponerCelda(N, "c", c, N.gy - 2); }  }
   // Enemigos en el suelo (uno, a veces dos), nunca al borde de un hueco
   const enemigo = () => {
     const c = x + 1 + Math.floor(rnd() * (w - 2));
@@ -7088,7 +7155,7 @@ function ponerMasas(N, rnd, cols) {
     const ancho = 8 + Math.floor(rnd() * 15), hondo = 5 + Math.floor(rnd() * 16);
     const c0 = 12 + Math.floor(rnd() * Math.max(1, cols - ancho - 52));
     for (let c = c0; c < c0 + ancho; c++) {
-      if (N.tiles[N.gy][c] !== "G" || N.tiles[N.gy + 1][c] !== "G") continue;   // las salas bajo el suelo quedan huecas
+      if (N.tiles[N.gy][c] !== "G" || N.protegidas.has(c)) continue;   // bajo las secciones de capas no hay masas
       for (let r = N.gy + N.fondo; r <= Math.min(N.rows - 1, N.gy + hondo); r++) N.tiles[r][c] = "G";
     }
   }
@@ -7115,14 +7182,23 @@ function generarNivel(gen, mecanicas = []) {
   // Bajo el agua: cangrejos por el fondo, y peces y medusas nadando
   const tipos = gen.agua ? ["cangrejo", "pez_nadador", "medusa"] : gen.enemigos && gen.enemigos.length ? gen.enemigos : ["walker"];
   const piezas = elegirPiezas(rnd, dif, mecanicas, gen.secreta, gen.jefe, gen.avance, gen.agua, uno);
+  // Pauta "uno": secciones con zona de abajo y de arriba entre las piezas; la boca de la zona secreta va en una de
+  // ellas, no en una pieza de entrada
+  let secciones = [];
+  if (uno) {
+    const ie = piezas.findIndex((p) => p.tipo === "entrada");
+    if (ie >= 0) piezas.splice(ie, 1);
+    secciones = planCapas(piezas.length, ie, rnd);
+  }
   const separaciones = piezas.map(() => (uno ? ri(5, 8) : ri(3, 6)));
   const INICIO = 9 + Math.floor(rnd() * 10), ARENA = gen.jefe ? 34 : 0, FINAL = 22;   // tramo llano inicial
   const anchoPiezas = piezas.reduce((s, p, i) => s + separaciones[i] + Math.max(...p.mapa.map((f) => f.length)), 0);
-  const cols = INICIO + anchoPiezas + 4 + ARENA + FINAL;
+  const cols = INICIO + anchoPiezas + secciones.reduce((s, sec) => s + sec.ancho, 0) + 4 + ARENA + FINAL;
   const N = nuevoNivel(cols, rnd, dif, tipos, uno ? FILAS_UNO : ROWS);
   N.candidatas = []; N.reserva = [];
   N.agua = !!gen.agua;
   N.fondo = uno ? 3 : 0;   // filas de suelo macizo bajo la superficie (0: hasta el fondo, como antes)
+  N.protegidas = new Set();   // columnas de las secciones de capas
   for (let c = 0; c < cols; c++) ponerSuelo(N, "G", c);
   // Punto de control: en el tramo antes de la pieza de la mitad, y siempre después del atajo de la zona secreta
   const iSalida = piezas.findIndex((p) => p.tipo === "salida");
@@ -7132,6 +7208,7 @@ function generarNivel(gen, mecanicas = []) {
   // Piezas, cada una tras un tramo llano
   let x = INICIO;
   piezas.forEach((p, i) => {
+    for (const s of secciones) if (s.antes === i) { seccionCapas(N, x, s); x += s.ancho; }
     if (i === iControl) control = { x: (x + 1) * TILE, pie: N.gy * TILE };
     (uno ? ponerTramoUno : ponerTramo)(N, x, separaciones[i], i === iControl);
     x += separaciones[i];
@@ -12323,7 +12400,7 @@ function baseEdicion(clave) {
   if (FASES_PUBLICADAS[clave]) return FASES_PUBLICADAS[clave].version;
   const [w, f] = clave.split(":");
   const def = w !== "sala" && MUNDOS[+w] ? MUNDOS[+w].niveles[+f] : null;
-  return def && def.pauta === "uno" ? "uno-1" : null;
+  return def && def.pauta === "uno" ? "uno-2" : null;
 }
 function devEdicion(clave) {
   const niveles = devEstado.niveles, base = baseEdicion(clave);
